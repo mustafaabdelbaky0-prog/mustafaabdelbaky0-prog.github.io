@@ -120,5 +120,20 @@ const DriveSync = (() => {
 
   function getStatus() { return Object.assign({}, status, { pending: dirty }); }
 
-  return { start, stop, runOnce, push, pull, markDirty, getStatus };
+  /* رسالة تشرح للمستخدم ليه المزامنة مجابتش حاجة.
+     قبل كده كانت بتقول "كل حاجة متزامنة" حتى لو الجهاز التاني
+     أصلاً مرفعش حاجة — فيفضل يدوس زرار المزامنة ومش فاهم إيه الناقص. */
+  function explain(added) {
+    if (!Drive.isSignedIn()) {
+      return { text: 'الجهاز ده مش مربوط بجوجل — اربطه الأول', kind: 'error' };
+    }
+    if (status.error) return { text: status.error, kind: 'error' };
+    if (added > 0) return { text: 'وصلك ' + added + ' سجل جديد', kind: 'success' };
+    if (!status.devices) {
+      return { text: 'مفيش أجهزة تانية رفعت حاجة لسه — افتح البرنامج على الجهاز التاني واربطه بجوجل', kind: 'info' };
+    }
+    return { text: 'كل حاجة متزامنة', kind: 'info' };
+  }
+
+  return { start, stop, runOnce, push, pull, markDirty, getStatus, explain };
 })();

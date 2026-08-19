@@ -79,7 +79,19 @@ const Drive = (() => {
               reject(new Error('الدخول اتلغى'));
             }
           },
-          error_callback: () => reject(new Error('الدخول اتلغى'))
+          /* بنوضح سبب الرفض بدل رسالة عامة. أكتر سبب متوقع إن العنوان
+             اللي البرنامج شغال عليه مش مضاف في إعدادات جوجل. */
+          error_callback: (err) => {
+            const t = (err && (err.type || err.message)) || '';
+            if (/origin|redirect|idpiframe/i.test(String(t))) {
+              reject(new Error('جوجل رفضت العنوان ده (' + location.origin +
+                               ') — لازم يتضاف في إعدادات المفتاح عند جوجل'));
+            } else if (/popup_closed|user_cancel|abort/i.test(String(t))) {
+              reject(new Error('قفلت نافذة جوجل قبل ما تخلص'));
+            } else {
+              reject(new Error('جوجل رفضت الربط' + (t ? ' (' + t + ')' : '')));
+            }
+          }
         });
       }
       tokenClient.requestAccessToken({ prompt: silent ? '' : 'consent' });

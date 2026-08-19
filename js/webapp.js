@@ -126,13 +126,15 @@ document.getElementById('roleChip').addEventListener('click', async () => {
 document.getElementById('syncBtn').addEventListener('click', async (e) => {
   const b = e.target;
   b.disabled = true;
-  const added = await DriveSync.runOnce(false);
+  // لو الإذن خلص وقته بنجدده في الخلفية قبل ما نزامن
+  if (!Drive.isSignedIn() && Drive.wasConnected()) {
+    try { await Drive.renewQuietly(); } catch (err) { }
+  }
+  const added = await DriveSync.runOnce(true);
   b.disabled = false;
   updateSyncFoot();
-  if (added === 0) {
-    const s = DriveSync.getStatus();
-    Utils.toast(s.error ? s.error : 'كل حاجة متزامنة', s.error ? 'error' : 'info');
-  }
+  const m = DriveSync.explain(added);
+  Utils.toast(m.text, m.kind);
 });
 
 async function init() {

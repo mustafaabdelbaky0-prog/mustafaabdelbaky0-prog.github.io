@@ -229,11 +229,10 @@ Modules.company = (() => {
       const sn = container.querySelector('#syncNow');
       if (sn) sn.addEventListener('click', async () => {
         sn.disabled = true;
-        const added = await DriveSync.runOnce(false);
+        const added = await DriveSync.runOnce(true);
         sn.disabled = false;
-        const st = DriveSync.getStatus();
-        if (st.error) Utils.toast(st.error, 'error');
-        else if (added === 0) Utils.toast('كل حاجة متزامنة', 'info');
+        const m = DriveSync.explain(added);
+        Utils.toast(m.text, m.kind);
         loadSyncStatus();
       });
     } else {
