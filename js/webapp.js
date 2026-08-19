@@ -1,0 +1,166 @@
+/* تشغيل نسخة الموقع (اللي بتشتغل من الموبايل)
+
+   الفرق عن نسخة الكمبيوتر:
+     - البيانات بتتخزن على الموبايل نفسه، وبتتزامن مع الدرايف
+     - أول مرة بس بيطلب تسجيل دخول بجوجل
+     - مفيش شاشة "توصيل الموبايل" لأننا خلاص على الموبايل */
+
+let currentRoute = null;
+
+const WEB_ROUTES = ['reports','sales','purchases','returns','items',
+                    'inventory','parties','expenses','treasury','assets','company'];
+
+async function navigate(route) {
+  if (!ROUTES[route] || WEB_ROUTES.indexOf(route) < 0) {
+    route = Auth.isSeller() ? 'sales' : 'reports';
+  }
+  if (!Auth.canSee(route)) {
+    const ok = await Auth.loginOwner('شاشة ' + ROUTES[route].title);
+    if (!ok) {
+      if (currentRoute && currentRoute !== route) return;
+      route = 'sales';
+    }
+  }
+  currentRoute = route;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === route));
+  document.getElementById('pageTitle').textContent = ROUTES[route].title;
+  const container = document.getElementById('pageContent');
+  container.innerHTML = '';
+  document.getElementById('sidebar').classList.remove('open');
+  const mod = Modules[ROUTES[route].mod];
+  if (mod && mod.render) await mod.render(container);
+  window.scrollTo(0, 0);
+}
+
+async function refreshShell() {
+  const box = document.getElementById('cashBox');
+  if (Auth.isSeller()) { if (box) box.style.display = 'none'; return; }
+  if (box) box.style.display = '';
+  const bal = await Services.getCashBalance();
+  document.getElementById('cashPill').textContent = Utils.formatMoney(bal);
+}
+
+function refreshRoleUI() {
+  const chip = document.getElementById('roleChip');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.style.display = Auth.canSee(n.dataset.route) ? '' : 'none';
+  });
+  if (!chip) return;
+  if (!Auth.isEnabled()) { chip.style.display = 'none'; return; }
+  chip.style.display = '';
+  if (Auth.isOwner()) {
+    chip.className = 'role-chip owner';
+    chip.innerHTML = '👤 صاحب المحل — <strong>خروج</strong>';
+  } else {
+    chip.className = 'role-chip seller';
+    chip.innerHTML = '🔒 بائع — <strong>دخول صاحب المحل</strong>';
+  }
+  refreshShell();
+}
+
+function updateSyncFoot() {
+  const el = document.getElementById('syncFoot');
+  if (!el) return;
+  const s = DriveSync.getStatus();
+  if (!s.signedIn) { el.textContent = 'مش متصل بالدرايف'; return; }
+  if (s.error) { el.textContent = 'المزامنة: ' + s.error; return; }
+  if (s.pending) { el.textContent = 'فيه شغل لسه مترفعش'; return; }
+  el.textContent = s.lastSync ? ('آخر مزامنة ' + Utils.formatDateTime(s.lastSync)) : 'بيزامن...';
+}
+
+/* شاشة الدخول بجوجل — بتظهر أول مرة بس */
+function showSignIn(reason) {
+  return new Promise((resolve) => {
+    const shell = document.querySelector('.app-shell');
+    if (shell) shell.style.display = 'none';
+    const overlay = document.createElement('div');
+    overlay.innerHTML = `
+      <div class="firstrun-wrap">
+        <div class="firstrun-card">
+          <div class="firstrun-mark">⚡</div>
+          <h2>مؤسسة المصطفى<br>للأدوات الكهربائية والحدايد</h2>
+          <p class="firstrun-lead">اربط البرنامج بجوجل درايف بتاعك عشان تشتغل من الموبايل.</p>
+          <div class="firstrun-note">
+            الشغل اللي هتعمله هنا بيتحفظ على الموبايل على طول، وبيروح
+            للدرايف أول ما يبقى فيه نت — وكمبيوتر المحل بيسحبه لوحده.
+          </div>
+          ${reason ? `<div class="firstrun-err">${Utils.escapeHtml(reason)}</div>` : ''}
+          <button type="button" class="btn btn-amber firstrun-btn" id="gsiBtn">دخول بحساب جوجل</button>
+          <p class="firstrun-warn">
+            البرنامج بيشوف بس الملفات اللي بيعملها هو في درايفك — مش بيبص
+            على أي حاجة تانية عندك خالص.
+          </p>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#gsiBtn').addEventListener('click', async (e) => {
+      const b = e.target;
+      b.disabled = true; b.textContent = 'بيفتح جوجل...';
+      try {
+        await Drive.signIn(false);
+        overlay.remove();
+        if (shell) shell.style.display = '';
+        resolve(true);
+      } catch (err) {
+        b.disabled = false; b.textContent = 'دخول بحساب جوجل';
+        const e2 = overlay.querySelector('.firstrun-err');
+        const msg = err.message || 'مانفعش';
+        if (e2) e2.textContent = msg;
+        else b.insertAdjacentHTML('beforebegin', `<div class="firstrun-err">${Utils.escapeHtml(msg)}</div>`);
+      }
+    });
+  });
+}
+
+document.getElementById('navList').addEventListener('click', (e) => {
+  const item = e.target.closest('.nav-item');
+  if (item) navigate(item.dataset.route);
+});
+document.getElementById('menuToggle').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('open');
+});
+document.getElementById('roleChip').addEventListener('click', async () => {
+  if (Auth.isOwner()) Auth.logout(false);
+  else if (await Auth.loginOwner('دخول صاحب المحل')) navigate('reports');
+});
+document.getElementById('syncBtn').addEventListener('click', async (e) => {
+  const b = e.target;
+  b.disabled = true;
+  const added = await DriveSync.runOnce(false);
+  b.disabled = false;
+  updateSyncFoot();
+  if (added === 0) {
+    const s = DriveSync.getStatus();
+    Utils.toast(s.error ? s.error : 'كل حاجة متزامنة', s.error ? 'error' : 'info');
+  }
+});
+
+async function init() {
+  const verEl = document.getElementById('buildVer');
+  if (verEl) verEl.textContent = APP_VERSION;
+
+  await Device.init();
+
+  if (!Drive.isSignedIn()) await showSignIn(null);
+
+  // أول تحميل: نجيب اللي في الدرايف قبل ما نعرض حاجة
+  await DB.open();
+  try { await DriveSync.runOnce(true); } catch (e) { }
+
+  await Auth.init();
+  await AppState.reloadItems();
+  await AppState.reloadParties();
+  await AppState.reloadCompany();
+  refreshRoleUI();
+  await refreshShell();
+
+  if (Auth.isSeller()) navigate('sales');
+  else if (!AppState.company || !AppState.company.name) navigate('company');
+  else navigate('reports');
+
+  DriveSync.start();
+  setInterval(updateSyncFoot, 3000);
+  updateSyncFoot();
+}
+
+init();

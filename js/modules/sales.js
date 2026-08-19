@@ -1,0 +1,461 @@
+Modules.sales = (() => {
+  /* فاتورة بيع بشكل جدول زي الإكسيل:
+     الباركود | الصنف | الكمية | الوحدة | السعر | الإجمالي
+     اسم العميل بيتكتب بالإيد، ولو "كاش" يبقى بيع نقدي */
+
+  let rows = [];
+  let detachScanner = null;
+  let rowSeq = 0;
+  let paidTouched = false;
+  let saving = false;   // بيمنع إن دوستين سريعتين على "حفظ" يعملوا فاتورتين
+
+  function blankRow() {
+    return { _id: ++rowSeq, itemId: null, barcode: '', name: '', unit: 'قطعة', qty: '', price: '', cost: 0, stock: 0 };
+  }
+
+  function calc(r) {
+    const qty = Number(r.qty || 0);
+    const price = Number(r.price || 0);
+    return { qty, price, lineTotal: qty * price };
+  }
+
+  function filledRows() {
+    return rows.filter(r => r.itemId && calc(r).qty > 0);
+  }
+
+  function subtotal() {
+    return rows.reduce((s, r) => s + calc(r).lineTotal, 0);
+  }
+
+  async function render(container) {
+    await AppState.reloadItems();
+    await AppState.reloadParties();
+    rows = [blankRow()];
+    paidTouched = false;
+    if (detachScanner) { detachScanner(); detachScanner = null; }
+
+    container.innerHTML = `
+      <div class="card invoice-card">
+        <div class="invoice-head">
+          <div class="field inv-field">
+            <label>التاريخ</label>
+            <input type="date" id="invDate" value="${Utils.todayISO()}">
+          </div>
+          <div class="field inv-field" style="flex:2;">
+            <label>اسم العميل <span class="muted">(اكتب "كاش" لو بيع نقدي)</span></label>
+            <input type="text" id="customerName" list="customerList" placeholder="كاش" autocomplete="off">
+            <datalist id="customerList">
+              ${AppState.customers.map(c => `<option value="${Utils.escapeHtml(c.name)}">`).join('')}
+            </datalist>
+          </div>
+          <div class="field inv-field">
+            <label>رقم الفاتورة</label>
+            <input type="text" value="تلقائي" disabled>
+          </div>
+        </div>
+
+        <div class="scan-strip">
+          <span>📡 امسح بالليزر في أي وقت — الصنف هيتحط في سطر لوحده</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="camBtn">📷 كاميرا</button>
+        </div>
+
+        <div class="table-wrap invoice-table-wrap">
+          <table class="invoice-table">
+            <thead>
+              <tr>
+                <th style="width:34px;">#</th>
+                <th style="width:160px;">الباركود</th>
+                <th style="width:230px;">الصنف</th>
+                <th style="width:110px;">الكمية</th>
+                <th style="width:90px;">الوحدة</th>
+                <th style="width:120px;">السعر</th>
+                <th style="width:120px;">الإجمالي</th>
+                <th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="invBody"></tbody>
+          </table>
+        </div>
+
+        <button type="button" class="btn btn-ghost" id="addRowBtn" style="margin-top:10px;">+ سطر جديد</button>
+
+        <div class="invoice-foot">
+          <div class="foot-left">
+            <div class="field inv-field">
+              <label>خصم (ج.م)</label>
+              <input type="number" id="sDiscount" min="0" step="0.01" value="0" inputmode="decimal">
+            </div>
+            <div class="field inv-field">
+              <label>المدفوع الآن (كاش)</label>
+              <input type="number" id="sPaidNow" min="0" step="0.01" value="0" inputmode="decimal">
+            </div>
+          </div>
+          <div class="foot-right">
+            <div class="pay-summary">
+              <div class="row"><span>عدد الأصناف</span><span id="sumCount">0</span></div>
+              <div class="row"><span>الإجمالي قبل الخصم</span><span id="sumSub">0.00 ج.م</span></div>
+              <div class="row grand"><span>الصافي</span><span id="sumTotal">0.00 ج.م</span></div>
+              <div class="row"><span>المدفوع</span><span id="sumPaid">0.00 ج.م</span></div>
+              <div class="row"><span>الباقي على العميل</span><span id="sumDue">0.00 ج.م</span></div>
+            </div>
+            <div class="hint" id="sDueHint"></div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-ghost" id="clearInv">فاتورة جديدة</button>
+          <button class="btn btn-amber" id="completeSale">💾 حفظ وطباعة</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <div class="section-head"><h3>آخر المبيعات</h3></div>
+        <div id="recentSales"></div>
+      </div>
+
+      <datalist id="itemNameList">
+        ${AppState.items.map(i => `<option value="${Utils.escapeHtml(i.name)}">`).join('')}
+      </datalist>
+    `;
+
+    drawRows(container);
+    loadRecent(container);
+
+    detachScanner = Scanner.attachHardwareScanner(
+      container.querySelector('#customerName'),
+      (code) => onScan(container, code)
+    );
+
+    container.querySelector('#camBtn').addEventListener('click', async () => {
+      const code = await Scanner.scan();
+      if (code) onScan(container, code);
+    });
+    container.querySelector('#addRowBtn').addEventListener('click', () => {
+      rows.push(blankRow()); drawRows(container, rows[rows.length - 1]._id, 'barcode');
+    });
+    container.querySelector('#sDiscount').addEventListener('input', () => updateTotals(container));
+    container.querySelector('#sPaidNow').addEventListener('input', () => { paidTouched = true; updateTotals(container); });
+    container.querySelector('#clearInv').addEventListener('click', async () => {
+      if (filledRows().length && !(await Utils.confirmDialog('هتمسح الفاتورة وتبدأ واحدة جديدة؟'))) return;
+      render(container);
+    });
+    container.querySelector('#completeSale').addEventListener('click', () => doSave(container));
+  }
+
+  function onScan(container, code) {
+    const item = AppState.items.find(i => i.barcode === code);
+    if (!item) {
+      Utils.beep('error');
+      Utils.toast('الباركود ده مش متسجل — سجّله من شاشة المشتريات الأول', 'error');
+      return;
+    }
+    // لو الصنف موجود في الفاتورة بنزوّد كميته
+    const already = rows.find(r => r.itemId === item.id);
+    if (already) {
+      already.qty = Math.round((Number(already.qty || 0) + 1) * 1000) / 1000;
+      Utils.beep('ok');
+      drawRows(container, already._id, 'qty');
+      return;
+    }
+    let target = rows.find(r => !r.itemId && !r.name && !r.barcode);
+    if (!target) { target = blankRow(); rows.push(target); }
+    applyItem(target, item);
+    Utils.beep('ok');
+    if (!rows.some(r => !r.itemId && !r.name && !r.barcode)) rows.push(blankRow());
+    drawRows(container, target._id, 'qty');
+  }
+
+  function applyItem(row, item) {
+    row.itemId = item.id;
+    row.name = item.name;
+    row.barcode = item.barcode || '';
+    row.unit = item.unit || 'قطعة';
+    row.cost = item.costPrice || 0;
+    row.stock = item.stock || 0;
+    if (!row.price) row.price = item.salePrice || '';
+    if (!row.qty) row.qty = 1;
+  }
+
+  function drawRows(container, focusRowId, focusField) {
+    const body = container.querySelector('#invBody');
+    body.innerHTML = rows.map((r, idx) => {
+      const c = calc(r);
+      const over = r.itemId && c.qty > r.stock;
+      return `
+      <tr data-id="${r._id}">
+        <td data-label="#" class="row-num">${idx + 1}</td>
+        <td data-label="الباركود">
+          <div class="cell-scan">
+            <input type="text" class="cell f-barcode" value="${Utils.escapeHtml(r.barcode)}" placeholder="امسح أو اكتب" autocomplete="off">
+            <button type="button" class="cell-cam" title="صوّر الباركود">📷</button>
+          </div>
+        </td>
+        <td data-label="الصنف">
+          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" list="itemNameList" placeholder="اسم الصنف" autocomplete="off">
+          ${over ? `<div class="line-derived warn">المتاح ${Units.fmtQty(r.stock, r.unit)} بس</div>` : ''}
+        </td>
+        <td data-label="الكمية">
+          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${Units.step(r.unit)}" inputmode="decimal" placeholder="0">
+        </td>
+        <td data-label="الوحدة" class="unit-cell">${Utils.escapeHtml(r.unit)}</td>
+        <td data-label="السعر">
+          <input type="number" class="cell f-price num" value="${r.price}" min="0" step="0.01" inputmode="decimal" placeholder="0.00">
+        </td>
+        <td data-label="الإجمالي" class="cell-total"><div class="line-sum">${Utils.formatMoney(c.lineTotal)}</div></td>
+        <td data-label=""><button type="button" class="icon-btn rm-row" title="حذف السطر">🗑️</button></td>
+      </tr>`;
+    }).join('');
+
+    bindRows(container);
+    updateTotals(container);
+
+    if (focusRowId) {
+      const tr = body.querySelector(`tr[data-id="${focusRowId}"]`);
+      if (tr) {
+        const sel = { barcode: '.f-barcode', name: '.f-name', qty: '.f-qty', price: '.f-price' }[focusField || 'qty'];
+        const el = tr.querySelector(sel);
+        if (el) { el.focus(); el.select && el.select(); }
+        tr.classList.add('flash-row');
+      }
+    }
+  }
+
+  function bindRows(container) {
+    container.querySelectorAll('#invBody tr').forEach(tr => {
+      const id = Number(tr.dataset.id);
+      const r = rows.find(x => x._id === id);
+      if (!r) return;
+      const $ = s => tr.querySelector(s);
+
+      $('.f-barcode').addEventListener('input', e => { r.barcode = e.target.value.trim(); });
+      $('.f-barcode').addEventListener('change', (e) => {
+        r.barcode = e.target.value.trim();   // بنقرا من الخانة نفسها (اللصق مش دايمًا بيعمل input)
+        const it = AppState.items.find(i => i.barcode === r.barcode);
+        if (it) { applyItem(r, it); drawRows(container, id, 'qty'); }
+        else if (r.barcode) Utils.toast('الباركود ده مش متسجل', 'error');
+      });
+      $('.cell-cam').addEventListener('click', async () => {
+        const code = await Scanner.scan();
+        if (!code) return;
+        const it = AppState.items.find(i => i.barcode === code);
+        if (it) { applyItem(r, it); drawRows(container, id, 'qty'); }
+        else Utils.toast('الباركود ده مش متسجل', 'error');
+      });
+
+      $('.f-name').addEventListener('input', e => { r.name = e.target.value; });
+      $('.f-name').addEventListener('change', (e) => {
+        r.name = e.target.value;
+        const it = AppState.items.find(i => (i.name || '').trim() === (r.name || '').trim());
+        if (it) { applyItem(r, it); drawRows(container, id, 'qty'); }
+      });
+
+      $('.f-qty').addEventListener('input', e => { r.qty = e.target.value; refreshLine(container, tr, r); });
+      $('.f-price').addEventListener('input', e => { r.price = e.target.value; refreshLine(container, tr, r); });
+
+      $('.rm-row').addEventListener('click', () => {
+        rows = rows.filter(x => x._id !== id);
+        if (!rows.length) rows.push(blankRow());
+        drawRows(container);
+      });
+
+      tr.querySelectorAll('.cell').forEach(el => el.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const idx = rows.findIndex(x => x._id === id);
+        if (idx === rows.length - 1) rows.push(blankRow());
+        drawRows(container, rows[idx + 1]._id, 'barcode');
+      }));
+    });
+  }
+
+  function refreshLine(container, tr, r) {
+    tr.querySelector('.line-sum').textContent = Utils.formatMoney(calc(r).lineTotal);
+    updateTotals(container);
+  }
+
+  function updateTotals(container) {
+    const sub = subtotal();
+    const discount = Number(container.querySelector('#sDiscount').value || 0);
+    const total = Math.max(0, sub - discount);
+    const paidInput = container.querySelector('#sPaidNow');
+    if (!paidTouched || Number(paidInput.value) > total) paidInput.value = total.toFixed(2);
+    const paid = Number(paidInput.value || 0);
+    const due = Math.max(0, total - paid);
+
+    container.querySelector('#sumCount').textContent = filledRows().length;
+    container.querySelector('#sumSub').textContent = Utils.formatMoney(sub);
+    container.querySelector('#sumTotal').textContent = Utils.formatMoney(total);
+    container.querySelector('#sumPaid').textContent = Utils.formatMoney(paid);
+    container.querySelector('#sumDue').textContent = Utils.formatMoney(due);
+
+    const hint = container.querySelector('#sDueHint');
+    if (due > 0) {
+      hint.textContent = 'الباقي هيتسجل على حساب العميل.';
+      hint.style.color = 'var(--amber-deep)';
+    } else {
+      hint.textContent = 'البيع كاش بالكامل.';
+      hint.style.color = 'var(--success)';
+    }
+  }
+
+  async function doSave(container) {
+    if (saving) return;   // الحفظ شغال بالفعل — مش هنعمله تاني
+
+    // لو فيه سطر مكتوب فيه حاجة بس الصنف مش متعرّف، مننفعش نتجاهله في صمت
+    const orphan = rows.find(r => !r.itemId && ((r.name || '').trim() || (r.barcode || '').trim()));
+    if (orphan) {
+      const it = AppState.items.find(i =>
+        i.barcode === (orphan.barcode || '').trim() ||
+        (i.name || '').trim() === (orphan.name || '').trim());
+      if (it) {
+        applyItem(orphan, it);   // لقيناه - نكمل عادي
+        drawRows(container, orphan._id, 'qty');
+      } else {
+        Utils.toast(`"${(orphan.name || orphan.barcode).trim()}" مش متسجل في الأصناف — سجّله من المشتريات الأول`, 'error');
+        Utils.beep('error');
+        return;
+      }
+    }
+
+    const valid = filledRows();
+    if (!valid.length) { Utils.toast('اكتب صنف واحد على الأقل', 'error'); Utils.beep('error'); return; }
+    const noQty = rows.find(r => r.itemId && !(calc(r).qty > 0));
+    if (noQty) { Utils.toast(`اكتب الكمية للصنف: ${noQty.name}`, 'error'); Utils.beep('error'); return; }
+    const bad = valid.find(r => !(calc(r).price > 0));
+    if (bad) { Utils.toast(`اكتب سعر البيع للصنف: ${bad.name}`, 'error'); Utils.beep('error'); return; }
+
+    // مينفعش نبيع أكتر من اللي في المخزن. بنجمع كمية كل صنف في الفاتورة كلها
+    // (ممكن يكون مكتوب في أكتر من سطر) ونقارنها بالمتاح.
+    const needed = {};
+    valid.forEach(r => { needed[r.itemId] = (needed[r.itemId] || 0) + calc(r).qty; });
+    const short = [];
+    for (const id of Object.keys(needed)) {
+      const it = AppState.items.find(i => i.id === Number(id));
+      if (!it) continue;
+      const have = Number(it.stock || 0);
+      if (needed[id] > have + 0.0001) {
+        short.push({ name: it.name, unit: it.unit, want: needed[id], have });
+      }
+    }
+    if (short.length) {
+      Utils.beep('error');
+      const go = await Utils.confirmDialog(
+        'مفيش رصيد كافي في المخزن:\n\n' +
+        short.map(s => `• ${s.name}: عايز ${Units.fmtQty(s.want, s.unit)} — المتاح ${Units.fmtQty(s.have, s.unit)}`).join('\n') +
+        '\n\nراجع الكميات. لو البضاعة موجودة فعلًا في المحل بس لسه متسجلتش، سجّل فاتورة الشراء الأول.\n\n' +
+        'تكمل بالسالب على مسؤوليتك؟'
+      );
+      if (!go) return;
+    }
+
+    const dateVal = container.querySelector('#invDate').value;
+    const date = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : Utils.nowISO();
+    const customerName = container.querySelector('#customerName').value;
+    const discount = Number(container.querySelector('#sDiscount').value || 0);
+    const paidNow = Number(container.querySelector('#sPaidNow').value || 0);
+    const total = Math.max(0, subtotal() - discount);
+
+    if (total - paidNow > 0 && Services.isCashName(customerName)) {
+      Utils.toast('فيه مبلغ باقي — اكتب اسم العميل عشان يتسجل في حسابه', 'error');
+      Utils.beep('error');
+      container.querySelector('#customerName').focus();
+      return;
+    }
+
+    // من هنا وطالع بنقفل الحفظ لحد ما يخلص
+    saving = true;
+    const saveBtn = container.querySelector('#completeSale');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'بيحفظ...'; }
+
+    try {
+      const customerId = await Services.resolveParty('customers', customerName);
+      const sale = {
+        date, customerId, discount,
+        lines: valid.map(r => ({
+          itemId: r.itemId, name: r.name, barcode: r.barcode, unit: r.unit,
+          qty: calc(r).qty, price: calc(r).price, cost: r.cost
+        })),
+        paidNow
+      };
+
+      const res = await Services.saveSale(sale);
+      await AppState.reloadItems();
+      await AppState.reloadParties();
+      await refreshShell();
+      Utils.beep('ok');
+      Utils.toast(`اتحفظت فاتورة البيع ${res.number}`, 'success');
+      printReceipt(sale, res, customerName);
+      render(container);            // بيرسم الشاشة من جديد بزرار جديد
+    } catch (e) {
+      Utils.beep('error');
+      Utils.toast('الحفظ مانجحش: ' + (e.message || 'خطأ'), 'error');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '💾 حفظ وطباعة'; }
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function loadRecent(container) {
+    const all = await DB.getAll('sales');
+    all.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const box = container.querySelector('#recentSales');
+    if (!box) return;
+    const recent = all.slice(0, 12);
+    if (!recent.length) {
+      box.innerHTML = `<div class="empty-state" style="padding:20px;"><div class="ic">📭</div>مفيش مبيعات لسه</div>`;
+      return;
+    }
+    const custName = id => { const x = AppState.customers.find(c => c.id === id); return x ? x.name : 'كاش'; };
+    box.innerHTML = recent.map(s => `
+      <div class="line-card clickable" data-id="${s.id}">
+        <div class="line-main open-doc">
+          <div class="line-name"><span class="stmt-link">${s.number}</span> ${s.voided ? '<span class="badge badge-danger">ملغاة</span>' : ''}</div>
+          <div class="line-detail">${Utils.formatDate(s.date)} · ${Utils.escapeHtml(custName(s.customerId))} · ${s.lines.length} صنف${s.dueAmount > 0 ? ' · <span style="color:var(--amber-deep)">آجل ' + Utils.formatMoney(s.dueAmount) + '</span>' : ''}</div>
+        </div>
+        <div class="line-side">
+          <div class="line-total">${Utils.formatMoney(s.total)}</div>
+          ${!s.voided ? '<button class="icon-btn void-btn" title="إلغاء الفاتورة">↩️</button>' : ''}
+        </div>
+      </div>`).join('');
+
+    box.querySelectorAll('.open-doc').forEach(el => el.addEventListener('click', (e) => {
+      Views.showInvoice('sales', Number(e.currentTarget.closest('.line-card').dataset.id));
+    }));
+
+    box.querySelectorAll('.void-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = Number(e.target.closest('.line-card').dataset.id);
+      if (!(await Lock.require('إلغاء الفاتورة'))) return;
+      if (!(await Utils.confirmDialog('هيتم عكس أثر الفاتورة على المخزون والخزنة وحساب العميل. متأكد؟'))) return;
+      await Services.voidSale(id);
+      await AppState.reloadItems(); await AppState.reloadParties(); await refreshShell();
+      Utils.toast('اتلغت الفاتورة', 'success');
+      loadRecent(container);
+    }));
+  }
+
+  function printReceipt(sale, res, customerName) {
+    const c = AppState.company || {};
+    const printArea = document.getElementById('printArea');
+    printArea.innerHTML = `
+      <div class="receipt">
+        <h2>${Utils.escapeHtml(c.name || 'مؤسسة المصطفى للأدوات الكهربائية والحدايد')}</h2>
+        <div class="sub">${Utils.escapeHtml(c.phone || '')} ${c.address ? '· ' + Utils.escapeHtml(c.address) : ''}</div>
+        <div class="sub">فاتورة ${res.number} — ${Utils.formatDate(sale.date)}</div>
+        <div class="sub">العميل: ${Utils.escapeHtml(Services.isCashName(customerName) ? 'كاش' : customerName)}</div>
+        <table>
+          <thead><tr><th>الصنف</th><th>كمية</th><th>سعر</th><th>إجمالي</th></tr></thead>
+          <tbody>
+            ${sale.lines.map(l => `<tr><td>${Utils.escapeHtml(l.name)}</td><td>${Units.fmtQty(l.qty, l.unit)}</td><td>${l.price.toFixed(2)}</td><td>${(l.qty * l.price).toFixed(2)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        ${sale.discount ? `<div class="sub" style="text-align:left;">خصم: ${sale.discount.toFixed(2)}</div>` : ''}
+        <div class="tot">الإجمالي: ${res.total.toFixed(2)} ج.م</div>
+        ${res.dueAmount > 0 ? `<div class="tot" style="font-size:12px;">المدفوع: ${sale.paidNow.toFixed(2)} — المتبقي: ${res.dueAmount.toFixed(2)}</div>` : ''}
+        ${c.note ? `<div class="sub" style="margin-top:10px;">${Utils.escapeHtml(c.note)}</div>` : ''}
+      </div>`;
+    setTimeout(() => window.print(), 150);
+  }
+
+  return { render };
+})();

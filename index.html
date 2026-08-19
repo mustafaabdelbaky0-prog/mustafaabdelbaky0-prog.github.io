@@ -2,48 +2,90 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
 <title>مؤسسة المصطفى للأدوات الكهربائية والحدايد</title>
 <meta name="theme-color" content="#0F2438">
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    font-family:"Segoe UI","Noto Kufi Arabic",Tahoma,sans-serif;
-    background:#F4F6F8;color:#0F2438;min-height:100vh;
-    display:flex;align-items:center;justify-content:center;padding:22px;
-  }
-  .card{
-    background:#fff;border:1px solid #E1E7EC;border-radius:18px;
-    padding:34px 26px;max-width:440px;width:100%;text-align:center;
-    box-shadow:0 12px 40px rgba(15,36,56,.10);
-  }
-  .mark{
-    width:62px;height:62px;margin:0 auto 16px;border-radius:16px;background:#F2A93B;
-    display:flex;align-items:center;justify-content:center;font-size:31px;
-  }
-  h1{font-size:19px;line-height:1.6;margin-bottom:20px}
-  .ok{
-    background:#EAF6F0;border:1px solid #BFE0CF;color:#1F6647;
-    border-radius:12px;padding:14px 16px;font-size:15px;font-weight:700;
-    line-height:1.9;margin-bottom:16px;
-  }
-  .note{
-    background:#FFF7EA;border:1px solid #F5DFB8;border-radius:12px;
-    padding:14px 16px;color:#6B5427;font-size:14px;line-height:2;text-align:right;
-  }
-  .foot{margin-top:18px;color:#8A97A3;font-size:12.5px;line-height:1.9}
-</style>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/app.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div class="card">
-    <div class="mark">⚡</div>
-    <h1>مؤسسة المصطفى<br>للأدوات الكهربائية والحدايد</h1>
-    <div class="ok">✅ العنوان شغال</div>
-    <div class="note">
-      الصفحة دي بتأكد بس إن الموقع وصلك.<br>
-      البرنامج نفسه هيتحط هنا بعد ما نخلّص ربط الدرايف.
+
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">⚡</div>
+      <div class="txt">مؤسسة المصطفى
+        <small>للأدوات الكهربائية والحدايد</small>
+      </div>
     </div>
-    <p class="foot">لحد ساعتها، البرنامج شغال عادي على كمبيوتر المحل.</p>
+    <ul class="nav-list" id="navList">
+      <li class="nav-item" data-route="reports"><span class="ic">🏠</span> الرئيسية</li>
+      <li class="nav-item" data-route="sales"><span class="ic">🧾</span> نقطة البيع</li>
+      <li class="nav-item" data-route="purchases"><span class="ic">📥</span> المشتريات</li>
+      <li class="nav-item" data-route="returns"><span class="ic">↩️</span> المرتجعات</li>
+      <li class="nav-item" data-route="items"><span class="ic">🔩</span> الأصناف</li>
+      <li class="nav-item" data-route="inventory"><span class="ic">📦</span> المخزون</li>
+      <li class="nav-item" data-route="parties"><span class="ic">🤝</span> العملاء والموردين</li>
+      <li class="nav-item" data-route="expenses"><span class="ic">💸</span> المصروفات</li>
+      <li class="nav-item" data-route="treasury"><span class="ic">🏦</span> الخزنة</li>
+      <li class="nav-item" data-route="assets"><span class="ic">🏗️</span> الأصول الثابتة</li>
+      <li class="nav-item" data-route="company"><span class="ic">⚙️</span> بيانات المؤسسة</li>
+    </ul>
+    <div class="sidebar-foot">
+      <span id="syncFoot">—</span><br>
+      <span class="build-tag">نسخة <span id="buildVer">—</span></span>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="icon-btn menu-toggle" id="menuToggle">☰</button>
+        <h2 id="pageTitle">الرئيسية</h2>
+      </div>
+      <div class="top-right">
+        <button type="button" class="icon-btn" id="syncBtn" title="زامن دلوقتي">🔄</button>
+        <div class="cash-pill" id="cashBox">
+          <span class="dot"></span>
+          رصيد الخزنة: <span id="cashPill">0.00 ج.م</span>
+        </div>
+        <button type="button" class="role-chip" id="roleChip" style="display:none;"></button>
+      </div>
+    </div>
+    <div class="page" id="pageContent"></div>
   </div>
+</div>
+
+<div id="printArea" class="print-only"></div>
+
+<script src="js/vendor/zxing.min.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/units.js"></script>
+<script src="js/device.js"></script>
+<script src="js/merge.js"></script>
+<script src="js/drive.js"></script>
+<script src="js/backend-drive.js"></script>
+<script src="js/db.js"></script>
+<script src="js/services.js"></script>
+<script src="js/state.js"></script>
+<script src="js/scanner.js"></script>
+<script src="js/lock.js"></script>
+<script src="js/views.js"></script>
+<script src="js/modules/company.js"></script>
+<script src="js/modules/items.js"></script>
+<script src="js/modules/inventory.js"></script>
+<script src="js/modules/purchases.js"></script>
+<script src="js/modules/returns.js"></script>
+<script src="js/modules/sales.js"></script>
+<script src="js/modules/expenses.js"></script>
+<script src="js/modules/treasury.js"></script>
+<script src="js/modules/parties.js"></script>
+<script src="js/modules/assets.js"></script>
+<script src="js/modules/reports.js"></script>
+<script src="js/webapp.js"></script>
 </body>
 </html>

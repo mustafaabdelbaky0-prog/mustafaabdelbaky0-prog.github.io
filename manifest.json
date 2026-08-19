@@ -1,0 +1,17 @@
+{
+  "name": "مؤسسة المصطفى للأدوات الكهربائية والحدايد",
+  "short_name": "مؤسسة المصطفى",
+  "description": "برنامج إدارة محل شامل: أصناف، مخزون، مبيعات، مشتريات، مصروفات، خزنة، أصول ثابتة",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F3F5F7",
+  "theme_color": "#0F2438",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
