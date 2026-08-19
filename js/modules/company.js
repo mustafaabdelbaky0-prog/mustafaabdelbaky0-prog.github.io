@@ -85,11 +85,11 @@ Modules.company = (() => {
             <div class="field-row">
               <div class="field">
                 <label id="pinLabel">كلمة السر الجديدة</label>
-                <input type="password" id="newPin" inputmode="numeric" placeholder="4 أرقام أو أكتر" autocomplete="off">
+                <input type="password" id="newPin" inputmode="numeric" placeholder="4 أرقام أو أكتر" autocomplete="one-time-code" name="np1">
               </div>
               <div class="field">
                 <label>تأكيد</label>
-                <input type="password" id="newPin2" inputmode="numeric" placeholder="اكتبها تاني" autocomplete="off">
+                <input type="password" id="newPin2" inputmode="numeric" placeholder="اكتبها تاني" autocomplete="one-time-code" name="np2">
               </div>
             </div>
             <div class="tag-row">

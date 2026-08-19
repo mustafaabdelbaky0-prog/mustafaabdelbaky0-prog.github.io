@@ -95,9 +95,10 @@ const Auth = (() => {
           <p class="muted" style="font-size:13px;margin-bottom:14px;">
             ${Utils.escapeHtml(reason || 'الجزء ده لصاحب المحل بس')} — اكتب كلمة السر.
           </p>
-          <form id="pinForm">
+          <form id="pinForm" autocomplete="off">
             <div class="field">
-              <input type="password" id="pinInput" inputmode="numeric" autocomplete="off"
+              <input type="password" id="pinInput" inputmode="numeric"
+                     autocomplete="one-time-code" name="otp-${Date.now()}" readonly
                      placeholder="••••" style="text-align:center;font-size:24px;letter-spacing:8px;">
               <div class="hint" id="pinErr" style="color:var(--danger);"></div>
             </div>
@@ -107,7 +108,26 @@ const Auth = (() => {
             </div>
           </form>`,
         onMount: (body) => {
-          setTimeout(() => body.querySelector('#pinInput').focus(), 60);
+          /* المتصفح بيحفظ كلمة السر وبيملاها لوحده، وساعتها أي حد
+             يفتح النافذة يلاقيها مكتوبة ويدوس إنتر ويدخل.
+             عشان كده: الخانة بتفضل للقراءة بس في الأول (المتصفح
+             مبيملاش خانة زي دي)، وبنفضيها كذا مرة بعد ما تتفتح. */
+          const inp = body.querySelector('#pinInput');
+          // أول ما يكتب بإيده بنبطّل مسح، عشان مانمسحش اللي هو كتبه.
+          // الكتابة الحقيقية بس هي اللي بتوقفه — الملء التلقائي مبيعملش
+          // ضغطة زرار حقيقية، فمش بيعدّي من هنا.
+          let typed = false;
+          inp.addEventListener('keydown', (e) => { if (e.isTrusted) typed = true; });
+          inp.addEventListener('paste', () => { typed = true; });
+
+          const wipe = () => { if (!typed && inp.value) inp.value = ''; };
+          wipe();
+          [40, 150, 400].forEach(ms => setTimeout(wipe, ms));
+          setTimeout(() => {
+            inp.removeAttribute('readonly');
+            wipe();
+            inp.focus();
+          }, 80);
           body.querySelector('#pinCancel').addEventListener('click', () => { close(); resolve(false); });
           body.querySelector('#pinForm').addEventListener('submit', async (e) => {
             e.preventDefault();
