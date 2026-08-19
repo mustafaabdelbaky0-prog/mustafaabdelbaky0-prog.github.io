@@ -69,6 +69,14 @@ const DriveSync = (() => {
 
   async function runOnce(silent) {
     if (running) return 0;
+
+    /* إذن جوجل بيخلص بعد ساعة. لو الجهاز كان مربوط قبل كده،
+       بنجدد الإذن في الخلفية من غير ما نطلب منه يسجل دخول تاني.
+       من غير ده كان لازم يربط الجهاز من أول وجديد كل شوية. */
+    if (!Drive.isSignedIn() && Drive.wasConnected()) {
+      try { await Drive.renewQuietly(); } catch (e) { }
+    }
+
     if (!Drive.isSignedIn()) { status.signedIn = false; return 0; }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       status.error = 'مفيش نت';
