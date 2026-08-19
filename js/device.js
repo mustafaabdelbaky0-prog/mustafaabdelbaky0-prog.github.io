@@ -62,6 +62,19 @@ const Device = (() => {
     name = localStorage.getItem(NAME_KEY) || guessName();
     const stored = Number(localStorage.getItem(KEY) || 0);
 
+    /* إصلاح ذاتي: الرقم ١ لكمبيوتر المحل وحده.
+       الموبايل كان بياخد رقم ١ في النسخة القديمة من البرنامج، وساعتها
+       بيتجاهل ملف الكمبيوتر (فاكره بتاعه هو) فمبيشوفش بياناته ولا كلمة
+       السر، وكمان بيدوس على ملفه في الدرايف. فلو لقينا جهاز مش
+       الكمبيوتر ماسك الرقم ١، بيسيبه وياخد رقم جديد لوحده. */
+    if (stored === 1 && !isShopPc()) {
+      localStorage.removeItem(KEY);
+      no = await claim(name);
+      localStorage.setItem(KEY, String(no));
+      localStorage.setItem(NAME_KEY, name);
+      return no;
+    }
+
     if (stored >= 1) {
       no = stored;
       // نتأكد إنه لسه مسجّل في البيانات (يمكن البيانات اترجعت من نسخة قديمة)

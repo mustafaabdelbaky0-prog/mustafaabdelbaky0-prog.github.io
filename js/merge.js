@@ -124,6 +124,21 @@ const Merge = (() => {
       t.balanceAfter = running;
     }
 
+    /* رصيد الخزنة المتخزن في الإعدادات لازم يتعاد حسابه كمان.
+       من غير كده، لو جهاز فيه رصيد قديم اتزامن بعد الجهاز الصح،
+       كان ممكن الرقم القديم يدوس على الصح. الرصيد = مجموع الحركات. */
+    const settings = rowsOf(data, 'settings');
+    const cashRow = settings.find(s => s.key === 'cashBalance');
+    if (cashRow) {
+      if (Math.abs(Number(cashRow.value || 0) - running) > 0.005) {
+        fixes.push({ store: 'settings', id: 'cashBalance', field: 'value',
+                     was: cashRow.value, now: running });
+      }
+      cashRow.value = running;
+    } else if (treasury.length) {
+      settings.push({ key: 'cashBalance', value: running });
+    }
+
     return { data, fixes };
   }
 
