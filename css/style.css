@@ -611,3 +611,36 @@ tbody tr:hover{background:#FAFBFC;}
   padding:3px 10px;border-radius:7px;font-size:13px;letter-spacing:.3px;
   direction:ltr;unicode-bidi:embed;
 }
+
+/* ===== وضع تعديل فاتورة متسجلة ===== */
+.edit-banner{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:#FFF7EA;border:1px solid #F2A93B;border-right:5px solid #F2A93B;
+  border-radius:12px;padding:13px 16px;margin-bottom:14px;
+  color:#6B5427;
+}
+.edit-banner strong{color:#0F2438;font-size:15px;}
+.edit-banner .btn{flex:0 0 auto;}
+
+/* شريط البحث في الفواتير */
+.inv-search{
+  display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;
+  padding:12px;margin-bottom:12px;
+  background:var(--bg);border:1px solid var(--line);border-radius:11px;
+}
+.inv-search .field{margin:0;flex:1;min-width:130px;}
+.inv-search .field label{font-size:12px;}
+.inv-search .btn{flex:0 0 auto;}
+
+.btn-danger{
+  background:#D64545;color:#fff;border:none;
+}
+.btn-danger:hover{background:#BF3A3A;}
+
+@media (max-width:760px){
+  .edit-banner{flex-direction:column;align-items:stretch;gap:10px;}
+  .edit-banner .btn{width:100%;}
+  .inv-search .field{min-width:calc(50% - 5px);}
+  .inv-search .field:nth-child(3){min-width:100%;}
+  .inv-search .btn{width:100%;}
+}

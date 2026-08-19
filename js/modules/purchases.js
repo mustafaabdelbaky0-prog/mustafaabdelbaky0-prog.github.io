@@ -11,6 +11,54 @@ Modules.purchases = (() => {
   let detachScanner = null;
   let rowSeq = 0;
   let saving = false;   // بيمنع إن دوستين سريعتين على "حفظ" يعملوا فاتورتين
+  let editing = null;   // الفاتورة اللي بنعدّل فيها دلوقتي (null = فاتورة جديدة)
+
+  /* بيحوّل سطر فاتورة متسجلة لسطر في الجدول عشان تقدر تعدّله.
+     لو الشرا كان بالعبوة (كرتونة/لفة) بنرجّعه بنفس شكله الأصلي
+     مش بالوحدة، عشان تلاقيه زي ما كتبته بالظبط. */
+  function lineToRow(l) {
+    const r = blankRow();
+    const it = AppState.items.find(i => i.id === l.itemId);
+    r.itemId = l.itemId;
+    r.barcode = it ? (it.barcode || '') : '';
+    r.name = l.name || (it ? it.name : '');
+    r.category = it ? (it.category || '') : '';
+    r.salePrice = it ? (it.salePrice || '') : '';
+    if (Number(l.packSize || 0) > 0) {
+      r.unit = l.unit || 'قطعة';
+      r.packType = l.packName || 'كرتونة';
+      r.packSize = l.packSize;
+      r.qty = l.packQty;
+      r.price = l.packCost;
+    } else {
+      r.unit = l.unit || 'قطعة';
+      r.packType = l.unit || 'قطعة';
+      r.packSize = '';
+      r.qty = l.qty;
+      r.price = l.cost;
+    }
+    return r;
+  }
+
+  async function openForEdit(container, id) {
+    const doc = await DB.get('purchases', id);
+    if (!doc) { Utils.toast('الفاتورة مش موجودة', 'error'); return; }
+    if (doc.voided) { Utils.toast('الفاتورة دي ملغاة — مينفعش تتعدّل', 'error'); return; }
+    if (!(await Lock.require('تعديل فاتورة'))) return;
+
+    await AppState.reloadItems();
+    editing = doc;
+    rows = (doc.lines || []).map(lineToRow);
+    if (!rows.length) rows = [blankRow()];
+    await render(container, true);
+
+    const sup = AppState.suppliers.find(s => s.id === doc.supplierId);
+    container.querySelector('#supplierName').value = sup ? sup.name : 'كاش';
+    container.querySelector('#invDate').value = Utils.dateKey(doc.date);
+    container.querySelector('#paidNow').value = doc.paidNow || 0;
+    updateTotals(container);
+    window.scrollTo(0, 0);
+  }
 
   function blankRow() {
     return {
@@ -50,13 +98,21 @@ Modules.purchases = (() => {
     return 'سيبها فاضية لو بتشتري بالوحدة، أو اكتب العدد + الوحدة لو عبوة (مثال: 100 متر)';
   }
 
-  async function render(container) {
+  async function render(container, keepEdit) {
     await AppState.reloadItems();
     await AppState.reloadParties();
-    rows = [blankRow()];
+    if (!keepEdit) { editing = null; rows = [blankRow()]; }
     if (detachScanner) { detachScanner(); detachScanner = null; }
 
     container.innerHTML = `
+      ${editing ? `
+      <div class="edit-banner">
+        <div>
+          <strong>بتعدّل في فاتورة ${Utils.escapeHtml(editing.number)}</strong>
+          <div class="hint" style="margin-top:2px;">أي تغيير هيتظبط لوحده في المخزن وحساب المورد</div>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="cancelEdit">سيبها زي ما هي</button>
+      </div>` : ''}
       <div class="card invoice-card">
         <div class="invoice-head">
           <div class="field inv-field">
@@ -129,12 +185,28 @@ Modules.purchases = (() => {
 
         <div class="form-actions">
           <button class="btn btn-ghost" id="clearInv">فاتورة جديدة</button>
-          <button class="btn btn-amber" id="saveInv">💾 حفظ الفاتورة</button>
+          ${editing ? `<button class="btn btn-danger" id="deleteInv">🗑️ امسح الفاتورة</button>` : ''}
+          <button class="btn btn-amber" id="saveInv">${editing ? '💾 احفظ التعديل' : '💾 حفظ الفاتورة'}</button>
         </div>
       </div>
 
       <div class="card" style="margin-top:18px;">
-        <div class="section-head"><h3>آخر المشتريات</h3></div>
+        <div class="section-head"><h3>فواتير المشتريات</h3></div>
+        <div class="inv-search">
+          <div class="field">
+            <label>من تاريخ</label>
+            <input type="date" id="qFrom">
+          </div>
+          <div class="field">
+            <label>لغاية</label>
+            <input type="date" id="qTo">
+          </div>
+          <div class="field" style="flex:2;">
+            <label>المورد أو رقم الفاتورة</label>
+            <input type="text" id="qName" placeholder="اكتب اسم المورد أو رقم الفاتورة" autocomplete="off">
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="qClear">امسح البحث</button>
+        </div>
         <div id="recentPurchases"></div>
       </div>
 
@@ -167,6 +239,38 @@ Modules.purchases = (() => {
     });
     container.querySelector('#addRowBtn').addEventListener('click', () => {
       rows.push(blankRow()); drawRows(container, rows[rows.length - 1]._id, 'barcode');
+    });
+
+    // ---------- البحث في الفواتير ----------
+    const runSearch = Utils.debounce(() => loadRecent(container), 200);
+    ['#qFrom', '#qTo'].forEach(sel => {
+      const el = container.querySelector(sel);
+      if (el) el.addEventListener('change', () => loadRecent(container));
+    });
+    const qn = container.querySelector('#qName');
+    if (qn) qn.addEventListener('input', runSearch);
+    const qc = container.querySelector('#qClear');
+    if (qc) qc.addEventListener('click', () => {
+      container.querySelector('#qFrom').value = '';
+      container.querySelector('#qTo').value = '';
+      container.querySelector('#qName').value = '';
+      loadRecent(container);
+    });
+
+    // ---------- أزرار وضع التعديل ----------
+    const cancelBtn = container.querySelector('#cancelEdit');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => render(container));
+
+    const delBtn = container.querySelector('#deleteInv');
+    if (delBtn) delBtn.addEventListener('click', async () => {
+      if (!editing) return;
+      if (!(await Lock.require('مسح فاتورة'))) return;
+      if (!(await Utils.confirmDialog(
+        `هتمسح فاتورة ${editing.number}؟\nالبضاعة هتتشال من المخزن، والفلوس وحساب المورد هيترجعوا زي ما كانوا.`))) return;
+      await Services.voidPurchase(editing.id);
+      await AppState.reloadItems(); await AppState.reloadParties(); await refreshShell();
+      Utils.toast('اتمسحت الفاتورة', 'success');
+      render(container);
     });
     container.querySelector('#paidNow').addEventListener('input', () => updateTotals(container));
     container.querySelector('#payAll').addEventListener('click', () => {
@@ -517,13 +621,18 @@ Modules.purchases = (() => {
     }
 
     const supplierId = await Services.resolveParty('suppliers', supplierName);
-    const res = await Services.savePurchase({ date, supplierId, lines, paidNow });
+    const res = editing
+      ? await Services.updatePurchase(editing.id, { date, supplierId, lines, paidNow })
+      : await Services.savePurchase({ date, supplierId, lines, paidNow });
 
     await AppState.reloadItems();
     await AppState.reloadParties();
     await refreshShell();
     Utils.beep('ok');
-    Utils.toast(`اتحفظت الفاتورة ${res.number}` + (res.dueAmount > 0 ? ` — باقي ${Utils.formatMoney(res.dueAmount)} على المورد` : ''), 'success');
+    Utils.toast(
+      (editing ? `اتعدّلت الفاتورة ${res.number}` : `اتحفظت الفاتورة ${res.number}`) +
+      (res.dueAmount > 0 ? ` — باقي ${Utils.formatMoney(res.dueAmount)} على المورد` : ''), 'success');
+    editing = null;
     render(container);            // بيرسم الشاشة من جديد بزرار جديد
 
     } catch (e) {
@@ -536,40 +645,70 @@ Modules.purchases = (() => {
   }
 
   async function loadRecent(container) {
-    const all = await DB.getAll('purchases');
-    all.sort((a, b) => new Date(b.date) - new Date(a.date));
     const box = container.querySelector('#recentPurchases');
     if (!box) return;
-    const recent = all.slice(0, 12);
-    if (!recent.length) {
-      box.innerHTML = `<div class="empty-state" style="padding:20px;"><div class="ic">📭</div>مفيش فواتير شراء لسه</div>`;
+
+    const from = (container.querySelector('#qFrom') || {}).value || '';
+    const to   = (container.querySelector('#qTo') || {}).value || '';
+    const q    = ((container.querySelector('#qName') || {}).value || '').trim().toLowerCase();
+    const searching = !!(from || to || q);
+
+    const supName = id => { const s = AppState.suppliers.find(x => x.id === id); return s ? s.name : 'كاش'; };
+
+    let all = await DB.getAll('purchases');
+    all.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    if (from) all = all.filter(p => Utils.dateKey(p.date) >= from);
+    if (to)   all = all.filter(p => Utils.dateKey(p.date) <= to);
+    if (q) {
+      all = all.filter(p =>
+        (p.number || '').toLowerCase().includes(q) ||
+        supName(p.supplierId).toLowerCase().includes(q) ||
+        (p.lines || []).some(l => (l.name || '').toLowerCase().includes(q)));
+    }
+
+    const list = searching ? all : all.slice(0, 12);
+
+    if (!list.length) {
+      box.innerHTML = `<div class="empty-state" style="padding:20px;"><div class="ic">📭</div>${
+        searching ? 'مفيش فواتير بالبحث ده' : 'مفيش فواتير شراء لسه'}</div>`;
       return;
     }
-    const supName = id => { const s = AppState.suppliers.find(x => x.id === id); return s ? s.name : 'كاش'; };
-    box.innerHTML = recent.map(p => `
+
+    box.innerHTML = `
+      ${searching ? `<div class="hint" style="margin-bottom:8px;">لقينا <strong>${list.length}</strong> فاتورة</div>` : ''}
+      ${list.map(p => `
       <div class="line-card clickable" data-id="${p.id}">
         <div class="line-main open-doc">
-          <div class="line-name"><span class="stmt-link">${p.number}</span> ${p.voided ? '<span class="badge badge-danger">ملغاة</span>' : ''}</div>
+          <div class="line-name"><span class="stmt-link">${p.number}</span>
+            ${p.voided ? '<span class="badge badge-danger">ملغاة</span>' : ''}
+            ${p.editedAt ? '<span class="badge badge-muted">اتعدّلت</span>' : ''}</div>
           <div class="line-detail">${Utils.formatDate(p.date)} · ${Utils.escapeHtml(supName(p.supplierId))} · ${p.lines.length} صنف${p.dueAmount > 0 ? ' · <span style="color:var(--amber-deep)">آجل ' + Utils.formatMoney(p.dueAmount) + '</span>' : ''}</div>
         </div>
         <div class="line-side">
           <div class="line-total">${Utils.formatMoney(p.total)}</div>
-          ${!p.voided ? '<button class="icon-btn void-btn" title="إلغاء الفاتورة">↩️</button>' : ''}
+          ${!p.voided ? '<button class="icon-btn edit-btn" title="تعديل الفاتورة">✏️</button>' : ''}
+          ${!p.voided ? '<button class="icon-btn void-btn" title="مسح الفاتورة">🗑️</button>' : ''}
         </div>
-      </div>`).join('');
+      </div>`).join('')}`;
 
     box.querySelectorAll('.open-doc').forEach(el => el.addEventListener('click', (e) => {
       Views.showInvoice('purchases', Number(e.currentTarget.closest('.line-card').dataset.id));
     }));
 
+    box.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      openForEdit(container, Number(e.target.closest('.line-card').dataset.id));
+    }));
+
     box.querySelectorAll('.void-btn').forEach(btn => btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const id = Number(e.target.closest('.line-card').dataset.id);
-      if (!(await Lock.require('إلغاء الفاتورة'))) return;
-      if (!(await Utils.confirmDialog('هيتم عكس أثر الفاتورة على المخزون والخزنة وحساب المورد. متأكد؟'))) return;
+      if (!(await Lock.require('مسح الفاتورة'))) return;
+      if (!(await Utils.confirmDialog('البضاعة هتتشال من المخزن، والفلوس وحساب المورد هيترجعوا زي ما كانوا. متأكد؟'))) return;
       await Services.voidPurchase(id);
       await AppState.reloadItems(); await AppState.reloadParties(); await refreshShell();
-      Utils.toast('اتلغت الفاتورة', 'success');
+      Utils.toast('اتمسحت الفاتورة', 'success');
       loadRecent(container);
     }));
   }

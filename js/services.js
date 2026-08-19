@@ -122,6 +122,159 @@ const Services = (() => {
     });
   }
 
+  /* ---------- تعديل فاتورة بيع متسجلة ----------
+     بنرجّع أثر الفاتورة القديمة الأول (مخزن + فلوس + حساب العميل)
+     وبعدين نطبّق الجديد، وكله في عملية واحدة.
+
+     مهم: مبنمسحش حركات المخزن ولا الخزنة القديمة — بنضيف حركات
+     عكسية. لأن الدفاتر دي بتتدمج بين الموبايل والكمبيوتر بالإضافة،
+     ولو مسحنا صف هيرجع تاني من الجهاز التاني. وكمان بيفضل عندك
+     سجل بكل تعديل حصل. */
+  async function updateSale(saleId, sale) {
+    return DB.tx(['items', 'stockMovements', 'sales', 'treasury', 'settings', 'customers'], 'readwrite', async (t) => {
+      const salesStore = t.objectStore('sales');
+      const old = await DB.reqToPromise(salesStore.get(saleId));
+      if (!old) throw new Error('الفاتورة مش موجودة');
+      if (old.voided) throw new Error('الفاتورة دي ملغاة — مينفعش تتعدّل');
+
+      const itemsStore = t.objectStore('items');
+      const movStore = t.objectStore('stockMovements');
+      const now = Utils.nowISO();
+
+      // ١) نرجّع أثر القديم
+      for (const line of (old.lines || [])) {
+        const item = await DB.reqToPromise(itemsStore.get(line.itemId));
+        if (item) {
+          item.stock = Math.round(((item.stock || 0) + line.qty) * 100) / 100;
+          await DB.reqToPromise(itemsStore.put(item));
+        }
+        await DB.reqToPromise(movStore.add({
+          itemId: line.itemId, type: 'return_in', qty: Math.abs(line.qty),
+          unitCost: line.cost || 0, date: now, refType: 'sale-edit', refId: saleId,
+          note: 'تعديل فاتورة بيع ' + old.number
+        }));
+      }
+      if (old.paidNow > 0) {
+        await _writeTreasuryMove(t, { direction: 'out', amount: old.paidNow, source: 'sale',
+          refId: saleId, note: `تعديل فاتورة بيع ${old.number}` });
+      }
+      if (old.dueAmount > 0 && old.customerId) {
+        await _bumpPartyBalance(t, 'customers', old.customerId, -old.dueAmount);
+      }
+
+      // ٢) نطبّق الجديد
+      const lines = sale.lines || [];
+      if (!lines.length) throw new Error('الفاتورة لازم يكون فيها صنف واحد على الأقل');
+      const subtotal = lines.reduce((s, l) => s + l.qty * l.price, 0);
+      const total = Math.max(0, Math.round((subtotal - (sale.discount || 0)) * 100) / 100);
+      const paidNow = Math.min(sale.paidNow ?? total, total);
+      const dueAmount = Math.round((total - paidNow) * 100) / 100;
+
+      for (const line of lines) {
+        const item = await DB.reqToPromise(itemsStore.get(line.itemId));
+        if (item) {
+          item.stock = Math.round(((item.stock || 0) - line.qty) * 100) / 100;
+          await DB.reqToPromise(itemsStore.put(item));
+        }
+        await DB.reqToPromise(movStore.add({
+          itemId: line.itemId, type: 'sale', qty: -Math.abs(line.qty),
+          unitCost: line.cost || 0, date: sale.date || old.date,
+          refType: 'sale', refId: saleId, note: line.name
+        }));
+      }
+      if (paidNow > 0) {
+        await _writeTreasuryMove(t, { direction: 'in', amount: paidNow, source: 'sale',
+          refId: saleId, note: `فاتورة بيع ${old.number} (بعد التعديل)` });
+      }
+      if (dueAmount > 0 && sale.customerId) {
+        await _bumpPartyBalance(t, 'customers', sale.customerId, dueAmount);
+      }
+
+      const updated = Object.assign({}, old, {
+        date: sale.date || old.date, lines, subtotal,
+        discount: sale.discount || 0, total,
+        paymentMethod: dueAmount > 0 ? (paidNow > 0 ? 'mixed' : 'credit') : 'cash',
+        customerId: sale.customerId || null, paidNow, dueAmount,
+        editedAt: now
+      });
+      await DB.reqToPromise(salesStore.put(updated));
+      return { id: saleId, number: old.number, total, dueAmount };
+    });
+  }
+
+  /* ---------- تعديل فاتورة شراء متسجلة ---------- */
+  async function updatePurchase(purchaseId, purchase) {
+    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers'], 'readwrite', async (t) => {
+      const store = t.objectStore('purchases');
+      const old = await DB.reqToPromise(store.get(purchaseId));
+      if (!old) throw new Error('الفاتورة مش موجودة');
+      if (old.voided) throw new Error('الفاتورة دي ملغاة — مينفعش تتعدّل');
+
+      const itemsStore = t.objectStore('items');
+      const movStore = t.objectStore('stockMovements');
+      const now = Utils.nowISO();
+
+      // ١) نرجّع أثر القديم — البضاعة تطلع من المخزن تاني
+      for (const line of (old.lines || [])) {
+        const item = await DB.reqToPromise(itemsStore.get(line.itemId));
+        if (item) {
+          item.stock = Math.round(((item.stock || 0) - line.qty) * 100) / 100;
+          await DB.reqToPromise(itemsStore.put(item));
+        }
+        await DB.reqToPromise(movStore.add({
+          itemId: line.itemId, type: 'return_out', qty: -Math.abs(line.qty),
+          unitCost: line.cost || 0, date: now, refType: 'purchase-edit', refId: purchaseId,
+          note: 'تعديل فاتورة شراء ' + old.number
+        }));
+      }
+      if (old.paidNow > 0) {
+        await _writeTreasuryMove(t, { direction: 'in', amount: old.paidNow, source: 'purchase',
+          refId: purchaseId, note: `تعديل فاتورة شراء ${old.number}` });
+      }
+      if (old.dueAmount > 0 && old.supplierId) {
+        await _bumpPartyBalance(t, 'suppliers', old.supplierId, -old.dueAmount);
+      }
+
+      // ٢) نطبّق الجديد
+      const lines = purchase.lines || [];
+      if (!lines.length) throw new Error('الفاتورة لازم يكون فيها صنف واحد على الأقل');
+      const total = Math.round(lines.reduce((s, l) => s + l.qty * l.cost, 0) * 100) / 100;
+      const paidNow = Math.min(purchase.paidNow ?? 0, total);
+      const dueAmount = Math.round((total - paidNow) * 100) / 100;
+
+      for (const line of lines) {
+        const item = await DB.reqToPromise(itemsStore.get(line.itemId));
+        if (item) {
+          item.stock = Math.round(((item.stock || 0) + line.qty) * 100) / 100;
+          if (line.cost) item.costPrice = line.cost;
+          item.lastSupplierId = purchase.supplierId || item.lastSupplierId || null;
+          await DB.reqToPromise(itemsStore.put(item));
+        }
+        await DB.reqToPromise(movStore.add({
+          itemId: line.itemId, type: 'purchase', qty: Math.abs(line.qty),
+          unitCost: line.cost, date: purchase.date || old.date,
+          refType: 'purchase', refId: purchaseId, note: line.name
+        }));
+      }
+      if (paidNow > 0) {
+        await _writeTreasuryMove(t, { direction: 'out', amount: paidNow, source: 'purchase',
+          refId: purchaseId, note: `فاتورة شراء ${old.number} (بعد التعديل)` });
+      }
+      if (dueAmount > 0 && purchase.supplierId) {
+        await _bumpPartyBalance(t, 'suppliers', purchase.supplierId, dueAmount);
+      }
+
+      const updated = Object.assign({}, old, {
+        date: purchase.date || old.date, lines, total,
+        supplierId: purchase.supplierId || null,
+        paymentMethod: dueAmount > 0 ? (paidNow > 0 ? 'mixed' : 'credit') : 'cash',
+        paidNow, dueAmount, editedAt: now
+      });
+      await DB.reqToPromise(store.put(updated));
+      return { id: purchaseId, number: old.number, total, dueAmount };
+    });
+  }
+
   /* ---------- مرتجع من فاتورة بيع ----------
      العميل رجّع صنف أو أكتر. بنعدّل الفاتورة نفسها (الكميات والإجمالي) عشان
      كل التقارير تفضل مظبوطة لوحدها، وبنرجّع البضاعة للمخزن.
@@ -574,7 +727,7 @@ const Services = (() => {
 
   return {
     isCashName, resolveParty, returnSaleItems, returnPurchaseItems, saveReturn,
-    getCashBalance, saveSale, voidSale, savePurchase, voidPurchase,
+    getCashBalance, saveSale, voidSale, updateSale, savePurchase, voidPurchase, updatePurchase,
     saveExpense, deleteExpense, manualTreasuryMove,
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
     exportBackup, importBackup
