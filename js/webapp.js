@@ -139,15 +139,28 @@ async function init() {
   const verEl = document.getElementById('buildVer');
   if (verEl) verEl.textContent = APP_VERSION;
 
-  if (!Drive.isSignedIn()) await showSignIn(null);
-
   await DB.open();
+
+  /* البرنامج بيفتح على طول من غير ما يستنى جوجل.
+     - لو الإذن لسه صالح: تمام.
+     - لو خلص وقته: بنجدده في الخلفية من غير ما يظهرلك حاجة.
+     - لو دي أول مرة خالص: ساعتها بس بنطلب الدخول.
+     كده تدوس على الأيقونة ويفتح زي الكمبيوتر بالظبط. */
+  if (!Drive.isSignedIn()) {
+    if (Drive.wasConnected()) {
+      try { await Drive.renewQuietly(); } catch (e) { }
+    } else {
+      await showSignIn(null);
+    }
+  }
 
   /* الترتيب هنا مقصود: بنجيب اللي في الدرايف الأول، وبعدين الجهاز
      ياخد رقمه. كده الموبايل بيشوف أرقام الأجهزة المستعملة فعلاً
      وياخد رقم فاضي — بدل ما ياخد رقم متكرر ويعمل فواتير بنفس
      أرقام فواتير المحل. */
-  try { await DriveSync.pullOthers(); } catch (e) { }
+  if (Drive.isSignedIn()) {
+    try { await DriveSync.pullOthers(); } catch (e) { }
+  }
   await Device.init();
   try { await DriveSync.runOnce(true); } catch (e) { }
 

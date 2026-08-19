@@ -86,6 +86,11 @@ const DriveSync = (() => {
         if (!silent && typeof Utils !== 'undefined') {
           Utils.toast('وصلك ' + added + ' سجل جديد من جهاز تاني', 'success');
         }
+        /* مهم: كلمة السر ممكن تكون وصلت مع الدمج، فلازم البرنامج
+           يعيد قراءتها. من غير كده بيفضل مقارن بالقديمة ويقول "غلط". */
+        if (typeof Auth !== 'undefined' && Auth.refreshPin) {
+          try { await Auth.refreshPin(); } catch (e) { }
+        }
         if (typeof AppState !== 'undefined') {
           await AppState.reloadItems();
           await AppState.reloadParties();

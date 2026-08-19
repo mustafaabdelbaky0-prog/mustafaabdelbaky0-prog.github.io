@@ -86,6 +86,44 @@ const Drive = (() => {
     });
   }
 
+  /* تجديد الإذن من غير ما يظهر أي حاجة للمستخدم.
+     الإذن اللي جوجل بتديه بيخلص بعد ساعة، ومن غير التجديد ده كان
+     البرنامج هيطلب تسجيل دخول كل شوية. بنستعمله في الخلفية بس —
+     لو فشل، البرنامج بيفضل شغال بالبيانات اللي على الجهاز. */
+  async function renewQuietly() {
+    if (loadSavedToken()) { token = loadSavedToken(); return true; }
+    try {
+      await loadGsi();
+    } catch (e) { return false; }
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+      try {
+        const client = google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPE,
+          callback: (resp) => {
+            if (resp && resp.access_token) {
+              saveToken({
+                value: resp.access_token,
+                expiresAt: Date.now() + (Number(resp.expires_in || 3600) * 1000)
+              });
+              finish(true);
+            } else finish(false);
+          },
+          error_callback: () => finish(false)
+        });
+        client.requestAccessToken({ prompt: '' });
+      } catch (e) { finish(false); }
+      setTimeout(() => finish(false), 8000);
+    });
+  }
+
+  // فيه إذن متخزن قبل كده؟ (حتى لو خلص وقته)
+  function wasConnected() {
+    try { return !!localStorage.getItem(TOKEN_KEY); } catch (e) { return false; }
+  }
+
   async function auth() {
     const t = token || loadSavedToken();
     if (!t) throw new Error('لسه مش داخل على جوجل');
@@ -165,5 +203,5 @@ const Drive = (() => {
     return true;
   }
 
-  return { signIn, isSignedIn, forget, list, readFile, writeFile, ensureFolder, FOLDER_NAME };
+  return { signIn, renewQuietly, wasConnected, isSignedIn, forget, list, readFile, writeFile, ensureFolder, FOLDER_NAME };
 })();

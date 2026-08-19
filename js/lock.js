@@ -41,6 +41,25 @@ const Auth = (() => {
     return role;
   }
 
+  /* بيعيد قراءة كلمة السر من البيانات.
+     لازم تتنده بعد أي مزامنة تجيب بيانات جديدة — لأن البرنامج بيقرا
+     كلمة السر مرة واحدة وقت الفتح. من غير كده، الموبايل يفضل مقارن
+     بكلمة سر قديمة ويقول "غلط" رغم إنك بتكتب الصح. */
+  async function refreshPin() {
+    let newHash = null;
+    try {
+      const rec = await DB.get('settings', PIN_KEY);
+      newHash = rec ? rec.value : null;
+    } catch (e) { return false; }
+    if (newHash === pinHash) return false;
+
+    pinHash = newHash;
+    // مبقاش فيه كلمة سر خالص؟ يبقى مفيش حاجة تتقفل
+    if (!pinHash && role !== 'owner') setRole('owner');
+    if (typeof refreshRoleUI === 'function') refreshRoleUI();
+    return true;
+  }
+
   function isEnabled() { return !!pinHash; }
   function current() { return role; }
   function isOwner() { return role === 'owner'; }
@@ -167,7 +186,7 @@ const Auth = (() => {
   }
 
   return {
-    init, isEnabled, current, isOwner, isSeller, canSee,
+    init, refreshPin, isEnabled, current, isOwner, isSeller, canSee,
     loginOwner, logout, requireOwner, setPin, OWNER_ROUTES
   };
 })();
