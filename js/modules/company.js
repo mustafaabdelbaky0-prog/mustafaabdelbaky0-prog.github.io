@@ -100,6 +100,18 @@ Modules.company = (() => {
 
         <div class="card">
           <div class="section-head">
+            <h3>المزامنة مع الموبايل</h3>
+            <button class="btn btn-ghost btn-sm" id="syncNow">زامن دلوقتي</button>
+          </div>
+          <p class="muted" style="font-size:13px;line-height:1.9;margin-bottom:10px;">
+            عشان تشتغل من الموبايل وإنت بره وتلاقي الشغل هنا لما ترجع،
+            لازم الكمبيوتر والموبايل يبقوا مربوطين بنفس حساب جوجل.
+          </p>
+          <div id="syncStatus"><div class="empty-state" style="padding:18px;">بيشوف الحالة...</div></div>
+        </div>
+
+        <div class="card">
+          <div class="section-head">
             <h3>ملف الإكسيل على جوجل درايف</h3>
             <button class="btn btn-ghost btn-sm" id="reportNow">حدّثه دلوقتي</button>
           </div>
@@ -158,6 +170,76 @@ Modules.company = (() => {
     // نسخة الموقع (الموبايل) مالهاش سيرفر محلي — فالكروت اللي بتسأله
     // بتتبدل بحالة المزامنة مع الدرايف.
     const onWeb = typeof window !== 'undefined' && !!window.DB_BACKEND;
+
+    // ---------- المزامنة مع الأجهزة التانية ----------
+    async function loadSyncStatus() {
+      const box = container.querySelector('#syncStatus');
+      if (!box) return;
+      const s = DriveSync.getStatus();
+
+      if (!Drive.isSignedIn()) {
+        box.innerHTML = `
+          <div class="notice notice-warn" style="line-height:1.95;">
+            🔓 <strong>لسه مش مربوط.</strong><br>
+            الشغل اللي هنا مش بيوصل للموبايل، واللي على الموبايل مش بيوصل هنا.
+          </div>
+          <button class="btn btn-amber btn-block" id="driveConnect" style="margin-top:12px;">
+            اربط بحساب جوجل
+          </button>
+          <div class="hint" style="margin-top:10px;line-height:1.9;">
+            استعمل <strong>نفس الحساب</strong> اللي هتدخل بيه من الموبايل.
+            البرنامج بيشوف الملفات اللي بيعملها هو بس في درايفك.
+          </div>`;
+        const btn = box.querySelector('#driveConnect');
+        btn.addEventListener('click', async () => {
+          btn.disabled = true; btn.textContent = 'بيفتح جوجل...';
+          try {
+            await Drive.signIn(false);
+            await DriveSync.runOnce(false);
+            DriveSync.start();
+            Utils.toast('اتربط بجوجل درايف', 'success');
+          } catch (e) {
+            Utils.toast(e.message || 'الربط مانجحش', 'error');
+          }
+          btn.disabled = false; btn.textContent = 'اربط بحساب جوجل';
+          loadSyncStatus();
+        });
+        return;
+      }
+
+      box.innerHTML = `
+        <div class="notice ${s.error ? 'notice-warn' : 'notice-ok'}" style="line-height:1.95;">
+          ${s.error ? '⚠️ ' + Utils.escapeHtml(s.error) : '✅ مربوط بجوجل درايف'}
+          ${s.lastSync ? `<br><span style="font-size:12px;">آخر مزامنة: ${Utils.escapeHtml(Utils.formatDateTime(s.lastSync))}</span>` : ''}
+        </div>
+        <div class="hint" style="line-height:1.95;margin-top:8px;">
+          الجهاز ده رقمه <strong>${Device.current()}</strong> (${Utils.escapeHtml(Device.currentName())}).
+          ${s.devices ? `<br>أجهزة تانية مربوطة: <strong>${s.devices}</strong>` : '<br>لسه مفيش أجهزة تانية مربوطة.'}
+        </div>
+        <button class="btn btn-ghost btn-block" id="driveOff" style="margin-top:12px;">افصل الربط</button>`;
+      box.querySelector('#driveOff').addEventListener('click', async () => {
+        if (!(await Utils.confirmDialog('هتفصل الربط بجوجل درايف؟ الشغل هيفضل على الجهاز ده بس.'))) return;
+        Drive.forget(); DriveSync.stop();
+        Utils.toast('اتفصل الربط', 'info');
+        loadSyncStatus();
+      });
+    }
+    if (!onWeb) {
+      loadSyncStatus();
+      const sn = container.querySelector('#syncNow');
+      if (sn) sn.addEventListener('click', async () => {
+        sn.disabled = true;
+        const added = await DriveSync.runOnce(false);
+        sn.disabled = false;
+        const st = DriveSync.getStatus();
+        if (st.error) Utils.toast(st.error, 'error');
+        else if (added === 0) Utils.toast('كل حاجة متزامنة', 'info');
+        loadSyncStatus();
+      });
+    } else {
+      const card = container.querySelector('#syncStatus');
+      if (card && card.closest('.card')) card.closest('.card').style.display = 'none';
+    }
 
     // ---------- ملف الإكسيل على السحابة ----------
     async function loadReportStatus() {

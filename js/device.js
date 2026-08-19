@@ -34,14 +34,22 @@ const Device = (() => {
   /* بيحجز رقم جهاز جديد. الحجز بيتم جوه معاملة، فلو جهازين حاولوا
      ياخدوا نفس الرقم في نفس اللحظة، واحد بس هينجح والتاني هيعيد
      المحاولة وياخد الرقم اللي بعده. */
+  // الرقم ١ محجوز لكمبيوتر المحل وحده. أي جهاز تاني بيبدأ من ٢.
+  // من غير القاعدة دي، الموبايل — لأنه بيبدأ ببيانات فاضية — كان
+  // بياخد رقم ١ هو كمان، فيطلعوا فواتير بنفس الأرقام وتدوس على بعض.
+  function isShopPc() {
+    return ['localhost', '127.0.0.1'].includes(location.hostname);
+  }
+
   async function claim(desiredName) {
     let claimed = null;
+    const first = isShopPc() ? 1 : 2;
     await DB.tx(['settings'], 'readwrite', async (t) => {
       const store = t.objectStore('settings');
       const rec = await DB.reqToPromise(store.get(LIST_KEY));
       const list = (rec && Array.isArray(rec.value)) ? rec.value.slice() : [];
       const used = new Set(list.map(d => Number(d.no)));
-      let n = 1;
+      let n = first;
       while (used.has(n)) n++;
       claimed = n;
       list.push({ no: n, name: desiredName, since: Utils.nowISO() });

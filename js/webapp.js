@@ -139,12 +139,16 @@ async function init() {
   const verEl = document.getElementById('buildVer');
   if (verEl) verEl.textContent = APP_VERSION;
 
-  await Device.init();
-
   if (!Drive.isSignedIn()) await showSignIn(null);
 
-  // أول تحميل: نجيب اللي في الدرايف قبل ما نعرض حاجة
   await DB.open();
+
+  /* الترتيب هنا مقصود: بنجيب اللي في الدرايف الأول، وبعدين الجهاز
+     ياخد رقمه. كده الموبايل بيشوف أرقام الأجهزة المستعملة فعلاً
+     وياخد رقم فاضي — بدل ما ياخد رقم متكرر ويعمل فواتير بنفس
+     أرقام فواتير المحل. */
+  try { await DriveSync.pullOthers(); } catch (e) { }
+  await Device.init();
   try { await DriveSync.runOnce(true); } catch (e) { }
 
   await Auth.init();
