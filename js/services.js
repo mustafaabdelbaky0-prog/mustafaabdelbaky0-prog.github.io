@@ -19,10 +19,37 @@ const Services = (() => {
     const curBal = await _readBalance(t);
     const newBal = Math.round(((direction === 'in') ? curBal + amount : curBal - amount) * 100) / 100;
     await DB.reqToPromise(t.objectStore('settings').put({ key: CASH_KEY, value: newBal }));
-    const id = await DB.reqToPromise(t.objectStore('treasury').add({
-      date: date || Utils.nowISO(), direction, amount, source,
+    const when = date || Utils.nowISO();
+    const store = t.objectStore('treasury');
+    const id = await DB.reqToPromise(store.add({
+      date: when, direction, amount, source,
       refId: refId ?? null, note: note || '', balanceAfter: newBal
     }));
+
+    /* لو الحركة اتسجلت بتاريخ قديم (مثلاً مصروف صرفته امبارح وكتبته
+       النهاردة)، يبقى ترتيب الحركات اتغير و"الرصيد بعد الحركة" في
+       السطور اللي بعدها بقى غلط. بنعيد حسابه بالترتيب الصح.
+       بنعمل ده بس في الحالة دي — مش في كل حركة عادية. */
+    const rows = await DB.reqToPromise(store.getAll());
+    let outOfOrder = false;
+    for (const r of rows) {
+      if (Number(r.id) !== Number(id) && new Date(r.date) > new Date(when)) { outOfOrder = true; break; }
+    }
+    if (outOfOrder) {
+      const sorted = rows.slice().sort((a, b) => {
+        const d = new Date(a.date) - new Date(b.date);
+        return d !== 0 ? d : (Number(a.id) - Number(b.id));
+      });
+      let run = 0;
+      for (const r of sorted) {
+        run = Math.round((run + (r.direction === 'in' ? Number(r.amount || 0) : -Number(r.amount || 0))) * 100) / 100;
+        if (Math.abs(Number(r.balanceAfter || 0) - run) > 0.005) {
+          r.balanceAfter = run;
+          await DB.reqToPromise(store.put(r));
+        }
+      }
+    }
+
     return { id, balanceAfter: newBal };
   }
 
@@ -621,7 +648,10 @@ const Services = (() => {
         date: expense.date || Utils.nowISO(), category: expense.category,
         description: expense.description || '', amount: expense.amount
       }));
-      await _writeTreasuryMove(t, { direction: 'out', amount: expense.amount, source: 'expense', refId: id, note: expense.category });
+      // الفلوس تطلع من الخزنة بنفس تاريخ المصروف — لو سجّلته بتاريخ
+      // امبارح، حركة الخزنة تبقى امبارح كمان مش النهاردة
+      await _writeTreasuryMove(t, { direction: 'out', amount: expense.amount, source: 'expense',
+        refId: id, note: expense.category, date: expense.date });
       return id;
     });
   }
@@ -645,17 +675,22 @@ const Services = (() => {
   }
 
   // ---------- تحصيل من عميل / سداد لمورد ----------
-  async function collectFromCustomer(customerId, amount, note) {
+  async function collectFromCustomer(customerId, amount, note, date) {
     return DB.tx(['customers', 'treasury', 'settings'], 'readwrite', async (t) => {
       await _bumpPartyBalance(t, 'customers', customerId, -amount);
-      return _writeTreasuryMove(t, { direction: 'in', amount, source: 'collect', refId: customerId, note: note || 'تحصيل من عميل' });
+      return _writeTreasuryMove(t, { direction: 'in', amount, source: 'collect',
+        refId: customerId, note: note || 'تحصيل من عميل', date });
     });
   }
 
-  async function payToSupplier(supplierId, amount, note) {
+  /* سداد لمورد — بينزل من الخزنة ومن حساب المورد في نفس الوقت.
+     مهم: ده مش "مصروف". البضاعة اتحسبت عليك يوم ما اشتريتها، فلو
+     حسبنا الدفعة مصروف كمان كانت هتتحسب مرتين والأرباح تطلع غلط. */
+  async function payToSupplier(supplierId, amount, note, date) {
     return DB.tx(['suppliers', 'treasury', 'settings'], 'readwrite', async (t) => {
       await _bumpPartyBalance(t, 'suppliers', supplierId, -amount);
-      return _writeTreasuryMove(t, { direction: 'out', amount, source: 'pay', refId: supplierId, note: note || 'سداد لمورد' });
+      return _writeTreasuryMove(t, { direction: 'out', amount, source: 'pay',
+        refId: supplierId, note: note || 'سداد لمورد', date });
     });
   }
 
