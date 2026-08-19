@@ -137,9 +137,31 @@ document.getElementById('syncBtn').addEventListener('click', async (e) => {
   Utils.toast(m.text, m.kind);
 });
 
+/* بيشوف لو فيه نسخة أحدث منشورة ويحمّلها.
+   المتصفح بيمسك الملفات ١٠ دقايق (ده إعداد جيت هب ومش بإيدنا)، فكنا
+   بنفضل شغالين بنسخة قديمة بعد كل تحديث. بنسأل عن رقم النسخة من غير
+   تخزين مؤقت، ولو مختلف بنعيد فتح الصفحة برقم جديد فتيجي جديدة. */
+async function checkForUpdate() {
+  try {
+    const res = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) return;
+    const info = await res.json();
+    if (!info || !info.version || info.version === APP_VERSION) return;
+
+    // حماية من إعادة الفتح المتكررة لو حاجة مش مظبوطة
+    const tried = sessionStorage.getItem('mostafaUpdateTry');
+    if (tried === info.stamp) return;
+    sessionStorage.setItem('mostafaUpdateTry', info.stamp);
+
+    location.replace(location.pathname + '?v=' + encodeURIComponent(info.stamp));
+  } catch (e) { /* مفيش نت — بنكمل بالنسخة اللي عندنا */ }
+}
+
 async function init() {
   const verEl = document.getElementById('buildVer');
   if (verEl) verEl.textContent = APP_VERSION;
+
+  checkForUpdate();
 
   await DB.open();
 
