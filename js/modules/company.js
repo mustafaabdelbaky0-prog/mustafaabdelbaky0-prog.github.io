@@ -361,15 +361,35 @@ Modules.company = (() => {
             <div class="bk-time">${t.last ? Utils.escapeHtml(t.last) : '<span class="muted">لسه</span>'}</div>
           </div>`).join('');
 
-        box.innerHTML = `
-          ${info.hasExternal
-            ? `<div class="notice notice-ok">بياناتك متنسخة على فلاشة برّه الجهاز ✅</div>`
-            : `<div class="notice notice-warn">
-                 <strong>مفيش نسخة برّه الجهاز.</strong><br>
-                 كل النسخ دلوقتي على نفس الهارد — لو الهارد باظ هتضيع معاه.
-                 <strong>حط فلاشة في الكمبيوتر</strong> والبرنامج هينسخ عليها لوحده كل شوية.
-               </div>`}
-          <div class="bk-list">${rows}</div>`;
+        /* بنفرّق بين نوعين حماية:
+             - نسخة برّه الجهاز (درايف أو فلاشة) — بتنجيك لو الهارد باظ
+             - نسخ عليها تاريخ — بتنجيك لو حصلت غلطة ومحستش بيها بدري */
+        const offMachine = (info.targets || []).filter(t => t.safe && t.last);
+        const onDrive = offMachine.some(t => (t.kind || '').indexOf('درايف') >= 0);
+        const onUsb = offMachine.some(t => (t.kind || '').indexOf('فلاشة') >= 0);
+
+        let banner;
+        if (onDrive && onUsb) {
+          banner = `<div class="notice notice-ok" style="line-height:1.95;">
+            <strong>بياناتك محمية بالكامل ✅</strong><br>
+            نسخ بتاريخ على جوجل درايف <strong>وعلى فلاشة</strong> — غير ملف المزامنة.
+          </div>`;
+        } else if (onDrive) {
+          banner = `<div class="notice notice-ok" style="line-height:1.95;">
+            <strong>بياناتك برّه الجهاز على جوجل درايف ✅</strong><br>
+            وفيه نسخ عليها تاريخ، فلو حصلت غلطة تقدر ترجع ليوم قبلها.
+            <br><span class="muted">لو حبيت أمان زيادة، حط فلاشة — بس مش ضروري.</span>
+          </div>`;
+        } else if (onUsb) {
+          banner = `<div class="notice notice-ok">بياناتك متنسخة على فلاشة برّه الجهاز ✅</div>`;
+        } else {
+          banner = `<div class="notice notice-warn" style="line-height:1.95;">
+            <strong>مفيش نسخة برّه الجهاز لسه.</strong><br>
+            كل النسخ دلوقتي على نفس الهارد. اربط جوجل درايف من كارت المزامنة فوق،
+            أو حط فلاشة في الكمبيوتر.
+          </div>`;
+        }
+        box.innerHTML = banner + `<div class="bk-list">${rows}</div>`;
       } catch (e) {
         box.innerHTML = `<div class="notice notice-warn">مقدرناش نجيب حالة النسخ الاحتياطي</div>`;
       }
