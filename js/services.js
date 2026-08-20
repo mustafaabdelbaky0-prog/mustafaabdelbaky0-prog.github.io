@@ -1202,7 +1202,7 @@ const Services = (() => {
        - لو فيه فرق: بيسجّل حركة خزنة بالفرق عشان رصيد البرنامج يبقى
          مطابق للفلوس اللي معاك فعلاً، وبيفضل الفرق متسجّل عشان تراجعه.
      من غير ده، أي فرق صغير بيفضل مستخبي لحد ما يكبر ومتعرفش سببه. */
-  async function closeDay({ date, counted, note }) {
+  async function closeDay({ date, counted, note, redo }) {
     return DB.tx(['dayClosings', 'treasury', 'settings'], 'readwrite', async (t) => {
       const when = date || Utils.nowISO();
       const day = Utils.dateKey(when);
@@ -1210,7 +1210,13 @@ const Services = (() => {
       const store = t.objectStore('dayClosings');
       const existing = (await DB.reqToPromise(store.getAll()))
         .find(c => Utils.dateKey(c.date) === day);
-      if (existing) throw new Error('اليوم ده متقفّل خلاص (' + day + ')');
+      /* لو باع حاجة بعد التقفيل، بيقدر يقفل تاني (redo) — بنسيب التقفيل
+         القديم في السجل عشان يفضل عندك تاريخ، وبنعلّم عليه إنه اتعدّى. */
+      if (existing && !redo) throw new Error('اليوم ده متقفّل خلاص (' + day + ')');
+      if (existing && redo) {
+        existing.superseded = true;
+        await DB.reqToPromise(store.put(existing));
+      }
 
       const expected = await _readBalance(t);
       const cash = Math.round((Number(counted) || 0) * 100) / 100;
@@ -1229,9 +1235,13 @@ const Services = (() => {
         moveId = m ? m.id : null;
       }
 
+      // بنسجّل عدد حركات الخزنة وقت التقفيل — عشان نعرف بعدين
+      // لو حصلت حركة جديدة بعد ما قفل
+      const treasuryCount = (await DB.reqToPromise(t.objectStore('treasury').getAll())).length;
+
       const id = await DB.reqToPromise(store.add({
         date: when, day, expected, counted: cash, difference: diff,
-        note: note || '', moveId, closedAt: Utils.nowISO(),
+        note: note || '', moveId, closedAt: Utils.nowISO(), treasuryCount,
         device: (typeof Device !== 'undefined') ? Device.current() : null
       }));
       return { id, day, expected, counted: cash, difference: diff };
@@ -1258,6 +1268,27 @@ const Services = (() => {
     const dayReturns = returns.filter(r => r.kind === 'customer' && onDay(r.date))
       .reduce((a, r) => a + Number(r.total || 0), 0);
 
+    /* آخر تقفيل لليوم ده. ممكن يكون قفل أكتر من مرة لو باع بعد
+       التقفيل ورجع قفل تاني — بناخد الأخير. */
+    const dayClosings = closings.filter(c => c.day === day)
+      .sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
+    const closed = dayClosings.length ? dayClosings[dayClosings.length - 1] : null;
+
+    /* لو حصل بيع أو صرف بعد ما قفل، التقفيل بيبقى برقم قديم والدرج
+       فيه فلوس مش متحسبة.
+
+       مبنقارنش بالوقت لأن الفاتورة بتتسجل بتاريخ اليوم على نص النهار
+       (عشان التوقيت ما يزحلقش يوم)، فوقتها مش بيدل على ترتيبها.
+       بنقارن بالرصيد: أول ما تقفل، رصيد الخزنة بيساوي اللي عديته
+       بالظبط — فأي فرق بعد كده معناه حصلت حركة. */
+    const nowBalance = await getCashBalance();
+    let afterClose = 0, afterCount = 0;
+    if (closed) {
+      afterClose = Math.round((nowBalance - Number(closed.counted || 0)) * 100) / 100;
+      afterCount = Math.max(0, treasury.length - Number(closed.treasuryCount || treasury.length));
+      if (Math.abs(afterClose) > 0.005 && afterCount === 0) afterCount = 1;
+    }
+
     return {
       day,
       invoices: daySales.length,
@@ -1267,7 +1298,9 @@ const Services = (() => {
       cashIn: Math.round(cashIn * 100) / 100,
       cashOut: Math.round(cashOut * 100) / 100,
       expected: await getCashBalance(),
-      closed: closings.find(c => c.day === day) || null
+      closed,
+      afterClose: Math.round(afterClose * 100) / 100,
+      afterCount
     };
   }
 

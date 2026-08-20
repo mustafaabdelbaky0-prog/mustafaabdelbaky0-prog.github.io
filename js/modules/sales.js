@@ -149,9 +149,11 @@ Modules.sales = (() => {
           <div class="field inv-field">
             <label>البائع</label>
             <select id="sellerSel">
-              <option value="">—</option>
+              <option value="">— مين بيبيع؟</option>
+              <option value="owner">صاحب المحل</option>
               ${sellers.map(s => `<option value="${s.id}">${Utils.escapeHtml(s.name)}</option>`).join('')}
             </select>
+            <div class="hint" id="sellerHint"></div>
           </div>` : ''}
           <div class="field inv-field">
             <label>رقم الفاتورة</label>
@@ -256,14 +258,32 @@ Modules.sales = (() => {
       if (code) onScan(container, code);
     });
     /* البائع بيفضل محفوظ على الجهاز — البياع بيختار نفسه مرة واحدة
-       وكل فاتورة بعدها بتتسجل باسمه من غير ما يفتكر. */
+       وكل فاتورة بعدها بتتسجل باسمه من غير ما يفتكر.
+
+       ولو لسه ما اختارش، بنفضل نبيّن تنبيه أصفر تحت الخانة — لأن
+       الفواتير اللي من غير بائع مش بتتحسب عمولة لحد، والبياع بينسى. */
     const sellerSel = container.querySelector('#sellerSel');
     if (sellerSel) {
+      const hint = container.querySelector('#sellerHint');
       const saved = localStorage.getItem('lastSellerId') || '';
-      if (saved && sellers.some(s => String(s.id) === saved)) sellerSel.value = saved;
+      if (saved === 'owner' || (saved && sellers.some(s => String(s.id) === saved))) {
+        sellerSel.value = saved;
+      }
+      function syncSeller() {
+        const v = sellerSel.value;
+        if (!v) {
+          hint.innerHTML = '<span style="color:var(--amber-deep);font-weight:700;">اختار مين بيبيع — عشان العمولة تتحسب صح</span>';
+          sellerSel.style.borderColor = 'var(--amber)';
+        } else {
+          hint.textContent = v === 'owner' ? 'الفاتورة دي مش عليها عمولة' : '';
+          sellerSel.style.borderColor = '';
+        }
+      }
       sellerSel.addEventListener('change', () => {
         localStorage.setItem('lastSellerId', sellerSel.value || '');
+        syncSeller();
       });
+      syncSeller();
     }
 
     container.querySelector('#addRowBtn').addEventListener('click', () => {
@@ -636,7 +656,9 @@ Modules.sales = (() => {
     try {
       const customerId = await Services.resolveParty('customers', customerName);
       const sellerEl = container.querySelector('#sellerSel');
-      const sellerId = sellerEl && sellerEl.value ? Number(sellerEl.value) : null;
+      const sellerVal = sellerEl ? sellerEl.value : '';
+      // "صاحب المحل" اختيار مقصود — يعني الفاتورة دي مالهاش عمولة
+      const sellerId = (sellerVal && sellerVal !== 'owner') ? Number(sellerVal) : null;
       const sale = {
         date, customerId, discount, sellerId,
         // بنسجّل دايمًا بالوحدة الأصلية (المتر)، وبنحتفظ بشكل العبوة

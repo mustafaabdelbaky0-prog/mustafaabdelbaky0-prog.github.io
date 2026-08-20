@@ -194,7 +194,7 @@ Modules.treasury = (() => {
     if (!box) return;
     const s = await Services.daySummary();
 
-    if (s.closed) {
+    if (s.closed && !s.afterCount) {
       const d = s.closed;
       const kind = Math.abs(d.difference) < 0.005 ? 'ok' : (d.difference > 0 ? 'over' : 'short');
       box.innerHTML = `
@@ -210,7 +210,20 @@ Modules.treasury = (() => {
       return;
     }
 
+    /* قفل اليومية وبعدين باع أو صرف — التقفيل بقى برقم قديم.
+       بنقوله بالظبط اللي حصل بعده وندّيله زرار يقفل تاني. */
+    const redo = !!s.closed;
+    const redoNote = redo ? `
+      <div class="notice notice-warn" style="line-height:2;margin-bottom:14px;">
+        <strong>قفلت اليومية الساعة ${Utils.formatDateTime(s.closed.closedAt).split(' - ').pop()} وبعدين حصلت حركة</strong><br>
+        ${s.afterCount} حركة بعد التقفيل ·
+        ${s.afterClose >= 0 ? 'دخل' : 'خرج'}
+        <strong>${Utils.formatMoney(Math.abs(s.afterClose))}</strong> زيادة عن اللي قفلت عليه.
+        <br><span class="muted">عدّ الدرج تاني واقفل من جديد عشان الرقم يبقى مظبوط.</span>
+      </div>` : '';
+
     box.innerHTML = `
+      ${redoNote}
       <div class="day-grid">
         <div class="day-cell"><span>فواتير النهاردة</span><strong>${s.invoices}</strong></div>
         <div class="day-cell"><span>مبيعات</span><strong>${Utils.formatMoney(s.salesTotal)}</strong></div>
@@ -229,7 +242,7 @@ Modules.treasury = (() => {
           <label>عدّ الدرج واكتب اللي لقيته</label>
           <input type="number" id="dcCounted" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
         </div>
-        <button class="btn btn-amber" id="dcSave">اقفل اليومية</button>
+        <button class="btn btn-amber" id="dcSave">${redo ? "اقفل تاني" : "اقفل اليومية"}</button>
       </div>
       <div id="dcDiff" class="hint" style="margin-top:8px;"></div>`;
 
@@ -264,7 +277,7 @@ Modules.treasury = (() => {
         if (!goOn) return;
       }
       try {
-        await Services.closeDay({ counted, note });
+        await Services.closeDay({ counted, note, redo });
         await refreshShell();
         Utils.toast('اتقفلت اليومية', 'success');
         render(container);
