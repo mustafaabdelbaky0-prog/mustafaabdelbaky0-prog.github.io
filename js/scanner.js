@@ -202,47 +202,100 @@ const Scanner = (() => {
   // بيفضل شغال ويشتغل على شاشة البيع بالغلط.
   let activeDetach = null;
 
+  /* ماسك الليزر — بنعرفه من سرعة الكتابة مش من مكان التركيز.
+
+     الطريقة القديمة كانت بتشتغل بس لو التركيز في خانة معيّنة. وده كان
+     بيفشل بعد أول مسح، لأن البرنامج بينقل التركيز لخانة الكمية —
+     فالمسح اللي بعده كان بيتكتب في الخانة زي ما هو، والصنف مايتعرفش
+     إلا لما التركيز يسيبها (يعني مع المسح اللي بعده). النتيجة إن كل
+     صنف كان بيظهر متأخر بواحد.
+
+     دلوقتي: الليزر بيكتب أسرع بكتير من أي إنسان، فبنقيس السرعة.
+     كل مسح بيقفل عند Enter — يعني المسح اللي بعده بيبتدي من جديد
+     حتى لو جه بعده على طول. ولما نتأكد إنه ليزر بنرجّع الخانة اللي
+     كتب فيها لحالتها الأولى عشان مايسيبش أرقام في مكان غلط.
+
+     ومهم: بنمسك الضغطة قبل ما توصل للخانة نفسها (capture) وبنوقفها،
+     عشان خانة الباركود ماتحاولش تدوّر على الصنف مرتين. */
   function attachHardwareScanner(inputEl, onScan) {
     if (activeDetach) { activeDetach(); activeDetach = null; }
 
+    const FAST_MS = 40;        // أقصى وقت بين حرفين عشان يتحسب ليزر
+    const NEW_BURST_MS = 400;  // سكوت أطول من كده = مسح جديد
+    const MIN_LEN = 3;
+
     let buffer = '';
     let lastTime = 0;
+    let fastHits = 0;
+    let burstOpen = false;
+    let burstTarget = null;
+    let burstValue = '';
+
+    function startBurst(e) {
+      buffer = '';
+      fastHits = 0;
+      burstOpen = true;
+      const t = e.target;
+      burstTarget = (t && typeof t.value === 'string') ? t : null;
+      burstValue = burstTarget ? burstTarget.value : '';
+    }
+
+    function endBurst() {
+      buffer = '';
+      fastHits = 0;
+      burstOpen = false;
+      burstTarget = null;
+      burstValue = '';
+    }
+
+    // نرجّع الخانة لحالتها قبل المسح، ونبلّغ البرنامج بالتغيير
+    function restoreTarget() {
+      if (!burstTarget || typeof burstTarget.value !== 'string') return;
+      if (burstTarget.value === burstValue) return;
+      burstTarget.value = burstValue;
+      try { burstTarget.dispatchEvent(new Event('input', { bubbles: true })); } catch (err) { }
+    }
 
     function handler(e) {
-      // لو المستخدم بيكتب في خانة تانية (كمية/سعر/فورم) مانتدخلش
-      const t = e.target;
-      const typingElsewhere = t && t !== inputEl &&
-        (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
-      if (typingElsewhere) return;
-      // لو فيه نافذة مفتوحة مانتدخلش
-      if (document.querySelector('.modal-overlay')) return;
+      // النوافذ المنبثقة (كلمة السر مثلاً) ليها كلامها
+      if (document.querySelector('.modal-overlay')) { endBurst(); return; }
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
 
       const now = Date.now();
-      if (now - lastTime > 120) buffer = '';   // بداية مسح جديد
-      lastTime = now;
+      const gap = now - lastTime;
 
       if (e.key === 'Enter') {
         const code = buffer.trim();
-        buffer = '';
-        if (code.length >= 3) {
+        // لازم أغلب الحروف تكون جت بسرعة الليزر
+        const looksScanned = burstOpen && code.length >= MIN_LEN &&
+                             fastHits >= Math.floor(code.length * 0.6);
+        lastTime = now;
+
+        if (looksScanned) {
           e.preventDefault();
+          e.stopPropagation();   // الخانة نفسها ماتشوفش الـ Enter ده
+          restoreTarget();
+          endBurst();
           onScan(code);
+        } else {
+          endBurst();
         }
         return;
       }
+
       if (e.key.length === 1) {
+        if (!burstOpen || gap > NEW_BURST_MS) startBurst(e);
+        else if (gap <= FAST_MS) fastHits++;
         buffer += e.key;
-        // لو التركيز مش في خانة البحث، نرجّعه ونكمل الكتابة فيها
-        if (document.activeElement !== inputEl) {
-          inputEl.focus();
-          inputEl.value = buffer;
-        }
+        lastTime = now;
+        return;
       }
+      lastTime = now;
     }
 
-    document.addEventListener('keydown', handler);
+    document.addEventListener('keydown', handler, true);
     activeDetach = () => {
-      document.removeEventListener('keydown', handler);
+      document.removeEventListener('keydown', handler, true);
       if (activeDetach) activeDetach = null;
     };
     return activeDetach;

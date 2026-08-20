@@ -260,7 +260,11 @@ Modules.returns = (() => {
       const $ = s => tr.querySelector(s);
 
       $('.f-barcode').addEventListener('input', e => { r.barcode = e.target.value.trim(); });
-      $('.f-barcode').addEventListener('change', e => {
+      // إنتر في خانة الباركود بيدوّر على الصنف على طول،
+      // من غير ما تستنى التركيز يسيب الخانة
+      $('.f-barcode').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.target.dispatchEvent(new Event('change', { bubbles: true })); }
+      });      $('.f-barcode').addEventListener('change', e => {
         r.barcode = e.target.value.trim();
         const it = AppState.items.find(i => i.barcode === r.barcode);
         if (it) { applyItem(r, it); drawRows(container, id, 'qty'); }
