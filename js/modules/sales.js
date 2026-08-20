@@ -68,6 +68,8 @@ Modules.sales = (() => {
     container.querySelector('#invDate').value = Utils.dateKey(doc.date);
     const disc = container.querySelector('#sDiscount');
     if (disc) disc.value = doc.discount || 0;
+    const selEl = container.querySelector('#sellerSel');
+    if (selEl && doc.sellerId) selEl.value = String(doc.sellerId);
     container.querySelector('#sPaidNow').value = doc.paidNow || 0;
     paidTouched = true;
     updateTotals(container);
@@ -115,6 +117,12 @@ Modules.sales = (() => {
     if (!keepEdit) { editing = null; rows = [blankRow()]; paidTouched = false; }
     if (detachScanner) { detachScanner(); detachScanner = null; }
 
+    /* خانة البائع بتظهر بس لو فيه موظفين مسجلين — الحل ده بيخلي
+       الشاشة زي ما هي بالظبط لحد ما يسجّل أول موظف. */
+    const sellers = (await DB.getAll('employees'))
+      .filter(e => e.active !== false)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+
     container.innerHTML = `
       ${editing ? `
       <div class="edit-banner">
@@ -137,6 +145,14 @@ Modules.sales = (() => {
               ${AppState.customers.map(c => `<option value="${Utils.escapeHtml(c.name)}">`).join('')}
             </datalist>
           </div>
+          ${sellers.length ? `
+          <div class="field inv-field">
+            <label>البائع</label>
+            <select id="sellerSel">
+              <option value="">—</option>
+              ${sellers.map(s => `<option value="${s.id}">${Utils.escapeHtml(s.name)}</option>`).join('')}
+            </select>
+          </div>` : ''}
           <div class="field inv-field">
             <label>رقم الفاتورة</label>
             <input type="text" value="تلقائي" disabled>
@@ -239,6 +255,17 @@ Modules.sales = (() => {
       const code = await Scanner.scan();
       if (code) onScan(container, code);
     });
+    /* البائع بيفضل محفوظ على الجهاز — البياع بيختار نفسه مرة واحدة
+       وكل فاتورة بعدها بتتسجل باسمه من غير ما يفتكر. */
+    const sellerSel = container.querySelector('#sellerSel');
+    if (sellerSel) {
+      const saved = localStorage.getItem('lastSellerId') || '';
+      if (saved && sellers.some(s => String(s.id) === saved)) sellerSel.value = saved;
+      sellerSel.addEventListener('change', () => {
+        localStorage.setItem('lastSellerId', sellerSel.value || '');
+      });
+    }
+
     container.querySelector('#addRowBtn').addEventListener('click', () => {
       rows.push(blankRow()); drawRows(container, rows[rows.length - 1]._id, 'barcode');
     });
@@ -608,8 +635,10 @@ Modules.sales = (() => {
 
     try {
       const customerId = await Services.resolveParty('customers', customerName);
+      const sellerEl = container.querySelector('#sellerSel');
+      const sellerId = sellerEl && sellerEl.value ? Number(sellerEl.value) : null;
       const sale = {
-        date, customerId, discount,
+        date, customerId, discount, sellerId,
         // بنسجّل دايمًا بالوحدة الأصلية (المتر)، وبنحتفظ بشكل العبوة
         // جنبها عشان الفاتورة المطبوعة تقول "٢ لفة" مش "٢٠٠ متر"
         lines: valid.map(r => {

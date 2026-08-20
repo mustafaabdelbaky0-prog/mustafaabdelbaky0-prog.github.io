@@ -2,13 +2,61 @@ Modules.treasury = (() => {
 
   const SOURCE_LABELS = {
     sale: 'بيع', purchase: 'شراء', expense: 'مصروف',
-    deposit: 'إيداع', withdrawal: 'سحب', collect: 'تحصيل من عميل', pay: 'سداد لمورد'
+    deposit: 'إيداع', withdrawal: 'سحب', collect: 'تحصيل من عميل', pay: 'سداد لمورد',
+    advance: 'سلفة موظف', salary: 'صرف لموظف', adjust: 'تسوية'
   };
+
+  // الحركة دي جاية منين — وتتعدّل من فين
+  const SOURCE_ORIGIN = {
+    sale: 'دي من فاتورة بيع — عدّلها أو امسحها من نقطة البيع',
+    purchase: 'دي من فاتورة شراء — عدّلها أو امسحها من المشتريات',
+    expense: 'ده مصروف — امسحه من شاشة المصروفات',
+    collect: 'ده تحصيل من عميل — من شاشة العملاء والموردين',
+    pay: 'ده سداد لمورد — من شاشة العملاء والموردين',
+    advance: 'دي سلفة موظف — من كشف حساب الموظف',
+    salary: 'ده صرف لموظف — من كشف حساب الموظف',
+    adjust: 'دي تسوية تلقائية — مش بتتعدّل بالإيد'
+  };
+
+  // الفلاتر بتفضل زي ما سيبتها وانت بتروح وترجع للشاشة
+  let q = '', fromDate = '', toDate = '';
+
+  function matches(m, names) {
+    if (fromDate && Utils.dateKey(m.date) < fromDate) return false;
+    if (toDate && Utils.dateKey(m.date) > toDate) return false;
+    const needle = q.trim().toLowerCase();
+    if (!needle) return true;
+    return [
+      m.name || '', m.note || '', SOURCE_LABELS[m.source] || m.source || '',
+      names.get(String(m.id)) || '', String(m.amount || '')
+    ].join(' ').toLowerCase().includes(needle);
+  }
 
   async function render(container) {
     const balance = await Services.getCashBalance();
     const all = await DB.getAll('treasury');
     all.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    /* الحركات اللي جاية من مستند مالهاش "اسم" متكتب، فبنجيب اسم
+       الطرف المرتبط بيها عشان البحث بالاسم يلاقيها هي كمان. */
+    const [custs, sups, emps] = await Promise.all([
+      DB.getAll('customers'), DB.getAll('suppliers'), DB.getAll('employees')
+    ]);
+    const mapOf = (list) => new Map(list.map(x => [Number(x.id), x.name]));
+    const cMap = mapOf(custs), sMap = mapOf(sups), eMap = mapOf(emps);
+    const linked = new Map();
+    for (const m of all) {
+      let n = '';
+      if (m.source === 'collect') n = cMap.get(Number(m.refId)) || '';
+      else if (m.source === 'pay') n = sMap.get(Number(m.refId)) || '';
+      else if (['advance', 'salary', 'adjust'].includes(m.source)) n = eMap.get(Number(m.refId)) || '';
+      linked.set(String(m.id), n);
+    }
+
+    const shown = all.filter(m => matches(m, linked));
+    const filtering = !!(q || fromDate || toDate);
+    const shownIn = shown.filter(m => m.direction === 'in').reduce((s, m) => s + m.amount, 0);
+    const shownOut = shown.filter(m => m.direction === 'out').reduce((s, m) => s + m.amount, 0);
 
     const todayStr = Utils.todayISO();
     const todayIn = all.filter(m => Utils.dateKey(m.date) === todayStr && m.direction === 'in').reduce((s, m) => s + m.amount, 0);
@@ -33,19 +81,55 @@ Modules.treasury = (() => {
           <button class="btn btn-danger" id="withdrawBtn">- سحب</button>
         </div>
       </div>
+
+      <div class="card" style="padding:14px;margin-bottom:14px;">
+        <div class="filter-row">
+          <div class="field" style="margin:0;flex:2;min-width:190px;">
+            <label>بحث بالاسم أو البيان</label>
+            <input type="text" id="trQ" value="${Utils.escapeHtml(q)}" placeholder="اكتب اسم أو مبلغ أو نوع الحركة" autocomplete="off">
+          </div>
+          <div class="field" style="margin:0;min-width:150px;">
+            <label>من تاريخ</label>
+            <input type="date" id="trFrom" value="${fromDate}">
+          </div>
+          <div class="field" style="margin:0;min-width:150px;">
+            <label>لغاية</label>
+            <input type="date" id="trTo" value="${toDate}">
+          </div>
+          <button class="btn btn-ghost" id="trClear" ${filtering ? '' : 'disabled'}>امسح البحث</button>
+        </div>
+        ${filtering ? `
+          <div class="notice notice-ok" style="margin:12px 0 0;line-height:1.9;">
+            <strong>${shown.length}</strong> حركة طلعت في البحث ·
+            داخل <strong style="color:var(--success);">${Utils.formatMoney(shownIn)}</strong> ·
+            خارج <strong style="color:var(--danger);">${Utils.formatMoney(shownOut)}</strong>
+          </div>` : ''}
+      </div>
+
       <div class="table-wrap">
         <table>
-          <thead><tr><th>التاريخ</th><th>البيان</th><th>ملاحظة</th><th>داخل</th><th>خارج</th><th>الرصيد بعدها</th></tr></thead>
-          <tbody>
-            ${all.length ? all.map(m => `
-              <tr>
+          <thead><tr><th>التاريخ</th><th>البيان</th><th>الاسم</th><th>ملاحظة</th><th>داخل</th><th>خارج</th><th>الرصيد بعدها</th><th></th></tr></thead>
+          <tbody id="trBody">
+            ${shown.length ? shown.map(m => {
+              const manual = Services.isManualMove(m);
+              const who = (m.name || '').trim() || linked.get(String(m.id)) || '';
+              return `
+              <tr data-id="${m.id}">
                 <td>${Utils.formatDateTime(m.date)}</td>
                 <td><span class="badge badge-muted">${SOURCE_LABELS[m.source] || m.source}</span></td>
+                <td>${who ? Utils.escapeHtml(who) : '<span class="muted">—</span>'}</td>
                 <td>${Utils.escapeHtml(m.note || '—')}</td>
                 <td style="color:var(--success);font-weight:700;">${m.direction === 'in' ? Utils.formatMoney(m.amount) : ''}</td>
                 <td style="color:var(--danger);font-weight:700;">${m.direction === 'out' ? Utils.formatMoney(m.amount) : ''}</td>
                 <td>${Utils.formatMoney(m.balanceAfter)}</td>
-              </tr>`).join('') : `<tr class="empty-row"><td colspan="6">مفيش حركة على الخزنة لسه</td></tr>`}
+                <td>
+                  ${manual
+                    ? `<button class="icon-btn edit-move" title="تعديل">✏️</button>
+                       <button class="icon-btn del-move" title="حذف">🗑️</button>`
+                    : `<button class="icon-btn why-move" title="${Utils.escapeHtml(SOURCE_ORIGIN[m.source] || 'حركة مربوطة بمستند')}">🔒</button>`}
+                </td>
+              </tr>`; }).join('')
+              : `<tr class="empty-row"><td colspan="8">${filtering ? 'مفيش حركة بالمواصفات دي' : 'مفيش حركة على الخزنة لسه'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -55,6 +139,52 @@ Modules.treasury = (() => {
 
     container.querySelector('#depositBtn').addEventListener('click', () => openMoveModal('in', container));
     container.querySelector('#withdrawBtn').addEventListener('click', () => openMoveModal('out', container));
+
+    // ---------- البحث ----------
+    const qEl = container.querySelector('#trQ');
+    let timer = null;
+    qEl.addEventListener('input', () => {
+      clearTimeout(timer);
+      // بنستنى شوية عشان الجدول مايترسمش مع كل حرف
+      timer = setTimeout(() => {
+        q = qEl.value;
+        render(container).then(() => {
+          const el = container.querySelector('#trQ');
+          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        });
+      }, 250);
+    });
+    container.querySelector('#trFrom').addEventListener('change', (e) => { fromDate = e.target.value; render(container); });
+    container.querySelector('#trTo').addEventListener('change', (e) => { toDate = e.target.value; render(container); });
+    container.querySelector('#trClear').addEventListener('click', () => {
+      q = ''; fromDate = ''; toDate = ''; render(container);
+    });
+
+    // ---------- تعديل / حذف ----------
+    container.querySelector('#trBody').addEventListener('click', async (e) => {
+      const tr = e.target.closest('tr');
+      if (!tr || !tr.dataset.id) return;
+      const id = Number(tr.dataset.id);
+      const move = all.find(m => Number(m.id) === id);
+      if (!move) return;
+
+      if (e.target.classList.contains('why-move')) {
+        Utils.toast(SOURCE_ORIGIN[move.source] || 'الحركة دي مربوطة بمستند — عدّلها من مكانها', 'info');
+      } else if (e.target.classList.contains('edit-move')) {
+        openMoveModal(move.direction, container, move);
+      } else if (e.target.classList.contains('del-move')) {
+        const ok = await Utils.confirmDialog(
+          `تمسح الحركة دي؟\n\n${SOURCE_LABELS[move.source]} · ${Utils.formatMoney(move.amount)}` +
+          `${move.name ? ' · ' + move.name : ''}\n\nرصيد الخزنة هيتظبط لوحده.`);
+        if (!ok) return;
+        try {
+          await Services.deleteTreasuryMove(id);
+          await refreshShell();
+          Utils.toast('اتمسحت الحركة', 'success');
+          render(container);
+        } catch (err) { Utils.toast(err.message || 'المسح مانجحش', 'error'); }
+      }
+    });
   }
 
   /* تقفيل اليومية: بيوريك حركة اليوم، وبتكتب اللي عديته في الدرج فعلاً،
@@ -144,34 +274,74 @@ Modules.treasury = (() => {
     });
   }
 
-  function openMoveModal(direction, container) {
+  function openMoveModal(direction, container, editMove) {
     const isIn = direction === 'in';
+    const editing = !!editMove;
     Utils.openModal({
-      title: isIn ? 'إيداع في الخزنة' : 'سحب من الخزنة',
+      title: editing
+        ? 'تعديل حركة الخزنة'
+        : (isIn ? 'إيداع في الخزنة' : 'سحب من الخزنة'),
       bodyHtml: `
         <form id="moveForm">
           <div class="field">
+            <label>نوع الحركة</label>
+            <select id="mDir">
+              <option value="in" ${isIn ? 'selected' : ''}>إيداع (فلوس داخلة)</option>
+              <option value="out" ${!isIn ? 'selected' : ''}>سحب (فلوس خارجة)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>التاريخ</label>
+            <input type="date" id="mDate" value="${editing ? Utils.dateKey(editMove.date) : Utils.todayISO()}">
+          </div>
+          <div class="field">
+            <label>الاسم <span class="muted">(مين؟ — عشان تلاقيها بالبحث بعدين)</span></label>
+            <input type="text" id="mName" value="${editing ? Utils.escapeHtml(editMove.name || '') : ''}" placeholder="مثلاً: مصطفى / محل الجيران" autocomplete="off">
+          </div>
+          <div class="field">
             <label>المبلغ</label>
-            <input type="number" id="mAmount" min="0.01" step="0.01" autofocus>
+            <input type="number" id="mAmount" min="0.01" step="0.01" value="${editing ? editMove.amount : ''}" ${editing ? '' : 'autofocus'}>
           </div>
           <div class="field">
             <label>ملاحظة (اختياري)</label>
-            <input type="text" id="mNote" placeholder="${isIn ? 'مثلاً: ضخ رأس مال إضافي' : 'مثلاً: سحب شخصي'}">
+            <input type="text" id="mNote" value="${editing ? Utils.escapeHtml(editMove.note || '') : ''}" placeholder="${isIn ? 'مثلاً: ضخ رأس مال إضافي' : 'مثلاً: سحب شخصي'}">
           </div>
           <div class="form-actions">
-            <button type="submit" class="btn ${isIn ? 'btn-success' : 'btn-danger'}">${isIn ? 'تسجيل الإيداع' : 'تسجيل السحب'}</button>
+            <button type="button" class="btn btn-ghost" id="mCancel">إلغاء</button>
+            <button type="submit" class="btn btn-amber" id="mSave">${editing ? 'حفظ التعديل' : 'تسجيل'}</button>
           </div>
         </form>`,
       onMount: (body, close) => {
+        const dirEl = body.querySelector('#mDir');
+        const saveBtn = body.querySelector('#mSave');
+        function syncBtn() {
+          if (editing) return;
+          const inNow = dirEl.value === 'in';
+          saveBtn.textContent = inNow ? 'تسجيل الإيداع' : 'تسجيل السحب';
+          saveBtn.className = 'btn ' + (inNow ? 'btn-success' : 'btn-danger');
+        }
+        dirEl.addEventListener('change', syncBtn); syncBtn();
+        body.querySelector('#mCancel').addEventListener('click', close);
+
         body.querySelector('#moveForm').addEventListener('submit', async (e) => {
           e.preventDefault();
           const amount = Number(body.querySelector('#mAmount').value || 0);
           if (amount <= 0) { Utils.toast('اكتب مبلغ صحيح', 'error'); return; }
-          await Services.manualTreasuryMove(direction, amount, body.querySelector('#mNote').value.trim());
-          await refreshShell();
-          Utils.toast('تم التسجيل', 'success');
-          close();
-          render(container);
+          const dv = body.querySelector('#mDate').value;
+          const date = dv ? new Date(dv + 'T12:00:00').toISOString() : Utils.nowISO();
+          const name = body.querySelector('#mName').value.trim();
+          const note = body.querySelector('#mNote').value.trim();
+          const dir = dirEl.value;
+          try {
+            if (editing) await Services.updateTreasuryMove(editMove.id, { direction: dir, amount, name, note, date });
+            else await Services.manualTreasuryMove(dir, amount, note, name, date);
+            await refreshShell();
+            Utils.toast(editing ? 'اتعدّلت الحركة' : 'تم التسجيل', 'success');
+            close();
+            render(container);
+          } catch (err) {
+            Utils.toast(err.message || 'مانجحش', 'error');
+          }
         });
       }
     });

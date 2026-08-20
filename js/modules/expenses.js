@@ -4,19 +4,30 @@ Modules.expenses = (() => {
 
   async function render(container) {
     await AppState.reloadParties();
+    const allEmployees = await DB.getAll('employees');
+    const employees = allEmployees
+      .filter(e => e.active !== false)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
     const all = await DB.getAll('expenses');
     all.sort((a, b) => new Date(b.date) - new Date(a.date));
     const monthTotal = all.filter(e => Utils.dateKey(e.date).slice(0, 7) === Utils.todayISO().slice(0, 7)).reduce((s, e) => s + e.amount, 0);
 
-    /* الدفعات للموردين مش مصروفات، بس بنعرضها في نفس السجل
-       عشان ميحصلش لخبطة لما يسجل دفعة ومايلاقيهاش. */
+    /* الدفعات للموردين وسلف الموظفين مش مصروفات، بس بنعرضها في نفس
+       السجل عشان ميحصلش لخبطة لما يسجل دفعة ومايلاقيهاش. */
     const pays = (await DB.getAll('treasury'))
-      .filter(t => t.source === 'pay')
+      .filter(t => ['pay', 'advance', 'salary'].includes(t.source))
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, 30)
       .map(t => {
-        const s = AppState.suppliers.find(x => x.id === t.refId);
-        return { date: t.date, name: s ? s.name : 'مورد', amount: t.amount, note: t.note || '' };
+        let who = 'مورد';
+        if (t.source === 'pay') {
+          const s = AppState.suppliers.find(x => x.id === t.refId);
+          who = s ? s.name : 'مورد';
+        } else {
+          const e = allEmployees.find(x => x.id === t.refId);
+          who = (e ? e.name : 'موظف') + (t.source === 'advance' ? ' (سلفة)' : ' (صرف)');
+        }
+        return { date: t.date, name: who, amount: t.amount, note: t.note || '' };
       });
 
     container.innerHTML = `
@@ -42,6 +53,15 @@ Modules.expenses = (() => {
               </datalist>
               <div class="hint" id="supHint"></div>
             </div>
+            ${employees.length ? `
+            <div class="field">
+              <label>سلفة لموظف؟ <span class="muted">(سيبها فاضية لو مصروف عادي)</span></label>
+              <select id="eEmployee">
+                <option value="">—</option>
+                ${employees.map(e => `<option value="${e.id}">${Utils.escapeHtml(e.name)}</option>`).join('')}
+              </select>
+              <div class="hint" id="empHint"></div>
+            </div>` : ''}
             <div class="field">
               <label>الوصف (اختياري)</label>
               <input type="text" id="eDesc" placeholder="تفاصيل إضافية">
@@ -64,9 +84,9 @@ Modules.expenses = (() => {
           <div class="section-head"><h3>سجل المصروفات</h3></div>
           ${pays.length ? `
           <div class="notice notice-ok" style="margin-bottom:12px;line-height:1.9;">
-            <strong>آخر الدفعات للموردين</strong>
+            <strong>آخر الدفعات للموردين والموظفين</strong>
             <div class="muted" style="font-size:12px;margin:2px 0 8px;">
-              دي نزلت من الخزنة ومن حساب المورد — ومش محسوبة في المصروفات.
+              دي نزلت من الخزنة ومن حساب صاحبها — ومش محسوبة في المصروفات.
             </div>
             ${pays.slice(0, 5).map(p => `
               <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;">
@@ -120,6 +140,31 @@ Modules.expenses = (() => {
     container.querySelector('#eSupplier').addEventListener('input', updateSupHint);
     container.querySelector('#eSupplier').addEventListener('change', updateSupHint);
 
+    /* السلفة للموظف زي الدفعة للمورد بالظبط: فلوس بتخرج من الخزنة
+       وتتخصم من حسابه، ومش بتتحسب مصروف — المصروف بيتسجل يوم
+       تقفيل الشهر بمرتبه كامل. */
+    const empSel = container.querySelector('#eEmployee');
+    function findEmployee() {
+      if (!empSel || !empSel.value) return null;
+      return employees.find(x => String(x.id) === empSel.value) || null;
+    }
+    function updateEmpHint() {
+      if (!empSel) return;
+      const hint = container.querySelector('#empHint');
+      const btn = container.querySelector('#expSave');
+      const emp = findEmployee();
+      const supEl = container.querySelector('#eSupplier');
+      if (!emp) { hint.innerHTML = ''; updateSupHint(); return; }
+      if (supEl.value.trim()) supEl.value = '';   // واحد بس في المرة
+      const due = Math.max(0, Number(emp.balance || 0));
+      hint.innerHTML =
+        `دي <strong>سلفة لـ ${Utils.escapeHtml(emp.name)}</strong> — هتنزل من الخزنة ومن مستحقه.` +
+        `<br>المستحق له دلوقتي: <strong>${Utils.formatMoney(due)}</strong>` +
+        '<br><span class="muted">مش هتتحسب مصروف — دي فلوس من مرتبه، والمرتب بيتسجل مصروف يوم تقفيل الشهر.</span>';
+      btn.textContent = 'تسجيل السلفة';
+    }
+    if (empSel) empSel.addEventListener('change', updateEmpHint);
+
     container.querySelector('#expForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       if (saving) return;   // منع التسجيل مرتين بدوستين سريعتين
@@ -131,7 +176,8 @@ Modules.expenses = (() => {
       // بنثبّت الوقت على نص اليوم عشان التاريخ ما يزحلقش يوم بفرق التوقيت
       const date = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : Utils.nowISO();
 
-      if (!sup && !category) { Utils.toast('اكتب نوع المصروف', 'error'); return; }
+      const emp = findEmployee();
+      if (!sup && !emp && !category) { Utils.toast('اكتب نوع المصروف', 'error'); return; }
       if (amount <= 0) { Utils.toast('اكتب مبلغ صحيح', 'error'); return; }
 
       saving = true;
@@ -139,7 +185,11 @@ Modules.expenses = (() => {
       const oldTxt = btn ? btn.textContent : '';
       if (btn) { btn.disabled = true; btn.textContent = 'بيسجل...'; }
       try {
-        if (sup) {
+        if (emp) {
+          const note = [category, desc].filter(Boolean).join(' — ') || 'سلفة';
+          await Services.employeeAdvance(emp.id, amount, note, date);
+          Utils.toast('اتسجلت السلفة ونزلت من مستحق ' + emp.name, 'success');
+        } else if (sup) {
           const supplierId = await Services.resolveParty('suppliers', sup.name);
           const note = [category, desc].filter(Boolean).join(' — ') || ('دفعة لـ ' + sup.name);
           await Services.payToSupplier(supplierId, amount, note, date);

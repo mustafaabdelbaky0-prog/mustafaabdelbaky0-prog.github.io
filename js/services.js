@@ -13,7 +13,7 @@ const Services = (() => {
     return rec ? rec.value : 0;
   }
 
-  async function _writeTreasuryMove(t, { direction, amount, source, refId, note, date }) {
+  async function _writeTreasuryMove(t, { direction, amount, source, refId, note, date, name }) {
     amount = Math.round((Number(amount) || 0) * 100) / 100;
     if (amount <= 0) return null;
     const curBal = await _readBalance(t);
@@ -23,7 +23,8 @@ const Services = (() => {
     const store = t.objectStore('treasury');
     const id = await DB.reqToPromise(store.add({
       date: when, direction, amount, source,
-      refId: refId ?? null, note: note || '', balanceAfter: newBal
+      refId: refId ?? null, note: note || '', name: (name || '').trim(),
+      balanceAfter: newBal
     }));
 
     /* لو الحركة اتسجلت بتاريخ قديم (مثلاً مصروف صرفته امبارح وكتبته
@@ -107,11 +108,14 @@ const Services = (() => {
         number, date: sale.date || Utils.nowISO(), lines: sale.lines,
         subtotal, discount: sale.discount || 0, total,
         paymentMethod: dueAmount > 0 ? (paidNow > 0 ? 'mixed' : 'credit') : 'cash',
-        customerId: sale.customerId || null, paidNow, dueAmount, voided: false
+        customerId: sale.customerId || null, sellerId: sale.sellerId || null,
+        paidNow, dueAmount, voided: false
       }));
 
       if (paidNow > 0) {
-        await _writeTreasuryMove(t, { direction: 'in', amount: paidNow, source: 'sale', refId: saleId, note: `فاتورة بيع ${number}` });
+        // بتاريخ الفاتورة — لو سجّل فاتورة امبارح، الفلوس دخلت امبارح
+        await _writeTreasuryMove(t, { direction: 'in', amount: paidNow, source: 'sale',
+          refId: saleId, note: `فاتورة بيع ${number}`, date: sale.date || Utils.nowISO() });
       }
       if (dueAmount > 0 && sale.customerId) {
         await _bumpPartyBalance(t, 'customers', sale.customerId, dueAmount);
@@ -221,7 +225,8 @@ const Services = (() => {
         date: sale.date || old.date, lines, subtotal,
         discount: sale.discount || 0, total,
         paymentMethod: dueAmount > 0 ? (paidNow > 0 ? 'mixed' : 'credit') : 'cash',
-        customerId: sale.customerId || null, paidNow, dueAmount,
+        customerId: sale.customerId || null, sellerId: sale.sellerId || null,
+        paidNow, dueAmount,
         editedAt: now
       });
       await DB.reqToPromise(salesStore.put(updated));
@@ -404,7 +409,9 @@ const Services = (() => {
       }));
 
       if (paidNow > 0) {
-        await _writeTreasuryMove(t, { direction: 'out', amount: paidNow, source: 'purchase', refId: purchaseId, note: `فاتورة شراء ${number}` });
+        // بتاريخ الفاتورة زي البيع بالظبط
+        await _writeTreasuryMove(t, { direction: 'out', amount: paidNow, source: 'purchase',
+          refId: purchaseId, note: `فاتورة شراء ${number}`, date: purchase.date || Utils.nowISO() });
       }
       if (dueAmount > 0 && purchase.supplierId) {
         await _bumpPartyBalance(t, 'suppliers', purchase.supplierId, dueAmount);
@@ -787,9 +794,10 @@ const Services = (() => {
   }
 
   // ---------- الخزنة اليدوية ----------
-  async function manualTreasuryMove(direction, amount, note) {
+  async function manualTreasuryMove(direction, amount, note, name, date) {
     return DB.tx(['treasury', 'settings'], 'readwrite', (t) =>
-      _writeTreasuryMove(t, { direction, amount, source: direction === 'in' ? 'deposit' : 'withdrawal', note })
+      _writeTreasuryMove(t, { direction, amount, name,
+        source: direction === 'in' ? 'deposit' : 'withdrawal', note, date })
     );
   }
 
@@ -802,6 +810,65 @@ const Services = (() => {
     });
   }
 
+  /* ---------- تعديل ومسح حركة خزنة ----------
+     الحركات اللي جاية من مستند (فاتورة، مصروف، سلفة...) مش بتتعدّل من
+     هنا — لازم تتعدّل من مكانها عشان المستند والخزنة يفضلوا متطابقين.
+     اللي بيتعدّل هنا هو الإيداع والسحب اليدوي بس. */
+  const MANUAL_SOURCES = ['deposit', 'withdrawal'];
+
+  function isManualMove(m) {
+    return !!m && MANUAL_SOURCES.includes(m.source);
+  }
+
+  async function _restack(t) {
+    const store = t.objectStore('treasury');
+    const rows = await DB.reqToPromise(store.getAll());
+    const sorted = rows.slice().sort((a, b) => {
+      const d = new Date(a.date) - new Date(b.date);
+      return d !== 0 ? d : (Number(a.id) - Number(b.id));
+    });
+    let run = 0;
+    for (const r of sorted) {
+      run = Math.round((run + (r.direction === 'in' ? Number(r.amount || 0) : -Number(r.amount || 0))) * 100) / 100;
+      if (Math.abs(Number(r.balanceAfter || 0) - run) > 0.005) {
+        r.balanceAfter = run;
+        await DB.reqToPromise(store.put(r));
+      }
+    }
+    await DB.reqToPromise(t.objectStore('settings').put({ key: CASH_KEY, value: run }));
+    return run;
+  }
+
+  async function updateTreasuryMove(id, { direction, amount, name, note, date }) {
+    return DB.tx(['treasury', 'settings'], 'readwrite', async (t) => {
+      const store = t.objectStore('treasury');
+      const m = await DB.reqToPromise(store.get(id));
+      if (!m) throw new Error('الحركة دي مش موجودة');
+      if (!isManualMove(m)) throw new Error('الحركة دي جاية من مستند — عدّلها من مكانها');
+      const amt = Math.round((Number(amount) || 0) * 100) / 100;
+      if (amt <= 0) throw new Error('اكتب مبلغ صحيح');
+      m.direction = direction === 'in' ? 'in' : 'out';
+      m.source = m.direction === 'in' ? 'deposit' : 'withdrawal';
+      m.amount = amt;
+      m.name = (name || '').trim();
+      m.note = (note || '').trim();
+      if (date) m.date = date;
+      await DB.reqToPromise(store.put(m));
+      return _restack(t);
+    });
+  }
+
+  async function deleteTreasuryMove(id) {
+    return DB.tx(['treasury', 'settings'], 'readwrite', async (t) => {
+      const store = t.objectStore('treasury');
+      const m = await DB.reqToPromise(store.get(id));
+      if (!m) throw new Error('الحركة دي مش موجودة');
+      if (!isManualMove(m)) throw new Error('الحركة دي جاية من مستند — امسح المستند نفسه');
+      await DB.reqToPromise(store.delete(id));
+      return _restack(t);
+    });
+  }
+
   /* سداد لمورد — بينزل من الخزنة ومن حساب المورد في نفس الوقت.
      مهم: ده مش "مصروف". البضاعة اتحسبت عليك يوم ما اشتريتها، فلو
      حسبنا الدفعة مصروف كمان كانت هتتحسب مرتين والأرباح تطلع غلط. */
@@ -810,6 +877,202 @@ const Services = (() => {
       await _bumpPartyBalance(t, 'suppliers', supplierId, -amount);
       return _writeTreasuryMove(t, { direction: 'out', amount, source: 'pay',
         refId: supplierId, note: note || 'سداد لمورد', date });
+    });
+  }
+
+  /* ================= الموظفين =================
+
+     حساب الموظف زي دفتر: كل سطر إما "ليه" (credit) أو "عليه" (debit).
+       ليه   : المرتب، العمولة، المكافأة
+       عليه  : السلفة، اللي صرفته له، الخصم
+     الرصيد = المجموع = اللي لسه مستحق له.
+
+     نقطة مهمة في الحسابات: السلفة **مش مصروف**. هي فلوس من مرتبه
+     خرجت بدري. المصروف بيتسجل مرة واحدة يوم ما تقفل الشهر بمرتبه
+     كامل + عمولته. لو حسبنا السلفة مصروف كمان كان المرتب هيتحسب
+     مرتين والأرباح تطلع غلط. */
+
+  const EMP_CREDIT = ['salary', 'commission', 'bonus'];
+
+  async function _writeEmployeeMove(t, { employeeId, dir, type, amount, note, date, refType, refId }) {
+    amount = Math.round((Number(amount) || 0) * 100) / 100;
+    if (amount <= 0 || !employeeId) return null;
+    const store = t.objectStore('employees');
+    const emp = await DB.reqToPromise(store.get(employeeId));
+    if (!emp) throw new Error('الموظف ده مش موجود');
+    emp.balance = Math.round(((emp.balance || 0) + (dir === 'credit' ? amount : -amount)) * 100) / 100;
+    await DB.reqToPromise(store.put(emp));
+    return DB.reqToPromise(t.objectStore('employeeMoves').add({
+      employeeId, dir, type, amount,
+      note: note || '', date: date || Utils.nowISO(),
+      refType: refType || null, refId: refId ?? null, voided: false
+    }));
+  }
+
+  // سلفة للموظف: فلوس بتخرج من الخزنة وبتتخصم من حسابه
+  async function employeeAdvance(employeeId, amount, note, date) {
+    return DB.tx(['employees', 'employeeMoves', 'treasury', 'settings'], 'readwrite', async (t) => {
+      const emp = await DB.reqToPromise(t.objectStore('employees').get(employeeId));
+      const who = emp ? emp.name : 'موظف';
+      const moveId = await _writeEmployeeMove(t, {
+        employeeId, dir: 'debit', type: 'advance', amount,
+        note: note || 'سلفة', date
+      });
+      await _writeTreasuryMove(t, { direction: 'out', amount, source: 'advance',
+        refId: employeeId, note: (note ? note + ' — ' : 'سلفة — ') + who, date });
+      return moveId;
+    });
+  }
+
+  // صرف مستحق للموظف (مرتب أو جزء منه)
+  async function payEmployee(employeeId, amount, note, date) {
+    return DB.tx(['employees', 'employeeMoves', 'treasury', 'settings'], 'readwrite', async (t) => {
+      const emp = await DB.reqToPromise(t.objectStore('employees').get(employeeId));
+      const who = emp ? emp.name : 'موظف';
+      const moveId = await _writeEmployeeMove(t, {
+        employeeId, dir: 'debit', type: 'payment', amount,
+        note: note || 'صرف مستحق', date
+      });
+      await _writeTreasuryMove(t, { direction: 'out', amount, source: 'salary',
+        refId: employeeId, note: (note ? note + ' — ' : 'صرف مستحق — ') + who, date });
+      return moveId;
+    });
+  }
+
+  // مكافأة أو خصم — بيتحرك في الحساب بس، مفيش فلوس بتتحرك دلوقتي
+  async function employeeAdjust(employeeId, kind, amount, note, date) {
+    const dir = kind === 'bonus' ? 'credit' : 'debit';
+    return DB.tx(['employees', 'employeeMoves'], 'readwrite', async (t) => {
+      return _writeEmployeeMove(t, { employeeId, dir, type: kind, amount, note, date });
+    });
+  }
+
+  /* مبيعات الموظف في فترة — أساس العمولة.
+     بنطرح المرتجعات المربوطة بفواتيره عشان ماياخدش عمولة على بضاعة رجعت. */
+  async function employeeSales(employeeId, fromISO, toISO) {
+    const sales = await DB.getAll('sales');
+    const from = new Date(fromISO), to = new Date(toISO);
+    let total = 0, count = 0;
+    for (const s of sales) {
+      if (s.voided) continue;
+      if (Number(s.sellerId || 0) !== Number(employeeId)) continue;
+      const d = new Date(s.date);
+      if (d < from || d > to) continue;
+      const returned = (s.returns || []).reduce((a, r) => a + Number(r.amount || 0), 0);
+      total += Number(s.total || 0) - returned;
+      count++;
+    }
+    return { total: Math.round(total * 100) / 100, count };
+  }
+
+  // حدود الشهر (مثال: '2026-08' → من ١ أغسطس لآخر لحظة في ٣١ أغسطس)
+  function monthRange(monthKey) {
+    const [y, m] = monthKey.split('-').map(Number);
+    const from = new Date(y, m - 1, 1, 0, 0, 0);
+    const to = new Date(y, m, 0, 23, 59, 59);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }
+
+  /* تقفيل شهر لموظف: بيحسب المرتب + العمولة، بيحطهم في حسابه،
+     وبيسجّل مصروف واحد بقيمتهم عشان الأرباح والخساير تطلع صح.
+     مفيش فلوس بتتحرك هنا — الفلوس بتتحرك لما تصرفله. */
+  async function closePayrollMonth(employeeId, monthKey) {
+    const { from, to } = monthRange(monthKey);
+    const emp = await DB.get('employees', employeeId);
+    if (!emp) throw new Error('الموظف ده مش موجود');
+
+    const existing = (await DB.getAll('payrollClosings'))
+      .find(c => !c.voided && Number(c.employeeId) === Number(employeeId) && c.monthKey === monthKey);
+    if (existing) throw new Error('الشهر ده متقفّل خلاص لـ ' + emp.name);
+
+    const sold = await employeeSales(employeeId, from, to);
+    const rate = Number(emp.commissionRate || 0);
+    const salary = Math.round((Number(emp.salary || 0)) * 100) / 100;
+    const commission = Math.round((sold.total * rate / 100) * 100) / 100;
+    if (salary <= 0 && commission <= 0) throw new Error('مفيش مرتب ولا عمولة تتقفل للشهر ده');
+
+    return DB.tx(['employees', 'employeeMoves', 'payrollClosings', 'expenses'], 'readwrite', async (t) => {
+      const moveIds = [];
+      if (salary > 0) {
+        moveIds.push(await _writeEmployeeMove(t, {
+          employeeId, dir: 'credit', type: 'salary', amount: salary,
+          note: 'مرتب ' + monthKey, date: to, refType: 'payroll'
+        }));
+      }
+      if (commission > 0) {
+        moveIds.push(await _writeEmployeeMove(t, {
+          employeeId, dir: 'credit', type: 'commission', amount: commission,
+          note: `عمولة ${rate}% على مبيعات ${Utils.formatMoney(sold.total)}`,
+          date: to, refType: 'payroll'
+        }));
+      }
+
+      const expenseId = await DB.reqToPromise(t.objectStore('expenses').add({
+        category: 'مرتبات',
+        description: `${emp.name} — ${monthKey}`,
+        amount: Math.round((salary + commission) * 100) / 100,
+        date: to, source: 'payroll'
+      }));
+
+      const closeId = await DB.reqToPromise(t.objectStore('payrollClosings').add({
+        employeeId, monthKey, from, to, salary, commission,
+        salesBase: sold.total, salesCount: sold.count, rate,
+        closedAt: Utils.nowISO(), expenseId, moveIds, voided: false
+      }));
+      return { id: closeId, salary, commission, salesBase: sold.total,
+               total: Math.round((salary + commission) * 100) / 100 };
+    });
+  }
+
+  // فك تقفيل شهر (لو قفله بالغلط)
+  async function voidPayrollClosing(closingId) {
+    return DB.tx(['employees', 'employeeMoves', 'payrollClosings', 'expenses'], 'readwrite', async (t) => {
+      const store = t.objectStore('payrollClosings');
+      const c = await DB.reqToPromise(store.get(closingId));
+      if (!c || c.voided) throw new Error('التقفيل ده مش موجود أو متلغي');
+
+      const moveStore = t.objectStore('employeeMoves');
+      const empStore = t.objectStore('employees');
+      const emp = await DB.reqToPromise(empStore.get(c.employeeId));
+
+      for (const mid of (c.moveIds || [])) {
+        const m = await DB.reqToPromise(moveStore.get(mid));
+        if (!m || m.voided) continue;
+        m.voided = true;
+        await DB.reqToPromise(moveStore.put(m));
+        if (emp) emp.balance = Math.round(((emp.balance || 0) - Number(m.amount || 0)) * 100) / 100;
+      }
+      if (emp) await DB.reqToPromise(empStore.put(emp));
+      if (c.expenseId) await DB.reqToPromise(t.objectStore('expenses').delete(c.expenseId));
+
+      c.voided = true;
+      await DB.reqToPromise(store.put(c));
+      return true;
+    });
+  }
+
+  // مسح حركة من حساب الموظف (سلفة/صرف/مكافأة/خصم) وترجيع أثرها
+  async function voidEmployeeMove(moveId) {
+    return DB.tx(['employees', 'employeeMoves', 'treasury', 'settings'], 'readwrite', async (t) => {
+      const store = t.objectStore('employeeMoves');
+      const m = await DB.reqToPromise(store.get(moveId));
+      if (!m || m.voided) throw new Error('الحركة دي مش موجودة');
+      if (m.refType === 'payroll') throw new Error('دي من تقفيل شهر — الغِ التقفيل نفسه');
+
+      const empStore = t.objectStore('employees');
+      const emp = await DB.reqToPromise(empStore.get(m.employeeId));
+      if (emp) {
+        emp.balance = Math.round(((emp.balance || 0) - (m.dir === 'credit' ? 1 : -1) * Number(m.amount || 0)) * 100) / 100;
+        await DB.reqToPromise(empStore.put(emp));
+      }
+      // اللي طلع فلوس من الخزنة لازم يرجعلها
+      if (m.type === 'advance' || m.type === 'payment') {
+        await _writeTreasuryMove(t, { direction: 'in', amount: m.amount, source: 'adjust',
+          refId: m.employeeId, note: 'إلغاء ' + (m.type === 'advance' ? 'سلفة' : 'صرف') + ' — ' + (emp ? emp.name : '') });
+      }
+      m.voided = true;
+      await DB.reqToPromise(store.put(m));
+      return true;
     });
   }
 
@@ -960,6 +1223,9 @@ const Services = (() => {
     saveExpense, deleteExpense, manualTreasuryMove,
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
     closeDay, daySummary,
+    isManualMove, updateTreasuryMove, deleteTreasuryMove,
+    employeeAdvance, payEmployee, employeeAdjust, employeeSales,
+    closePayrollMonth, voidPayrollClosing, voidEmployeeMove, monthRange,
     exportBackup, importBackup
   };
 })();

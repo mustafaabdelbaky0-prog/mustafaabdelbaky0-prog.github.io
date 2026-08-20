@@ -4,7 +4,8 @@
 const DB = (() => {
 
   const STORE_NAMES = ['items','stockMovements','sales','purchases','returns','expenses','treasury',
-                       'customers','suppliers','fixedAssets','company','settings','dayClosings'];
+                       'customers','suppliers','fixedAssets','company','settings','dayClosings',
+                       'employees','employeeMoves','payrollClosings'];
 
   // الجداول اللي مفتاحها مش "id"
   function keyNameOf(store) {

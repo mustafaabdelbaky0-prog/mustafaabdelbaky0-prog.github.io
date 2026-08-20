@@ -309,6 +309,15 @@ tbody tr:hover{background:#FAFBFC;}
 .line-derived{font-size:10.5px;color:var(--success);margin-top:2px;font-weight:700;}
 .line-derived.warn{color:var(--danger);}
 
+/* صف البحث في الخزنة */
+.filter-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;}
+.filter-row .btn{flex-shrink:0;}
+@media (max-width:760px){
+  .filter-row{gap:10px;}
+  .filter-row .field{flex:1 1 100% !important;}
+  .filter-row .btn{width:100%;}
+}
+
 /* سعر بيع العبوة كاملة (لفة سلك، كرتونة مفاتيح) في فاتورة الشراء */
 .pack-sale{display:flex;flex-direction:column;gap:2px;margin-top:6px;
   border-top:1px dashed var(--line);padding-top:5px;}

@@ -18,9 +18,10 @@
 const Merge = (() => {
 
   // دفاتر: بنجمع سجلاتها من الجهازين
-  const LEDGERS = ['stockMovements', 'treasury', 'sales', 'purchases', 'returns', 'expenses', 'dayClosings'];
+  const LEDGERS = ['stockMovements', 'treasury', 'sales', 'purchases', 'returns', 'expenses', 'dayClosings',
+                   'employeeMoves', 'payrollClosings'];
   // بيانات وصفية: بناخد الأحدث
-  const ENTITIES = ['items', 'customers', 'suppliers', 'fixedAssets', 'company', 'settings'];
+  const ENTITIES = ['items', 'customers', 'suppliers', 'fixedAssets', 'company', 'settings', 'employees'];
 
   function keyOf(store) { return store === 'settings' ? 'key' : 'id'; }
 
@@ -109,6 +110,23 @@ const Merge = (() => {
         }
         p.balance = calc;
       }
+    }
+
+    /* ---------- حساب كل موظف ----------
+       الرصيد = اللي ليه عندك. بيزيد بالمرتب والعمولة والمكافأة،
+       وبينقص بالسلف واللي صرفته له والخصومات. */
+    const empMoves = rowsOf(data, 'employeeMoves');
+    for (const e of rowsOf(data, 'employees')) {
+      let calc = 0;
+      for (const m of empMoves) {
+        if (m.voided || Number(m.employeeId) !== Number(e.id)) continue;
+        calc += (m.dir === 'credit' ? 1 : -1) * Number(m.amount || 0);
+      }
+      calc = money(calc);
+      if (Math.abs(Number(e.balance || 0) - calc) > 0.005) {
+        fixes.push({ store: 'employees', id: e.id, field: 'balance', was: e.balance, now: calc });
+      }
+      e.balance = calc;
     }
 
     // ---------- الرصيد بعد كل حركة خزنة ----------
