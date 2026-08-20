@@ -722,7 +722,12 @@ const Services = (() => {
         lines.push({
           itemId: item.id, name: item.name, unit: item.unit, qty, price,
           condition: l.condition, mode: l.mode, reason: l.reason || '',
-          partyId: l.partyId || null
+          partyId: l.partyId || null,
+          // لو رجّع لفة كاملة بنفتكرها بشكلها ده كمان (الكمية فوق بالمتر)
+          packQty: l.packQty || null,
+          packPrice: l.packPrice != null ? l.packPrice : null,
+          packSize: l.packSize || null,
+          packName: l.packName || null
         });
       }
 

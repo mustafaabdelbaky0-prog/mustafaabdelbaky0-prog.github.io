@@ -20,14 +20,50 @@ Modules.returns = (() => {
     return {
       _id: ++rowSeq, itemId: null, barcode: '', name: '', unit: 'قطعة',
       qty: '', price: '', condition: 'good', mode: 'money',
-      supplierId: null, supplierName: '', reason: ''
+      supplierId: null, supplierName: '', reason: '',
+      // لو الصنف بيتباع بالعبوة (لفة سلك ١٠٠ متر) يقدر يرجّعها لفة كاملة
+      unitPrice: 0, unitCost: 0,
+      packSize: 0, packName: '', packPrice: 0, sellPack: false
     };
   }
 
+  /* زي فاتورة البيع بالظبط: اللي البياع بيكتبه ممكن يكون بالمتر أو باللفة،
+     بس المرتجع بيتسجل دايمًا بالمتر عشان المخزن والضمان يفضلوا مظبوطين. */
   function calc(r) {
     const qty = Number(r.qty || 0);
     const price = Number(r.price || 0);
-    return { qty, price, total: r.mode === 'swap' ? 0 : qty * price };
+    const size = Number(r.packSize || 0);
+    const pack = !!r.sellPack && size > 0;
+    return {
+      qty, price, size, pack,
+      baseQty: pack ? Math.round(qty * size * 1000) / 1000 : qty,
+      basePrice: pack ? price / size : price,
+      total: r.mode === 'swap' ? 0 : qty * price
+    };
+  }
+
+  // أي صنف متعرّف إن عبوته فيها كام يقدر يترجّع عبوة كاملة
+  function canUsePack(r) {
+    return Number(r.packSize || 0) > 0;
+  }
+
+  /* سعر العبوة كاملة: المرتجع من العميل بسعر البيع اللي باعها بيه،
+     والمرتجع للمورد بتكلفة الشراء. لو الصنف مالوش سعر لفة مسجّل
+     بنحسبه من سعر الوحدة × عدد اللي في العبوة. */
+  function packPriceFor(r) {
+    const size = Number(r.packSize || 0);
+    if (kind === 'customer') {
+      return Number(r.packPrice || 0) || Number(r.unitPrice || 0) * size;
+    }
+    return Number(r.unitCost || 0) * size;
+  }
+
+  function switchRowUnit(r, toPack) {
+    r.sellPack = !!toPack && canUsePack(r);
+    r.qty = 1;
+    r.price = r.sellPack
+      ? packPriceFor(r)
+      : (kind === 'customer' ? (r.unitPrice || '') : (r.unitCost || ''));
   }
   function grandTotal() { return rows.reduce((s, r) => s + calc(r).total, 0); }
   function filled() { return rows.filter(r => r.itemId && calc(r).qty > 0); }
@@ -83,10 +119,11 @@ Modules.returns = (() => {
             <thead>
               <tr>
                 <th style="width:32px;">#</th>
-                <th style="width:175px;">الباركود</th>
-                <th style="width:190px;">الصنف</th>
+                <th style="width:155px;">الباركود</th>
+                <th style="width:175px;">الصنف</th>
                 <th style="width:80px;">العدد</th>
-                <th style="width:150px;">${isCust ? 'اتشرى من' : 'المورد'}</th>
+                <th style="width:88px;">الوحدة</th>
+                <th style="width:140px;">${isCust ? 'اتشرى من' : 'المورد'}</th>
                 <th style="width:130px;">الحالة</th>
                 <th style="width:135px;">العملية</th>
                 <th style="width:95px;">السعر</th>
@@ -177,6 +214,12 @@ Modules.returns = (() => {
     row.name = item.name;
     row.barcode = item.barcode || '';
     row.unit = item.unit || 'قطعة';
+    row.unitPrice = Number(item.salePrice || 0);
+    row.unitCost = Number(item.costPrice || 0);
+    row.packSize = Number(item.packSize || 0);
+    row.packName = item.packName || Units.packLabel(row.unit);
+    row.packPrice = Number(item.packPrice || 0);
+    row.sellPack = false;   // الأصل بالوحدة، واللي راجع عبوة كاملة بيغيّر الوحدة
     // المورد بيتملى لوحده من آخر مورد جبنا منه الصنف
     const sup = AppState.suppliers.find(s => s.id === item.lastSupplierId);
     row.supplierId = sup ? sup.id : null;
@@ -208,7 +251,15 @@ Modules.returns = (() => {
           ${item ? `<div class="inv-sub">بالمخزن ${Units.fmtQty(stock, r.unit)}${damaged > 0 ? ` · تالف ${Units.fmtQty(damaged, r.unit)}` : ''}</div>` : ''}
         </td>
         <td data-label="العدد">
-          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${Units.step(r.unit)}" inputmode="decimal" placeholder="0">
+          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${c.pack ? '0.01' : Units.step(r.unit)}" inputmode="decimal" placeholder="0">
+        </td>
+        <td data-label="الوحدة" class="unit-cell">
+          ${canUsePack(r) ? `
+            <select class="cell f-unitsel" title="راجع بالوحدة ولا عبوة كاملة؟">
+              <option value="unit" ${!c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.unit)}</option>
+              <option value="pack" ${c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.packName || Units.packLabel(r.unit))}</option>
+            </select>`
+            : Utils.escapeHtml(r.unit)}
         </td>
         <td data-label="${isCust ? 'اتشرى من' : 'المورد'}" class="sup-cell">
           ${r.supplierName
@@ -230,9 +281,12 @@ Modules.returns = (() => {
         <td data-label="السعر">
           <input type="number" class="cell f-price num" value="${r.price}" min="0" step="0.01"
                  inputmode="decimal" placeholder="0.00" ${r.mode === 'swap' ? 'disabled' : ''}>
+          ${c.pack && c.basePrice > 0 && r.mode !== 'swap'
+            ? `<div class="line-derived">ال${Utils.escapeHtml(r.unit)} بـ ${Utils.formatMoney(c.basePrice)}</div>` : ''}
         </td>
         <td data-label="القيمة" class="cell-total">
           <div class="line-sum">${r.mode === 'swap' ? '<span class="swap-tag">استبدال</span>' : Utils.formatMoney(c.total)}</div>
+          ${c.pack && c.baseQty > 0 ? `<div class="line-derived">= ${Units.fmtQty(c.baseQty, r.unit)}</div>` : ''}
         </td>
         <td data-label=""><button type="button" class="icon-btn rm-row" title="حذف السطر">🗑️</button></td>
       </tr>`;
@@ -290,6 +344,14 @@ Modules.returns = (() => {
       $('.f-cond').addEventListener('change', e => { r.condition = e.target.value; drawRows(container, id, 'qty'); });
       $('.f-mode').addEventListener('change', e => { r.mode = e.target.value; drawRows(container, id, 'qty'); });
 
+      // راجع بالمتر ولا لفة كاملة؟
+      if ($('.f-unitsel')) {
+        $('.f-unitsel').addEventListener('change', (e) => {
+          switchRowUnit(r, e.target.value === 'pack');
+          drawRows(container, id, 'qty');
+        });
+      }
+
       $('.rm-row').addEventListener('click', () => {
         rows = rows.filter(x => x._id !== id);
         if (!rows.length) rows.push(blankRow());
@@ -310,6 +372,26 @@ Modules.returns = (() => {
     const c = calc(r);
     tr.querySelector('.line-sum').innerHTML = r.mode === 'swap'
       ? '<span class="swap-tag">استبدال</span>' : Utils.formatMoney(c.total);
+
+    // السطور الصغيرة اللي بتترجم اللفة لأمتار وهو بيكتب
+    const totalCell = tr.querySelector('.cell-total');
+    if (totalCell) {
+      const old = totalCell.querySelector('.line-derived');
+      if (old) old.remove();
+      if (c.pack && c.baseQty > 0) {
+        totalCell.insertAdjacentHTML('beforeend',
+          `<div class="line-derived">= ${Units.fmtQty(c.baseQty, r.unit)}</div>`);
+      }
+    }
+    const priceEl = tr.querySelector('.f-price');
+    if (priceEl) {
+      const old = priceEl.parentElement.querySelector('.line-derived');
+      if (old) old.remove();
+      if (c.pack && c.basePrice > 0 && r.mode !== 'swap') {
+        priceEl.insertAdjacentHTML('afterend',
+          `<div class="line-derived">ال${Utils.escapeHtml(r.unit)} بـ ${Utils.formatMoney(c.basePrice)}</div>`);
+      }
+    }
     updateTotals(container);
   }
 
@@ -374,10 +456,18 @@ Modules.returns = (() => {
 
       const res = await Services.saveReturn({
         kind, date, partyId, reason, settle,
-        lines: valid.map(r => ({
-          itemId: r.itemId, name: r.name, qty: calc(r).qty, price: calc(r).price,
-          condition: r.condition, mode: r.mode, reason: reason
-        }))
+        // بيتسجل بالوحدة الأصلية (المتر)، وشكل العبوة بيتحفظ جنبها
+        lines: valid.map(r => {
+          const c = calc(r);
+          return {
+            itemId: r.itemId, name: r.name, qty: c.baseQty, price: c.basePrice,
+            condition: r.condition, mode: r.mode, reason: reason,
+            packQty: c.pack ? c.qty : null,
+            packPrice: c.pack ? c.price : null,
+            packSize: c.pack ? c.size : null,
+            packName: c.pack ? (r.packName || Units.packLabel(r.unit)) : null
+          };
+        })
       });
 
       await AppState.reloadItems(); await AppState.reloadParties();
@@ -420,7 +510,10 @@ Modules.returns = (() => {
                 <td><span class="badge ${d.kind === 'customer' ? 'badge-ok' : 'badge-warn'}">${d.kind === 'customer' ? 'من عميل' : 'لمورد'}</span></td>
                 <td>${Utils.escapeHtml(nameOf(d))}</td>
                 <td class="muted" style="font-size:12px;">
-                  ${d.lines.map(l => Utils.escapeHtml(l.name) + ' (' + Units.fmtQty(l.qty, l.unit) +
+                  ${d.lines.map(l => Utils.escapeHtml(l.name) + ' (' +
+                    (Number(l.packQty || 0) > 0
+                      ? Units.fmtQty(l.packQty, l.packName || 'عبوة') + ' — ' + Units.fmtQty(l.qty, l.unit)
+                      : Units.fmtQty(l.qty, l.unit)) +
                     (l.mode === 'swap' ? ' · استبدال' : '') + (l.condition === 'damaged' ? ' · تالف' : '') + ')').join('، ')}
                 </td>
                 <td class="muted" style="font-size:12px;">${Utils.escapeHtml(d.reason || '—')}</td>
