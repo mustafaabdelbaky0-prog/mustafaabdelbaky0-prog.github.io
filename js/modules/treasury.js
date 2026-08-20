@@ -291,6 +291,15 @@ Modules.treasury = (() => {
             </select>
           </div>
           <div class="field">
+            <label>الفلوس دي إيه؟</label>
+            <select id="mKind">
+              <option value="">حركة عادية</option>
+              <option value="capital" ${editing && editMove.kind === 'capital' ? 'selected' : ''}>رأس مال — فلوس من جيبي للمحل</option>
+              <option value="drawings" ${editing && editMove.kind === 'drawings' ? 'selected' : ''}>مسحوبات شخصية — فلوس من المحل ليا</option>
+            </select>
+            <div class="hint" id="kindHint"></div>
+          </div>
+          <div class="field">
             <label>التاريخ</label>
             <input type="date" id="mDate" value="${editing ? Utils.dateKey(editMove.date) : Utils.todayISO()}">
           </div>
@@ -313,14 +322,34 @@ Modules.treasury = (() => {
         </form>`,
       onMount: (body, close) => {
         const dirEl = body.querySelector('#mDir');
+        const kindEl = body.querySelector('#mKind');
+        const kindHint = body.querySelector('#kindHint');
         const saveBtn = body.querySelector('#mSave');
+
+        /* التفرقة دي مهمة في الحسابات: رأس المال والمسحوبات مش مصروف
+           ولا إيراد — دول حساب صاحب المحل، وبيبانوا في المركز المالي. */
+        function syncKind() {
+          const k = kindEl.value;
+          // رأس المال دايمًا داخل، والمسحوبات دايمًا خارجة
+          if (k === 'capital') dirEl.value = 'in';
+          if (k === 'drawings') dirEl.value = 'out';
+          dirEl.disabled = !!k;
+          kindHint.textContent = k === 'capital'
+            ? 'هتزوّد رأس مالك في المحل — مش إيراد ومش هتتحسب ربح'
+            : (k === 'drawings'
+              ? 'هتقلّل حقك في المحل — مش مصروف ومش هتقلّل الأرباح'
+              : '');
+          syncBtn();
+        }
         function syncBtn() {
           if (editing) return;
           const inNow = dirEl.value === 'in';
           saveBtn.textContent = inNow ? 'تسجيل الإيداع' : 'تسجيل السحب';
           saveBtn.className = 'btn ' + (inNow ? 'btn-success' : 'btn-danger');
         }
-        dirEl.addEventListener('change', syncBtn); syncBtn();
+        dirEl.addEventListener('change', syncBtn);
+        kindEl.addEventListener('change', syncKind);
+        syncKind();
         body.querySelector('#mCancel').addEventListener('click', close);
 
         body.querySelector('#moveForm').addEventListener('submit', async (e) => {
@@ -332,9 +361,10 @@ Modules.treasury = (() => {
           const name = body.querySelector('#mName').value.trim();
           const note = body.querySelector('#mNote').value.trim();
           const dir = dirEl.value;
+          const kind = kindEl.value || null;
           try {
-            if (editing) await Services.updateTreasuryMove(editMove.id, { direction: dir, amount, name, note, date });
-            else await Services.manualTreasuryMove(dir, amount, note, name, date);
+            if (editing) await Services.updateTreasuryMove(editMove.id, { direction: dir, amount, name, note, date, kind });
+            else await Services.manualTreasuryMove(dir, amount, note, name, date, kind);
             await refreshShell();
             Utils.toast(editing ? 'اتعدّلت الحركة' : 'تم التسجيل', 'success');
             close();

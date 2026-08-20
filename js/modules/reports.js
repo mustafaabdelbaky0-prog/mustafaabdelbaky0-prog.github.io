@@ -26,9 +26,9 @@ Modules.reports = (() => {
   async function render(container) {
     await AppState.reloadItems();
     await AppState.reloadParties();
-    const [sales, purchases, expenses, returns, cashBalance] = await Promise.all([
+    const [sales, purchases, expenses, returns, cashBalance, movements] = await Promise.all([
       DB.getAll('sales'), DB.getAll('purchases'), DB.getAll('expenses'),
-      DB.getAll('returns'), Services.getCashBalance()
+      DB.getAll('returns'), Services.getCashBalance(), DB.getAll('stockMovements')
     ]);
 
     container.innerHTML = `
@@ -61,10 +61,10 @@ Modules.reports = (() => {
       render(container);
     });
 
-    drawStats(container, { sales, purchases, expenses, returns, cashBalance });
+    drawStats(container, { sales, purchases, expenses, returns, cashBalance, movements });
   }
 
-  function drawStats(container, { sales, purchases, expenses, returns, cashBalance }) {
+  function drawStats(container, { sales, purchases, expenses, returns, cashBalance, movements }) {
     const { start, end } = rangeFor(period);
     const salesInRange = sales.filter(s => !s.voided && inRange(s.date, start, end));
     const expensesInRange = expenses.filter(e => inRange(e.date, start, end));
@@ -75,21 +75,38 @@ Modules.reports = (() => {
        البضاعة المباعة — لأن البضاعة رجعت للمخزن فمش محسوبة عليك. */
     const custReturns = (returns || []).filter(r =>
       r.kind === 'customer' && !r.voided && inRange(r.date, start, end));
-    let returnedValue = 0, returnedCost = 0;
+    let returnedValue = 0, returnedCost = 0, damagedLoss = 0;
     for (const r of custReturns) {
       for (const l of (r.lines || [])) {
         if (l.mode === 'swap') continue;            // استبدال — مفيش فلوس ولا إيراد اتغير
         const qty = Number(l.qty || 0);
-        returnedValue += qty * Number(l.price || 0);
         const it = AppState.items.find(i => i.id === l.itemId);
-        returnedCost += qty * Number((it && it.costPrice) || 0);
+        const unitCost = Number((it && it.costPrice) || 0);
+        returnedValue += qty * Number(l.price || 0);
+        /* البضاعة السليمة رجعت للرف فتكلفتها تتشال من تكلفة المبيعات.
+           لكن التالف مرجعش يتباع تاني — تكلفته خسارة فعلية وبتفضل
+           محسوبة عليك. من غير التفرقة دي الربح كان بيبان أعلى من الحقيقة. */
+        if (l.condition === 'damaged') damagedLoss += qty * unitCost;
+        else returnedCost += qty * unitCost;
       }
     }
+    damagedLoss = Math.round(damagedLoss * 100) / 100;
+
+    /* عجز الجرد: لما تعدّ المخزن وتلاقي أقل من اللي في البرنامج، الفرق ده
+       بضاعة راحت من غير بيع — خسارة حقيقية لازم تتحسب. ولو لقيت أكتر
+       يبقى زيادة بتقلّل التكلفة. (رصيد أول المدة مش تسوية، فبنستثنيه) */
+    let shrinkage = 0;
+    for (const m of (movements || [])) {
+      if (m.refType !== 'adjustment') continue;
+      if (!inRange(m.date, start, end)) continue;
+      shrinkage += -Number(m.qty || 0) * Number(m.unitCost || 0);
+    }
+    shrinkage = Math.round(shrinkage * 100) / 100;
 
     const grossRevenue = salesInRange.reduce((s, sale) => s + sale.total, 0);
     const grossCogs = salesInRange.reduce((s, sale) => s + sale.lines.reduce((ls, l) => ls + l.qty * (l.cost || 0), 0), 0);
     const revenue = Math.round((grossRevenue - returnedValue) * 100) / 100;
-    const cogs = Math.round((grossCogs - returnedCost) * 100) / 100;
+    const cogs = Math.round((grossCogs - returnedCost + shrinkage) * 100) / 100;
     const grossProfit = revenue - cogs;
     const totalExpenses = expensesInRange.reduce((s, e) => s + e.amount, 0);
     const netProfit = grossProfit - totalExpenses;
@@ -127,7 +144,9 @@ Modules.reports = (() => {
       <div class="grid grid-4" style="margin-bottom:16px;">
         <div class="stat-tile positive"><div class="lbl">إجمالي المبيعات</div><div class="val">${Utils.formatMoney(revenue)}</div>
           <div class="sub">${salesInRange.length} فاتورة${returnedValue > 0 ? ` · بعد خصم مرتجع ${Utils.formatMoney(returnedValue)}` : ''}</div></div>
-        <div class="stat-tile"><div class="lbl">تكلفة البضاعة المباعة</div><div class="val">${Utils.formatMoney(cogs)}</div></div>
+        <div class="stat-tile"><div class="lbl">تكلفة البضاعة المباعة</div><div class="val">${Utils.formatMoney(cogs)}</div>
+          ${shrinkage > 0.005 ? `<div class="sub">منها عجز جرد ${Utils.formatMoney(shrinkage)}</div>`
+            : (shrinkage < -0.005 ? `<div class="sub">بعد زيادة جرد ${Utils.formatMoney(-shrinkage)}</div>` : '')}</div>
         <div class="stat-tile"><div class="lbl">مجمل الربح</div><div class="val">${Utils.formatMoney(grossProfit)}</div></div>
         <div class="stat-tile negative"><div class="lbl">إجمالي المصروفات</div><div class="val">${Utils.formatMoney(totalExpenses)}</div></div>
       </div>

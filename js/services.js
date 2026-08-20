@@ -13,7 +13,7 @@ const Services = (() => {
     return rec ? rec.value : 0;
   }
 
-  async function _writeTreasuryMove(t, { direction, amount, source, refId, note, date, name }) {
+  async function _writeTreasuryMove(t, { direction, amount, source, refId, note, date, name, kind }) {
     amount = Math.round((Number(amount) || 0) * 100) / 100;
     if (amount <= 0) return null;
     const curBal = await _readBalance(t);
@@ -24,7 +24,7 @@ const Services = (() => {
     const id = await DB.reqToPromise(store.add({
       date: when, direction, amount, source,
       refId: refId ?? null, note: note || '', name: (name || '').trim(),
-      balanceAfter: newBal
+      kind: kind || null, balanceAfter: newBal
     }));
 
     /* لو الحركة اتسجلت بتاريخ قديم (مثلاً مصروف صرفته امبارح وكتبته
@@ -68,6 +68,33 @@ const Services = (() => {
     const next = (rec ? Number(rec.value) : 0) + 1;
     await DB.reqToPromise(store.put({ key: key, value: next }));
     return prefix + (tag ? '-' + tag : '') + '-' + String(next).padStart(5, '0');
+  }
+
+  /* ---------- تكلفة الصنف بالمتوسط المرجح ----------
+     لو اشتريت ١٠٠ متر بـ ٢٠ وبعدين ١٠٠ بـ ٣٠، يبقى عندك ٢٠٠ متر
+     دفعت فيهم ٥,٠٠٠ — يعني المتر بـ ٢٥.
+
+     الطريقة القديمة كانت بتاخد آخر سعر شراء (٣٠) وتحطه على كل الكمية،
+     فقيمة المخزون كانت بتطلع ٦,٠٠٠ بدل ٥,٠٠٠، وتكلفة البضاعة المباعة
+     تطلع أعلى من الحقيقة والأرباح أقل. ودي طريقة المحاسبة الصح. */
+  function _avgIn(oldQty, oldCost, addQty, addCost) {
+    const q = Math.round((Number(oldQty) + Number(addQty)) * 1000) / 1000;
+    const inCost = Number(addCost) || 0;
+    if (q <= 0) return { qty: q, cost: inCost || Number(oldCost) || 0 };
+    // لو الرصيد كان بالسالب (اتباع أكتر من الموجود) منبنيش عليه
+    const base = Number(oldQty) > 0 ? Number(oldQty) * Number(oldCost || 0) : 0;
+    const baseQty = Number(oldQty) > 0 ? Number(oldQty) : 0;
+    const cost = (base + Number(addQty) * inCost) / (baseQty + Number(addQty));
+    return { qty: q, cost: Math.round(cost * 10000) / 10000 };
+  }
+
+  // العكس: بنشيل كمية بتكلفتها (إلغاء فاتورة شراء مثلاً)
+  function _avgOut(curQty, curCost, remQty, remCost) {
+    const q = Math.round((Number(curQty) - Number(remQty)) * 1000) / 1000;
+    if (q <= 0) return { qty: q, cost: Number(curCost) || 0 };
+    const val = Number(curQty) * Number(curCost || 0) - Number(remQty) * Number(remCost || 0);
+    const cost = val / q;
+    return { qty: q, cost: cost > 0 ? Math.round(cost * 10000) / 10000 : Number(curCost) || 0 };
   }
 
   async function _bumpPartyBalance(t, storeName, partyId, delta) {
@@ -246,11 +273,13 @@ const Services = (() => {
       const movStore = t.objectStore('stockMovements');
       const now = Utils.nowISO();
 
-      // ١) نرجّع أثر القديم — البضاعة تطلع من المخزن تاني
+      // ١) نرجّع أثر القديم — البضاعة تطلع من المخزن، والتكلفة ترجع لمتوسطها
       for (const line of (old.lines || [])) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
+          const av = _avgOut(item.stock || 0, item.costPrice || 0, line.qty, line.cost || 0);
+          item.stock = av.qty;
+          item.costPrice = av.cost;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(movStore.add({
@@ -277,8 +306,9 @@ const Services = (() => {
       for (const line of lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) + line.qty) * 1000) / 1000;
-          if (line.cost) item.costPrice = line.cost;
+          const av = _avgIn(item.stock || 0, item.costPrice || 0, line.qty, line.cost);
+          item.stock = av.qty;
+          if (line.cost) item.costPrice = av.cost;
           item.lastSupplierId = purchase.supplierId || item.lastSupplierId || null;
           await DB.reqToPromise(itemsStore.put(item));
         }
@@ -387,8 +417,9 @@ const Services = (() => {
       for (const line of purchase.lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) + line.qty) * 1000) / 1000;
-          item.costPrice = line.cost;
+          const av = _avgIn(item.stock || 0, item.costPrice || 0, line.qty, line.cost);
+          item.stock = av.qty;
+          item.costPrice = av.cost;
           // بنفتكر آخر مورد جبنا منه الصنف — عشان لما نرجّعه يطلع اسمه لوحده
           if (purchase.supplierId) item.lastSupplierId = purchase.supplierId;
           await DB.reqToPromise(itemsStore.put(item));
@@ -445,7 +476,9 @@ const Services = (() => {
       for (const line of purchase.lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
+          const av = _avgOut(item.stock || 0, item.costPrice || 0, line.qty, line.cost || 0);
+          item.stock = av.qty;
+          item.costPrice = av.cost;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(t.objectStore('stockMovements').add({
@@ -787,6 +820,15 @@ const Services = (() => {
       const store = t.objectStore('expenses');
       const exp = await DB.reqToPromise(store.get(expenseId));
       if (!exp) return false;
+      /* مصروف المرتبات جاي من تقفيل شهر — وما خرجش فلوس من الخزنة وقتها
+         (الفلوس بتخرج لما تصرف للموظف). لو مسحناه من هنا كنا هنرجّع
+         للخزنة فلوس ما خرجتش، ونسيب تقفيل الشهر معلّق. */
+      if (exp.source === 'payroll') {
+        throw new Error('ده مرتب موظف من تقفيل الشهر — امسحه من كشف حساب الموظف (فك التقفيل)');
+      }
+      if (exp.source === 'depreciation') {
+        throw new Error('ده إهلاك أصول ثابتة — امسحه من شاشة الأصول الثابتة');
+      }
       await _writeTreasuryMove(t, { direction: 'in', amount: exp.amount, source: 'expense', refId: expenseId, note: 'إلغاء مصروف: ' + exp.category });
       await DB.reqToPromise(store.delete(expenseId));
       return true;
@@ -794,9 +836,9 @@ const Services = (() => {
   }
 
   // ---------- الخزنة اليدوية ----------
-  async function manualTreasuryMove(direction, amount, note, name, date) {
+  async function manualTreasuryMove(direction, amount, note, name, date, kind) {
     return DB.tx(['treasury', 'settings'], 'readwrite', (t) =>
-      _writeTreasuryMove(t, { direction, amount, name,
+      _writeTreasuryMove(t, { direction, amount, name, kind,
         source: direction === 'in' ? 'deposit' : 'withdrawal', note, date })
     );
   }
@@ -839,7 +881,7 @@ const Services = (() => {
     return run;
   }
 
-  async function updateTreasuryMove(id, { direction, amount, name, note, date }) {
+  async function updateTreasuryMove(id, { direction, amount, name, note, date, kind }) {
     return DB.tx(['treasury', 'settings'], 'readwrite', async (t) => {
       const store = t.objectStore('treasury');
       const m = await DB.reqToPromise(store.get(id));
@@ -852,6 +894,7 @@ const Services = (() => {
       m.amount = amt;
       m.name = (name || '').trim();
       m.note = (note || '').trim();
+      m.kind = kind || null;
       if (date) m.date = date;
       await DB.reqToPromise(store.put(m));
       return _restack(t);
@@ -958,8 +1001,10 @@ const Services = (() => {
       if (Number(s.sellerId || 0) !== Number(employeeId)) continue;
       const d = new Date(s.date);
       if (d < from || d > to) continue;
-      const returned = (s.returns || []).reduce((a, r) => a + Number(r.amount || 0), 0);
-      total += Number(s.total || 0) - returned;
+      /* s.total بيكون منزّل منه المرتجع الجزئي أصلاً (returnSaleItems
+         بتنقّص الإجمالي)، فلو طرحناه تاني كنا هنخصم مرتين والعمولة
+         تطلع أقل من حقه. */
+      total += Number(s.total || 0);
       count++;
     }
     return { total: Math.round(total * 100) / 100, count };
@@ -1076,6 +1121,81 @@ const Services = (() => {
     });
   }
 
+  /* ================= إهلاك الأصول الثابتة =================
+
+     العربية اللي اشتريتها بـ ١٢٠,٠٠٠ مش هتفضل بـ ١٢٠,٠٠٠ طول العمر —
+     بتقلّ قيمتها كل سنة. والفرق ده مصروف حقيقي على المحل حتى لو
+     مفيش فلوس بتخرج. من غيره الأرباح بتبان أعلى من الحقيقة،
+     وقيمة المحل في الورق بتبقى أكبر من قيمته الحقيقية.
+
+     بنقسّم التكلفة على العمر الإنتاجي بالشهور (طريقة القسط الثابت).
+     كل شهر بتدوس زرار فيتسجّل مصروف "إهلاك" بالمبلغ. */
+
+  const DEFAULT_LIFE_YEARS = 5;
+
+  function monthlyDepreciation(asset) {
+    const cost = Number(asset.cost || 0);
+    const years = Number(asset.usefulLife || DEFAULT_LIFE_YEARS);
+    if (cost <= 0 || years <= 0) return 0;
+    return Math.round((cost / (years * 12)) * 100) / 100;
+  }
+
+  // كل أصل اتهلك منه كام لحد دلوقتي
+  async function accumulatedDepreciation() {
+    const map = {};
+    for (const e of await DB.getAll('expenses')) {
+      if (e.source !== 'depreciation') continue;
+      for (const l of (e.lines || [])) {
+        map[l.assetId] = Math.round(((map[l.assetId] || 0) + Number(l.amount || 0)) * 100) / 100;
+      }
+    }
+    return map;
+  }
+
+  /* إهلاك شهر معيّن: بيشمل الأصول اللي كانت متملّكة في الشهر ده
+     واللي لسه ما اتهلكتش بالكامل. */
+  async function depreciationPlan(monthKey) {
+    const { to } = monthRange(monthKey);
+    const acc = await accumulatedDepreciation();
+    const lines = [];
+    for (const a of await DB.getAll('fixedAssets')) {
+      const bought = new Date(a.purchaseDate || a.date || 0);
+      if (bought > new Date(to)) continue;                 // لسه ما اشتراهاش
+      const already = Number(acc[a.id] || 0);
+      const remaining = Math.round((Number(a.cost || 0) - already) * 100) / 100;
+      if (remaining <= 0.005) continue;                    // اتهلكت خلاص
+      const amount = Math.min(monthlyDepreciation(a), remaining);
+      if (amount <= 0.005) continue;
+      lines.push({ assetId: a.id, name: a.name, amount: Math.round(amount * 100) / 100,
+                   cost: Number(a.cost || 0), already, life: Number(a.usefulLife || DEFAULT_LIFE_YEARS) });
+    }
+    const total = Math.round(lines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+    return { monthKey, lines, total };
+  }
+
+  async function postDepreciation(monthKey) {
+    const done = (await DB.getAll('expenses'))
+      .find(e => e.source === 'depreciation' && e.monthKey === monthKey);
+    if (done) throw new Error('إهلاك الشهر ده متسجّل خلاص');
+
+    const plan = await depreciationPlan(monthKey);
+    if (plan.total <= 0) throw new Error('مفيش إهلاك يتسجل للشهر ده');
+    const { to } = monthRange(monthKey);
+
+    // مفيش حركة خزنة — الإهلاك مصروف من غير ما فلوس تخرج
+    return DB.add('expenses', {
+      date: to, category: 'إهلاك أصول', description: 'إهلاك ' + monthKey,
+      amount: plan.total, source: 'depreciation', monthKey, lines: plan.lines
+    });
+  }
+
+  async function voidDepreciation(expenseId) {
+    const e = await DB.get('expenses', expenseId);
+    if (!e || e.source !== 'depreciation') throw new Error('ده مش قيد إهلاك');
+    await DB.delete('expenses', expenseId);
+    return true;
+  }
+
   /* ---------- تقفيل اليومية ----------
      آخر اليوم بتعدّ اللي في الدرج وتكتبه. البرنامج بيقارنه باللي عنده:
        - لو زي بعضه: بيتسجل تقفيل نضيف.
@@ -1175,12 +1295,92 @@ const Services = (() => {
     return DB.tx(['treasury', 'settings'], 'readwrite', async (t) => {
       const cur = await _readBalance(t);
       if (cur !== 0) return false;
-      await _writeTreasuryMove(t, { direction: 'in', amount, source: 'deposit', note: 'رصيد افتتاحي' });
+      await _writeTreasuryMove(t, { direction: 'in', amount, source: 'deposit',
+        note: 'رصيد افتتاحي', kind: 'capital' });
       return true;
     });
   }
 
   // ---------- نسخة احتياطية ----------
+  /* ================= المركز المالي =================
+
+     المعادلة المحاسبية: الأصول = الالتزامات + حقوق الملكية.
+     يعني اللي تحت إيدك (فلوس + بضاعة + فلوس عند الناس + عدد وأجهزة)
+     = اللي عليك (للموردين وللموظفين) + اللي يخصك انت فعلاً.
+
+     وحقوق الملكية بتتفصّل: رأس المال اللي حطيته من جيبك،
+     ناقص اللي سحبته لنفسك، زايد الأرباح اللي سابتها في المحل. */
+  async function financialPosition() {
+    const [items, customers, suppliers, employees, assets, treasury] = await Promise.all([
+      DB.getAll('items'), DB.getAll('customers'), DB.getAll('suppliers'),
+      DB.getAll('employees'), DB.getAll('fixedAssets'), DB.getAll('treasury')
+    ]);
+    const cash = await getCashBalance();
+    const acc = await accumulatedDepreciation();
+
+    const inventory = Math.round(items.reduce((s, i) =>
+      s + Math.max(0, Number(i.stock || 0)) * Number(i.costPrice || 0), 0) * 100) / 100;
+    const receivable = Math.round(customers.reduce((s, c) =>
+      s + Math.max(0, Number(c.balance || 0)), 0) * 100) / 100;
+    const assetsCost = Math.round(assets.reduce((s, a) => s + Number(a.cost || 0), 0) * 100) / 100;
+    const accumDep = Math.round(assets.reduce((s, a) => s + Number(acc[a.id] || 0), 0) * 100) / 100;
+    const assetsNet = Math.round((assetsCost - accumDep) * 100) / 100;
+
+    const payable = Math.round(suppliers.reduce((s, x) =>
+      s + Math.max(0, Number(x.balance || 0)), 0) * 100) / 100;
+    const employeeDues = Math.round(employees.reduce((s, e) =>
+      s + Math.max(0, Number(e.balance || 0)), 0) * 100) / 100;
+
+    const totalAssets = Math.round((cash + inventory + receivable + assetsNet) * 100) / 100;
+    const totalLiabilities = Math.round((payable + employeeDues) * 100) / 100;
+    const equity = Math.round((totalAssets - totalLiabilities) * 100) / 100;
+
+    // رأس المال اللي دخل من جيبه، والمسحوبات الشخصية
+    let capital = 0, drawings = 0;
+    for (const m of treasury) {
+      if (m.kind === 'capital' && m.direction === 'in') capital += Number(m.amount || 0);
+      if (m.kind === 'drawings' && m.direction === 'out') drawings += Number(m.amount || 0);
+    }
+    capital = Math.round(capital * 100) / 100;
+    drawings = Math.round(drawings * 100) / 100;
+    // الباقي هو الأرباح اللي اتجمّعت وفضلت في المحل
+    const retained = Math.round((equity - capital + drawings) * 100) / 100;
+
+    return {
+      cash, inventory, receivable, assetsCost, accumDep, assetsNet, totalAssets,
+      payable, employeeDues, totalLiabilities,
+      equity, capital, drawings, retained
+    };
+  }
+
+  /* أعمار ديون العملاء: مين مأخر عليك من إمتى.
+     الدين اللي عدى عليه ٦٠ يوم بيبقى محتاج متابعة جدية. */
+  async function receivableAging() {
+    const [sales, customers] = await Promise.all([DB.getAll('sales'), DB.getAll('customers')]);
+    const now = Date.now();
+    const DAY = 86400000;
+    const rows = [];
+    for (const c of customers) {
+      const bal = Number(c.balance || 0);
+      if (bal <= 0.005) continue;
+      // بنقرّب عمر الدين من أقدم فاتورة آجل لسه مش مسدّدة
+      let oldest = null;
+      for (const s of sales) {
+        if (s.voided || Number(s.customerId) !== Number(c.id)) continue;
+        if (Number(s.dueAmount || 0) <= 0) continue;
+        const d = new Date(s.date).getTime();
+        if (oldest === null || d < oldest) oldest = d;
+      }
+      const days = oldest === null ? 0 : Math.floor((now - oldest) / DAY);
+      const bucket = days > 90 ? 'over90' : days > 60 ? 'd61_90' : days > 30 ? 'd31_60' : 'd0_30';
+      rows.push({ id: c.id, name: c.name, phone: c.phone || '', balance: bal, days, bucket });
+    }
+    rows.sort((a, b) => b.days - a.days);
+    const totals = { d0_30: 0, d31_60: 0, d61_90: 0, over90: 0 };
+    rows.forEach(r => { totals[r.bucket] = Math.round((totals[r.bucket] + r.balance) * 100) / 100; });
+    return { rows, totals };
+  }
+
   async function exportBackup() {
     const data = {};
     for (const store of DB.STORE_NAMES) {
@@ -1226,6 +1426,9 @@ const Services = (() => {
     isManualMove, updateTreasuryMove, deleteTreasuryMove,
     employeeAdvance, payEmployee, employeeAdjust, employeeSales,
     closePayrollMonth, voidPayrollClosing, voidEmployeeMove, monthRange,
+    monthlyDepreciation, accumulatedDepreciation, depreciationPlan,
+    postDepreciation, voidDepreciation, DEFAULT_LIFE_YEARS,
+    financialPosition, receivableAging,
     exportBackup, importBackup
   };
 })();

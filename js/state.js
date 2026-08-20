@@ -1,7 +1,7 @@
 /* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-08-20 · الموظفين + بحث الخزنة';
+const APP_VERSION = '2026-08-20 · مراجعة محاسبية + المركز المالي';
 
 const Modules = {};
 
@@ -85,6 +85,7 @@ const ROUTES = {
   expenses: { title: 'المصروفات', mod: 'expenses' },
   treasury: { title: 'الخزنة', mod: 'treasury' },
   employees: { title: 'الموظفين', mod: 'employees' },
+  finance: { title: 'المركز المالي', mod: 'finance' },
   assets: { title: 'الأصول الثابتة', mod: 'assets' },
   connect: { title: 'توصيل الموبايل', mod: 'connect' },
   company: { title: 'بيانات المؤسسة', mod: 'company' }

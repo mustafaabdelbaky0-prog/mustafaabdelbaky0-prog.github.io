@@ -104,7 +104,11 @@ Modules.expenses = (() => {
                     <td><span class="badge badge-muted">${Utils.escapeHtml(e.category)}</span></td>
                     <td>${Utils.escapeHtml(e.description || '—')}</td>
                     <td style="font-weight:700;color:var(--danger);">${Utils.formatMoney(e.amount)}</td>
-                    <td><button class="icon-btn del-exp" title="حذف">🗑️</button></td>
+                    <td>${e.source === 'payroll'
+                      ? '<button class="icon-btn locked-exp" title="مرتب من تقفيل شهر — امسحه من كشف حساب الموظف" data-why="ده مرتب موظف من تقفيل الشهر — امسحه من كشف حساب الموظف">🔒</button>'
+                      : (e.source === 'depreciation'
+                        ? '<button class="icon-btn locked-exp" title="إهلاك أصول" data-why="ده إهلاك أصول ثابتة — امسحه من شاشة الأصول الثابتة">🔒</button>'
+                        : '<button class="icon-btn del-exp" title="حذف">🗑️</button>')}</td>
                   </tr>`).join('') : `<tr class="empty-row"><td colspan="5">مفيش مصروفات مسجلة لسه</td></tr>`}
               </tbody>
             </table>
@@ -210,6 +214,10 @@ Modules.expenses = (() => {
     });
 
     container.querySelector('#expBody').addEventListener('click', async (e) => {
+      if (e.target.classList.contains('locked-exp')) {
+        Utils.toast(e.target.dataset.why || 'المصروف ده مربوط بمستند تاني', 'info');
+        return;
+      }
       if (!e.target.classList.contains('del-exp')) return;
       const id = Number(e.target.closest('tr').dataset.id);
       const ok = await Utils.confirmDialog('حذف هذا المصروف؟ هيترد مبلغه للخزنة.');

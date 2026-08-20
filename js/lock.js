@@ -12,7 +12,7 @@ const Auth = (() => {
   const IDLE_MINUTES = 15;
 
   // الشاشات اللي لصاحب المحل بس
-  const OWNER_ROUTES = ['reports', 'purchases', 'expenses', 'treasury', 'assets', 'company', 'connect', 'employees'];
+  const OWNER_ROUTES = ['reports', 'purchases', 'expenses', 'treasury', 'assets', 'company', 'connect', 'employees', 'finance'];
 
   let role = 'owner';
   let pinHash = null;

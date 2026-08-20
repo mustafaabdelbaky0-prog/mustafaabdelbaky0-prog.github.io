@@ -8,7 +8,7 @@
 let currentRoute = null;
 
 const WEB_ROUTES = ['reports','sales','purchases','returns','items',
-                    'inventory','parties','expenses','treasury','assets','company','employees'];
+                    'inventory','parties','expenses','treasury','assets','company','employees','finance'];
 
 async function navigate(route) {
   if (!ROUTES[route] || WEB_ROUTES.indexOf(route) < 0) {

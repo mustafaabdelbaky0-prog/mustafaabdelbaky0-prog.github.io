@@ -309,6 +309,22 @@ tbody tr:hover{background:#FAFBFC;}
 .line-derived{font-size:10.5px;color:var(--success);margin-top:2px;font-weight:700;}
 .line-derived.warn{color:var(--danger);}
 
+/* ---------- المركز المالي ---------- */
+.mini-table{width:100%;border-collapse:collapse;font-size:13.5px;}
+.mini-table td{padding:8px 4px;border-bottom:1px solid var(--line);}
+.mini-table td:last-child{text-align:left;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.mini-table tr:last-child td{border-bottom:none;}
+.mini-table .mini-total td{border-top:2px solid var(--navy);border-bottom:none;
+  font-weight:800;font-size:15px;color:var(--navy);padding-top:10px;}
+.mini-table .mini-total.bad td{color:var(--danger);border-top-color:var(--danger);}
+
+.ratio-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;}
+.ratio-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;}
+.ratio-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;}
+.ratio-title{font-weight:800;font-size:14px;color:var(--navy);}
+.ratio-head .badge{font-size:15px;padding:4px 10px;font-variant-numeric:tabular-nums;}
+.ratio-explain{font-size:12.5px;color:var(--ink-soft);line-height:1.8;}
+
 /* صف البحث في الخزنة */
 .filter-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;}
 .filter-row .btn{flex-shrink:0;}
