@@ -21,6 +21,11 @@ Modules.treasury = (() => {
         <div class="stat-tile negative"><div class="lbl">خارج النهاردة</div><div class="val">${Utils.formatMoney(todayOut)}</div></div>
       </div>
 
+      <div class="card daycard" id="dayCard" style="margin-bottom:18px;">
+        <div class="section-head"><h3>تقفيل اليومية</h3></div>
+        <div id="dayBody"><div class="empty-state" style="padding:16px;">بيجمّع حركة اليوم...</div></div>
+      </div>
+
       <div class="section-head">
         <h3>سجل حركة الخزنة</h3>
         <div class="tag-row">
@@ -46,8 +51,97 @@ Modules.treasury = (() => {
       </div>
     `;
 
+    await drawDayClose(container);
+
     container.querySelector('#depositBtn').addEventListener('click', () => openMoveModal('in', container));
     container.querySelector('#withdrawBtn').addEventListener('click', () => openMoveModal('out', container));
+  }
+
+  /* تقفيل اليومية: بيوريك حركة اليوم، وبتكتب اللي عديته في الدرج فعلاً،
+     والبرنامج بيقولك في فرق ولا لأ وبيظبط الرصيد عليه. */
+  async function drawDayClose(container) {
+    const box = container.querySelector('#dayBody');
+    if (!box) return;
+    const s = await Services.daySummary();
+
+    if (s.closed) {
+      const d = s.closed;
+      const kind = Math.abs(d.difference) < 0.005 ? 'ok' : (d.difference > 0 ? 'over' : 'short');
+      box.innerHTML = `
+        <div class="notice ${kind === 'ok' ? 'notice-ok' : 'notice-warn'}" style="line-height:2;">
+          <strong>اليوم اتقفل ${Utils.formatDateTime(d.closedAt)}</strong><br>
+          البرنامج كان بيقول <strong>${Utils.formatMoney(d.expected)}</strong> ·
+          والدرج كان فيه <strong>${Utils.formatMoney(d.counted)}</strong>
+          ${kind === 'ok'
+            ? '<br>مظبوط بالمليم.'
+            : `<br><strong style="color:var(--danger);">فرق ${Utils.formatMoney(Math.abs(d.difference))} ${d.difference > 0 ? 'زيادة' : 'ناقص'}</strong> — واترصد في الخزنة.`}
+          ${d.note ? `<br><span class="muted">${Utils.escapeHtml(d.note)}</span>` : ''}
+        </div>`;
+      return;
+    }
+
+    box.innerHTML = `
+      <div class="day-grid">
+        <div class="day-cell"><span>فواتير النهاردة</span><strong>${s.invoices}</strong></div>
+        <div class="day-cell"><span>مبيعات</span><strong>${Utils.formatMoney(s.salesTotal)}</strong></div>
+        <div class="day-cell"><span>مرتجعات</span><strong>${Utils.formatMoney(s.returns)}</strong></div>
+        <div class="day-cell"><span>مصروفات</span><strong>${Utils.formatMoney(s.expenses)}</strong></div>
+        <div class="day-cell in"><span>داخل الخزنة</span><strong>${Utils.formatMoney(s.cashIn)}</strong></div>
+        <div class="day-cell out"><span>خارج الخزنة</span><strong>${Utils.formatMoney(s.cashOut)}</strong></div>
+      </div>
+
+      <div class="day-close-row">
+        <div class="field" style="margin:0;">
+          <label>المفروض في الدرج دلوقتي</label>
+          <input type="text" id="dcExpected" value="${Utils.formatMoney(s.expected)}" readonly>
+        </div>
+        <div class="field" style="margin:0;">
+          <label>عدّ الدرج واكتب اللي لقيته</label>
+          <input type="number" id="dcCounted" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
+        </div>
+        <button class="btn btn-amber" id="dcSave">اقفل اليومية</button>
+      </div>
+      <div id="dcDiff" class="hint" style="margin-top:8px;"></div>`;
+
+    const countedEl = box.querySelector('#dcCounted');
+    const diffEl = box.querySelector('#dcDiff');
+
+    function showDiff() {
+      const v = countedEl.value.trim();
+      if (v === '') { diffEl.innerHTML = ''; return; }
+      const diff = Math.round((Number(v || 0) - s.expected) * 100) / 100;
+      if (Math.abs(diff) < 0.005) {
+        diffEl.innerHTML = '<span style="color:var(--success);font-weight:700;">مظبوط بالمليم ✓</span>';
+      } else {
+        diffEl.innerHTML =
+          `<span style="color:var(--danger);font-weight:700;">فرق ${Utils.formatMoney(Math.abs(diff))} ` +
+          `${diff > 0 ? 'زيادة عن' : 'ناقص عن'} اللي في البرنامج</span>` +
+          `<br><span class="muted">هيتسجل في الخزنة عشان الرصيد يبقى مطابق للفلوس اللي معاك.</span>`;
+      }
+    }
+    countedEl.addEventListener('input', showDiff);
+
+    box.querySelector('#dcSave').addEventListener('click', async () => {
+      const v = countedEl.value.trim();
+      if (v === '') { Utils.toast('اكتب اللي عديته في الدرج', 'error'); countedEl.focus(); return; }
+      const counted = Number(v);
+      const diff = Math.round((counted - s.expected) * 100) / 100;
+      let note = '';
+      if (Math.abs(diff) > 0.005) {
+        const goOn = await Utils.confirmDialog(
+          `فيه فرق ${Utils.formatMoney(Math.abs(diff))} ${diff > 0 ? 'زيادة' : 'ناقص'}.\n` +
+          `هيتسجل في الخزنة عشان الرصيد يبقى مطابق للدرج. تكمل؟`);
+        if (!goOn) return;
+      }
+      try {
+        await Services.closeDay({ counted, note });
+        await refreshShell();
+        Utils.toast('اتقفلت اليومية', 'success');
+        render(container);
+      } catch (e) {
+        Utils.toast(e.message || 'التقفيل مانجحش', 'error');
+      }
+    });
   }
 
   function openMoveModal(direction, container) {

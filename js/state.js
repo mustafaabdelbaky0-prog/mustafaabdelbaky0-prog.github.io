@@ -1,7 +1,7 @@
 /* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-08-20 · مراجعة ما قبل التشغيل';
+const APP_VERSION = '2026-08-20 · تقفيل يومية وطباعة وملصقات';
 
 const Modules = {};
 
@@ -11,7 +11,34 @@ const AppState = {
   suppliers: [],
   company: null,
 
-  async reloadItems() { this.items = await DB.getAll('items'); return this.items; },
+  async reloadItems() {
+    this.items = await DB.getAll('items');
+    this.refreshLowStockBadge();
+    return this.items;
+  },
+
+  /* الأصناف اللي خلصت أو قربت تخلص — بيظهر رقمها جنب "المخزون"
+     في القايمة، عشان تعرف من غير ما تفتح الشاشة وتدوّر. */
+  lowStockItems() {
+    return this.items.filter(i =>
+      i.active !== false && Number(i.minStock || 0) > 0 &&
+      Number(i.stock || 0) <= Number(i.minStock));
+  },
+
+  refreshLowStockBadge() {
+    try {
+      const el = document.getElementById('lowBadge');
+      if (!el) return;
+      const n = this.lowStockItems().length;
+      if (n > 0) {
+        el.textContent = n;
+        el.hidden = false;
+        el.title = n + ' صنف خلص أو قرب يخلص';
+      } else {
+        el.hidden = true;
+      }
+    } catch (e) { }
+  },
   async reloadParties() {
     this.customers = await DB.getAll('customers');
     this.suppliers = await DB.getAll('suppliers');

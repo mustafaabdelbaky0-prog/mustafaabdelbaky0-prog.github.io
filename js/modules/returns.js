@@ -407,12 +407,12 @@ Modules.returns = (() => {
     box.innerHTML = `
       <div class="table-wrap" style="border:none;">
         <table>
-          <thead><tr><th>التاريخ</th><th>الرقم</th><th>النوع</th><th>الطرف</th><th>الأصناف</th><th>السبب</th><th>القيمة</th></tr></thead>
+          <thead><tr><th>التاريخ</th><th>الرقم</th><th>النوع</th><th>الطرف</th><th>الأصناف</th><th>السبب</th><th>القيمة</th><th></th></tr></thead>
           <tbody>
             ${all.slice(0, 30).map(d => `
-              <tr>
+              <tr data-id="${d.id}" ${d.voided ? 'style="opacity:.55;"' : ''}>
                 <td>${Utils.formatDate(d.date)}</td>
-                <td class="strong">${d.number}</td>
+                <td class="strong">${d.number}${d.voided ? ' <span class="badge badge-danger">اتمسح</span>' : ''}</td>
                 <td><span class="badge ${d.kind === 'customer' ? 'badge-ok' : 'badge-warn'}">${d.kind === 'customer' ? 'من عميل' : 'لمورد'}</span></td>
                 <td>${Utils.escapeHtml(nameOf(d))}</td>
                 <td class="muted" style="font-size:12px;">
@@ -421,10 +421,28 @@ Modules.returns = (() => {
                 </td>
                 <td class="muted" style="font-size:12px;">${Utils.escapeHtml(d.reason || '—')}</td>
                 <td class="strong">${d.total > 0 ? Utils.formatMoney(d.total) : '<span class="swap-tag">استبدال</span>'}</td>
+                <td>${d.voided ? '' : '<button class="icon-btn void-ret" title="امسح المرتجع">🗑️</button>'}</td>
               </tr>`).join('')}
           </tbody>
         </table>
       </div>`;
+
+    box.querySelectorAll('.void-ret').forEach(btn => btn.addEventListener('click', async (e) => {
+      const id = Number(e.target.closest('tr').dataset.id);
+      if (!(await Lock.require('مسح مرتجع'))) return;
+      if (!(await Utils.confirmDialog(
+        'هيترجع أثر المرتجع بالكامل: المخزن والتالف والفلوس وحساب الطرف. متأكد؟'))) return;
+      try {
+        await Services.voidReturn(id);
+      } catch (err) {
+        Utils.beep('error');
+        await Utils.confirmDialog(err.message || 'المسح مانجحش');
+        return;
+      }
+      await AppState.reloadItems(); await AppState.reloadParties(); await refreshShell();
+      Utils.toast('اتمسح المرتجع', 'success');
+      render(container);
+    }));
   }
 
   return { render };

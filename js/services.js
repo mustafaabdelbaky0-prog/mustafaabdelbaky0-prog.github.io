@@ -545,6 +545,104 @@ const Services = (() => {
        بعدين ترجّع التالفة للمورد وياخد بدلها (استبدال)
          النتيجة: التالف -1 ، المخزن +1
        المحصلة النهائية صفر — وده الصح. */
+  /* ---------- مسح مرتجع متسجل ----------
+     بيرجّع كل أثره: المخزن، والتالف، والفلوس، وحساب الطرف.
+     زي إلغاء الفاتورة بالظبط — بنضيف حركات عكسية مش بنمسح القديمة،
+     عشان الدمج بين الأجهزة يفضل سليم ويفضل عندك سجل. */
+  async function voidReturn(returnId) {
+    return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers'], 'readwrite', async (t) => {
+      const store = t.objectStore('returns');
+      const doc = await DB.reqToPromise(store.get(returnId));
+      if (!doc) throw new Error('المرتجع مش موجود');
+      if (doc.voided) throw new Error('المرتجع ده متمسوح خلاص');
+
+      const itemsStore = t.objectStore('items');
+      const movStore = t.objectStore('stockMovements');
+      const isCustomer = doc.kind === 'customer';
+      const now = Utils.nowISO();
+
+      // بنتأكد الأول إن الرجوع مش هيخلي أي رصيد بالسالب
+      const shortage = [];
+      for (const l of (doc.lines || [])) {
+        const item = await DB.reqToPromise(itemsStore.get(l.itemId));
+        if (!item) continue;
+        const qty = Number(l.qty || 0);
+        const isDamaged = l.condition === 'damaged';
+        const swap = l.mode === 'swap';
+        let stock = Number(item.stock || 0), damaged = Number(item.damagedQty || 0);
+
+        if (isCustomer) {
+          if (isDamaged) damaged -= qty; else stock -= qty;
+          if (swap) stock += qty;
+        } else {
+          if (isDamaged) damaged += qty; else stock += qty;
+          if (swap) stock -= qty;
+        }
+        if (stock < -0.0001) shortage.push(`${item.name}: المخزن هيبقى ${Math.round(stock * 1000) / 1000}`);
+        if (damaged < -0.0001) shortage.push(`${item.name}: التالف هيبقى ${Math.round(damaged * 1000) / 1000}`);
+      }
+      if (shortage.length) {
+        throw new Error('مينفعش تمسح المرتجع ده — البضاعة اتحركت بعده:\n• ' + shortage.join('\n• '));
+      }
+
+      for (const l of (doc.lines || [])) {
+        const item = await DB.reqToPromise(itemsStore.get(l.itemId));
+        if (!item) continue;
+        const qty = Number(l.qty || 0);
+        const isDamaged = l.condition === 'damaged';
+        const swap = l.mode === 'swap';
+
+        if (isCustomer) {
+          if (isDamaged) item.damagedQty = Math.round((Number(item.damagedQty || 0) - qty) * 1000) / 1000;
+          else item.stock = Math.round((Number(item.stock || 0) - qty) * 1000) / 1000;
+          if (swap) item.stock = Math.round((Number(item.stock || 0) + qty) * 1000) / 1000;
+        } else {
+          if (isDamaged) item.damagedQty = Math.round((Number(item.damagedQty || 0) + qty) * 1000) / 1000;
+          else item.stock = Math.round((Number(item.stock || 0) + qty) * 1000) / 1000;
+          if (swap) item.stock = Math.round((Number(item.stock || 0) - qty) * 1000) / 1000;
+        }
+        await DB.reqToPromise(itemsStore.put(item));
+
+        // حركة عكسية للمخزن (التالف مالوش حركة مخزن أصلاً)
+        if (!isDamaged) {
+          await DB.reqToPromise(movStore.add({
+            itemId: item.id, type: isCustomer ? 'return_out' : 'return_in',
+            qty: isCustomer ? -Math.abs(qty) : Math.abs(qty),
+            unitCost: item.costPrice || 0, date: now,
+            refType: 'return-void', refId: returnId, note: 'مسح مرتجع ' + doc.number
+          }));
+        }
+        if (swap) {
+          await DB.reqToPromise(movStore.add({
+            itemId: item.id, type: isCustomer ? 'return_in' : 'sale',
+            qty: isCustomer ? Math.abs(qty) : -Math.abs(qty),
+            unitCost: item.costPrice || 0, date: now,
+            refType: 'return-void', refId: returnId, note: 'مسح بديل مرتجع ' + doc.number
+          }));
+        }
+      }
+
+      // الفلوس
+      const money = Number(doc.total || 0);
+      if (money > 0) {
+        if (doc.partyId && doc.settle === 'account') {
+          await _bumpPartyBalance(t, isCustomer ? 'customers' : 'suppliers', doc.partyId, money);
+        } else {
+          await _writeTreasuryMove(t, {
+            direction: isCustomer ? 'in' : 'out', amount: money,
+            source: isCustomer ? 'sale' : 'purchase', refId: returnId,
+            note: 'مسح مرتجع ' + doc.number
+          });
+        }
+      }
+
+      doc.voided = true;
+      doc.voidedAt = now;
+      await DB.reqToPromise(store.put(doc));
+      return true;
+    });
+  }
+
   async function saveReturn(doc) {
     return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers'], 'readwrite', async (t) => {
       const itemsStore = t.objectStore('items');
@@ -710,6 +808,81 @@ const Services = (() => {
     });
   }
 
+  /* ---------- تقفيل اليومية ----------
+     آخر اليوم بتعدّ اللي في الدرج وتكتبه. البرنامج بيقارنه باللي عنده:
+       - لو زي بعضه: بيتسجل تقفيل نضيف.
+       - لو فيه فرق: بيسجّل حركة خزنة بالفرق عشان رصيد البرنامج يبقى
+         مطابق للفلوس اللي معاك فعلاً، وبيفضل الفرق متسجّل عشان تراجعه.
+     من غير ده، أي فرق صغير بيفضل مستخبي لحد ما يكبر ومتعرفش سببه. */
+  async function closeDay({ date, counted, note }) {
+    return DB.tx(['dayClosings', 'treasury', 'settings'], 'readwrite', async (t) => {
+      const when = date || Utils.nowISO();
+      const day = Utils.dateKey(when);
+
+      const store = t.objectStore('dayClosings');
+      const existing = (await DB.reqToPromise(store.getAll()))
+        .find(c => Utils.dateKey(c.date) === day);
+      if (existing) throw new Error('اليوم ده متقفّل خلاص (' + day + ')');
+
+      const expected = await _readBalance(t);
+      const cash = Math.round((Number(counted) || 0) * 100) / 100;
+      const diff = Math.round((cash - expected) * 100) / 100;
+
+      let moveId = null;
+      if (Math.abs(diff) > 0.005) {
+        const m = await _writeTreasuryMove(t, {
+          direction: diff > 0 ? 'in' : 'out',
+          amount: Math.abs(diff),
+          source: diff > 0 ? 'deposit' : 'withdrawal',
+          refId: null,
+          note: 'فرق تقفيل يومية ' + day + (note ? ' — ' + note : ''),
+          date: when
+        });
+        moveId = m ? m.id : null;
+      }
+
+      const id = await DB.reqToPromise(store.add({
+        date: when, day, expected, counted: cash, difference: diff,
+        note: note || '', moveId, closedAt: Utils.nowISO(),
+        device: (typeof Device !== 'undefined') ? Device.current() : null
+      }));
+      return { id, day, expected, counted: cash, difference: diff };
+    });
+  }
+
+  /* بيجمّع حركة اليوم: بعت كام، دخل كام، طلع كام */
+  async function daySummary(dayKey) {
+    const day = dayKey || Utils.todayISO();
+    const [sales, returns, expenses, treasury, closings] = await Promise.all([
+      DB.getAll('sales'), DB.getAll('returns'), DB.getAll('expenses'),
+      DB.getAll('treasury'), DB.getAll('dayClosings')
+    ]);
+    const onDay = (d) => Utils.dateKey(d) === day;
+
+    const daySales = sales.filter(s => !s.voided && onDay(s.date));
+    const salesTotal = daySales.reduce((a, s) => a + Number(s.total || 0), 0);
+    const cashIn = treasury.filter(m => onDay(m.date) && m.direction === 'in')
+      .reduce((a, m) => a + Number(m.amount || 0), 0);
+    const cashOut = treasury.filter(m => onDay(m.date) && m.direction === 'out')
+      .reduce((a, m) => a + Number(m.amount || 0), 0);
+    const dayExpenses = expenses.filter(e => onDay(e.date))
+      .reduce((a, e) => a + Number(e.amount || 0), 0);
+    const dayReturns = returns.filter(r => r.kind === 'customer' && onDay(r.date))
+      .reduce((a, r) => a + Number(r.total || 0), 0);
+
+    return {
+      day,
+      invoices: daySales.length,
+      salesTotal: Math.round(salesTotal * 100) / 100,
+      returns: Math.round(dayReturns * 100) / 100,
+      expenses: Math.round(dayExpenses * 100) / 100,
+      cashIn: Math.round(cashIn * 100) / 100,
+      cashOut: Math.round(cashOut * 100) / 100,
+      expected: await getCashBalance(),
+      closed: closings.find(c => c.day === day) || null
+    };
+  }
+
   // ---------- تسوية مخزون يدوية ----------
   async function adjustStock(itemId, newQty, note) {
     return DB.tx(['items', 'stockMovements'], 'readwrite', async (t) => {
@@ -777,10 +950,11 @@ const Services = (() => {
   }
 
   return {
-    isCashName, resolveParty, returnSaleItems, returnPurchaseItems, saveReturn,
+    isCashName, resolveParty, returnSaleItems, returnPurchaseItems, saveReturn, voidReturn,
     getCashBalance, saveSale, voidSale, updateSale, savePurchase, voidPurchase, updatePurchase,
     saveExpense, deleteExpense, manualTreasuryMove,
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
+    closeDay, daySummary,
     exportBackup, importBackup
   };
 })();

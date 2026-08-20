@@ -73,7 +73,8 @@ Modules.reports = (() => {
     /* المرتجعات لازم تتطرح من المبيعات، وإلا الربح بيبان أعلى من الحقيقة.
        بنطرح قيمة اللي رجع (بسعر البيع) من الإيراد، وتكلفته من تكلفة
        البضاعة المباعة — لأن البضاعة رجعت للمخزن فمش محسوبة عليك. */
-    const custReturns = (returns || []).filter(r => r.kind === 'customer' && inRange(r.date, start, end));
+    const custReturns = (returns || []).filter(r =>
+      r.kind === 'customer' && !r.voided && inRange(r.date, start, end));
     let returnedValue = 0, returnedCost = 0;
     for (const r of custReturns) {
       for (const l of (r.lines || [])) {

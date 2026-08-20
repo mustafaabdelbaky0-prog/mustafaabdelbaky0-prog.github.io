@@ -18,7 +18,7 @@
 const Merge = (() => {
 
   // دفاتر: بنجمع سجلاتها من الجهازين
-  const LEDGERS = ['stockMovements', 'treasury', 'sales', 'purchases', 'returns', 'expenses'];
+  const LEDGERS = ['stockMovements', 'treasury', 'sales', 'purchases', 'returns', 'expenses', 'dayClosings'];
   // بيانات وصفية: بناخد الأحدث
   const ENTITIES = ['items', 'customers', 'suppliers', 'fixedAssets', 'company', 'settings'];
 
@@ -54,6 +54,7 @@ const Merge = (() => {
     // ---------- التالف من المرتجعات ----------
     const damagedBy = new Map();
     for (const r of rowsOf(data, 'returns')) {
+      if (r.voided) continue;   // مرتجع اتمسح — أثره اترجع خلاص
       const isCust = r.kind === 'customer';
       for (const l of (r.lines || [])) {
         if (l.condition !== 'damaged') continue;
@@ -95,7 +96,7 @@ const Merge = (() => {
           }
         }
         for (const r of returns) {
-          if (r.partyId === p.id && r.kind === (isCust ? 'customer' : 'supplier') && r.settle === 'account') {
+          if (!r.voided && r.partyId === p.id && r.kind === (isCust ? 'customer' : 'supplier') && r.settle === 'account') {
             calc -= Number(r.total || 0);
           }
         }

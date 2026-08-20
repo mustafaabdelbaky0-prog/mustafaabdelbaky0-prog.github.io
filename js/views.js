@@ -80,12 +80,17 @@ const Views = (() => {
         </div>
         ${retHistory}
         ${doc.voided ? '<div class="notice notice-warn" style="margin-top:12px;">الفاتورة دي اتلغت — أثرها اترجع من المخزون والحسابات.</div>' : ''}
-        ${isSale && !doc.voided && lines.some(l => (l.qty - (l.returnedQty || 0)) > 0)
-          ? `<div class="form-actions"><button class="btn btn-ghost" id="btnReturn">↩️ تسجيل مرتجع</button></div>` : ''}
+        <div class="form-actions">
+          <button class="btn btn-ghost" id="btnPrintInv">🖨️ اطبع الفاتورة</button>
+          ${isSale && !doc.voided && lines.some(l => (l.qty - (l.returnedQty || 0)) > 0)
+            ? `<button class="btn btn-ghost" id="btnReturn">↩️ تسجيل مرتجع</button>` : ''}
+        </div>
       `,
       onMount: (body, close) => {
         const rb = body.querySelector('#btnReturn');
         if (rb) rb.addEventListener('click', () => { close(); openReturnDialog(doc); });
+        const pb = body.querySelector('#btnPrintInv');
+        if (pb) pb.addEventListener('click', () => Printing.invoice(kind, doc, partyName));
       }
     });
   }
@@ -282,11 +287,16 @@ const Views = (() => {
           <div class="row grand"><span>الرصيد الحالي</span><span>${Utils.formatMoney(totalDebit - totalCredit)}</span></div>
         </div>
         <div class="hint" style="margin-top:8px;">دوس على رقم أي فاتورة عشان تشوف بنودها</div>
+        <div class="form-actions">
+          <button class="btn btn-ghost" id="btnPrintStmt">🖨️ اطبع كشف الحساب</button>
+        </div>
       `,
       onMount: (body) => {
         body.querySelectorAll('.stmt-row[data-doc]').forEach(row => {
           row.addEventListener('click', () => showInvoice(docStore, Number(row.dataset.doc)));
         });
+        const sb = body.querySelector('#btnPrintStmt');
+        if (sb) sb.addEventListener('click', () => Printing.statement(kind, party, entries));
       }
     });
   }

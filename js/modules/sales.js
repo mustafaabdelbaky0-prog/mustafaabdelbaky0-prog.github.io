@@ -9,6 +9,7 @@ Modules.sales = (() => {
   let paidTouched = false;
   let saving = false;   // بيمنع إن دوستين سريعتين على "حفظ" يعملوا فاتورتين
   let editing = null;   // الفاتورة اللي بنعدّل فيها دلوقتي (null = فاتورة جديدة)
+  let wholesale = false; // بيع بسعر الجملة (للأسطوات)
 
   function blankRow() {
     return { _id: ++rowSeq, itemId: null, barcode: '', name: '', unit: 'قطعة', qty: '', price: '', cost: 0, stock: 0 };
@@ -102,6 +103,10 @@ Modules.sales = (() => {
 
         <div class="scan-strip">
           <span>📡 امسح بالليزر في أي وقت — الصنف هيتحط في سطر لوحده</span>
+          <label class="ws-toggle" title="بياخد سعر الجملة للأصناف اللي ليها سعر جملة">
+            <input type="checkbox" id="wsMode" ${wholesale ? 'checked' : ''}>
+            <span>بيع جملة</span>
+          </label>
           <button type="button" class="btn btn-ghost btn-sm" id="camBtn">📷 كاميرا</button>
         </div>
 
@@ -203,6 +208,29 @@ Modules.sales = (() => {
     });
     container.querySelector('#completeSale').addEventListener('click', () => doSave(container));
 
+    /* وضع الجملة: بيغيّر أسعار السطور اللي لسه ما اتلمستش بالإيد،
+       ومبيلمسش أي سعر إنت كتبته بنفسك. */
+    const ws = container.querySelector('#wsMode');
+    if (ws) ws.addEventListener('change', () => {
+      wholesale = ws.checked;
+      let changed = 0;
+      rows.forEach(r => {
+        if (!r.itemId) return;
+        const target = wholesale
+          ? (Number(r.wholesalePrice) || Number(r.retailPrice) || 0)
+          : (Number(r.retailPrice) || 0);
+        const current = Number(r.price || 0);
+        const other = wholesale ? Number(r.retailPrice || 0) : (Number(r.wholesalePrice) || Number(r.retailPrice) || 0);
+        // بنغيّر بس لو السعر الحالي هو السعر التاني (يعني ما اتعدلش يدوي)
+        if (Math.abs(current - other) < 0.005 && target > 0) { r.price = target; changed++; }
+      });
+      drawRows(container);
+      updateTotals(container);
+      Utils.toast(wholesale
+        ? (changed ? `اتحوّل ${changed} سطر لسعر الجملة` : 'وضع الجملة شغال')
+        : 'رجعنا لسعر القطاعي', 'info');
+    });
+
     // ---------- البحث في الفواتير ----------
     const runSearch = Utils.debounce(() => loadRecent(container), 200);
     ['#qFrom', '#qTo'].forEach(sel => {
@@ -266,7 +294,10 @@ Modules.sales = (() => {
     row.unit = item.unit || 'قطعة';
     row.cost = item.costPrice || 0;
     row.stock = item.stock || 0;
-    if (!row.price) row.price = item.salePrice || '';
+    row.retailPrice = item.salePrice || 0;
+    row.wholesalePrice = item.wholesalePrice || 0;
+    // لو مفعّل وضع الجملة والصنف ليه سعر جملة، بنستعمله
+    if (!row.price) row.price = (wholesale && item.wholesalePrice) ? item.wholesalePrice : (item.salePrice || '');
     if (!row.qty) row.qty = 1;
   }
 

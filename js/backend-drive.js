@@ -10,7 +10,7 @@
 (() => {
   const KEY = 'mostafaData';
   const STORES = ['items','stockMovements','sales','purchases','returns','expenses','treasury',
-                  'customers','suppliers','fixedAssets','company','settings'];
+                  'customers','suppliers','fixedAssets','company','settings','dayClosings'];
 
   function emptyData() {
     const d = {};

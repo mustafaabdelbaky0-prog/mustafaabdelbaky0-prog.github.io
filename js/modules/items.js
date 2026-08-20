@@ -18,6 +18,7 @@ Modules.items = (() => {
         <td>${Units.fmtQty(item.stock, item.unit)}</td>
         <td>${stockBadge(item)}</td>
         <td>
+          <button class="icon-btn label-item" title="اطبع ملصق باركود">🏷️</button>
           ${Auth.isSeller() ? '' : `
             <button class="icon-btn edit-item" title="تعديل">✏️</button>
             <button class="icon-btn del-item" title="حذف">🗑️</button>`}
@@ -73,7 +74,9 @@ Modules.items = (() => {
       if (!tr) return;
       const id = Number(tr.dataset.id);
       const item = AppState.items.find(i => i.id === id);
-      if (e.target.classList.contains('edit-item')) {
+      if (e.target.classList.contains('label-item')) {
+        openLabelDialog(item);
+      } else if (e.target.classList.contains('edit-item')) {
         openItemForm(item);
       } else if (e.target.classList.contains('del-item')) {
         /* صنف عليه بيع أو شرا مينفعش يتمسح — لأن حركاته وفواتيره
@@ -134,8 +137,12 @@ Modules.items = (() => {
           <input type="number" id="fCost" min="0" step="0.01" value="${item?.costPrice ?? ''}">
         </div>
         <div class="field">
-          <label>سعر البيع</label>
+          <label>سعر البيع (قطاعي)</label>
           <input type="number" id="fPrice" min="0" step="0.01" value="${item?.salePrice ?? ''}" required>
+        </div>
+        <div class="field">
+          <label>سعر الجملة <span class="muted">(للأسطوات — اختياري)</span></label>
+          <input type="number" id="fWholesale" min="0" step="0.01" value="${item?.wholesalePrice ?? ''}" placeholder="سيبه فاضي لو مفيش">
         </div>
       </div>
       <div class="field-row">
@@ -154,6 +161,56 @@ Modules.items = (() => {
 
   // opens the item form; resolves with the saved item (used by sales/purchases quick-add)
   // prefill: string (treated as barcode) or {barcode, name}
+  /* ملصق الباركود — للأصناف اللي مالهاش باركود مطبوع من المصنع
+     (المسامير، السلك، الحاجات السايبة). بتطبعه وتلزقه فيقراه الليزر. */
+  function openLabelDialog(item) {
+    const code = (item.barcode || '').trim();
+    if (!code) {
+      Utils.toast('الصنف ده مالوش باركود — عدّله وحط له باركود الأول', 'error');
+      return;
+    }
+    let preview = '';
+    try { preview = Barcode.svg(code, { height: 44, moduleWidth: 1.5 }); }
+    catch (e) { preview = `<div class="notice notice-warn">${Utils.escapeHtml(e.message)}</div>`; }
+
+    Utils.openModal({
+      title: 'ملصق باركود: ' + item.name,
+      bodyHtml: `
+        <div style="text-align:center;padding:10px 0 16px;">${preview}</div>
+        <div class="field-row">
+          <div class="field">
+            <label>عدد الملصقات</label>
+            <input type="number" id="lblCount" min="1" max="200" value="12">
+          </div>
+          <div class="field">
+            <label>السعر على الملصق</label>
+            <select id="lblPrice">
+              <option value="1">يظهر (${Utils.formatMoney(item.salePrice)})</option>
+              <option value="0">ما يظهرش</option>
+            </select>
+          </div>
+        </div>
+        <div class="hint" style="line-height:1.9;">
+          هتطبع على ورق ملصقات عادي. لو الخطوط طلعت مش واضحة، اطبع بجودة أعلى
+          أو كبّر المقاس من إعدادات الطابعة.
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-amber" id="lblPrint">🖨️ اطبع</button>
+        </div>`,
+      onMount: (body, close) => {
+        body.querySelector('#lblPrint').addEventListener('click', () => {
+          const count = Math.max(1, Math.min(200, Number(body.querySelector('#lblCount').value) || 1));
+          const withPrice = body.querySelector('#lblPrice').value === '1';
+          close();
+          Barcode.printLabels([{
+            name: item.name, barcode: code, count,
+            price: withPrice ? item.salePrice : 0
+          }]);
+        });
+      }
+    });
+  }
+
   function openItemForm(item, prefill) {
     const pre = typeof prefill === 'string' ? { barcode: prefill } : (prefill || {});
     return new Promise((resolve) => {
@@ -209,6 +266,7 @@ Modules.items = (() => {
               packSize: packSize > 0 ? packSize : null,
               costPrice: Number(body.querySelector('#fCost').value || 0),
               salePrice: Number(body.querySelector('#fPrice').value || 0),
+              wholesalePrice: Number(body.querySelector('#fWholesale').value || 0) || null,
               minStock: Number(body.querySelector('#fMinStock').value || 0),
               active: true
             };
