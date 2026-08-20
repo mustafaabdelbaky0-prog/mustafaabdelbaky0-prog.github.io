@@ -76,6 +76,15 @@ Modules.items = (() => {
       if (e.target.classList.contains('edit-item')) {
         openItemForm(item);
       } else if (e.target.classList.contains('del-item')) {
+        /* صنف عليه بيع أو شرا مينفعش يتمسح — لأن حركاته وفواتيره
+           هتفضل موجودة وتبقى بتشاور على صنف مش موجود، والتقارير
+           هتطلع ناقصة. بنوقفه بدل ما نبوّظ السجل. */
+        const moves = await DB.getAllByIndex('stockMovements', 'itemId', id);
+        if (moves.length) {
+          Utils.beep('error');
+          Utils.toast(`"${item.name}" عليه ${moves.length} حركة مخزن — مينفعش يتمسح. لو مش هتتعامل بيه تاني، صفّر رصيده من شاشة المخزون.`, 'error');
+          return;
+        }
         const ok = await Utils.confirmDialog(`متأكد من حذف الصنف "${item.name}"؟`);
         if (!ok) return;
         await DB.delete('items', id);

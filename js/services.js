@@ -92,7 +92,7 @@ const Services = (() => {
       for (const line of sale.lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) - line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(movStore.add({
@@ -129,7 +129,7 @@ const Services = (() => {
       for (const line of sale.lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) + line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) + line.qty) * 1000) / 1000;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(t.objectStore('stockMovements').add({
@@ -172,7 +172,7 @@ const Services = (() => {
       for (const line of (old.lines || [])) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) + line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) + line.qty) * 1000) / 1000;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(movStore.add({
@@ -200,7 +200,7 @@ const Services = (() => {
       for (const line of lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) - line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(movStore.add({
@@ -245,7 +245,7 @@ const Services = (() => {
       for (const line of (old.lines || [])) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) - line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(movStore.add({
@@ -272,7 +272,7 @@ const Services = (() => {
       for (const line of lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) + line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) + line.qty) * 1000) / 1000;
           if (line.cost) item.costPrice = line.cost;
           item.lastSupplierId = purchase.supplierId || item.lastSupplierId || null;
           await DB.reqToPromise(itemsStore.put(item));
@@ -382,7 +382,7 @@ const Services = (() => {
       for (const line of purchase.lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) + line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) + line.qty) * 1000) / 1000;
           item.costPrice = line.cost;
           // بنفتكر آخر مورد جبنا منه الصنف — عشان لما نرجّعه يطلع اسمه لوحده
           if (purchase.supplierId) item.lastSupplierId = purchase.supplierId;
@@ -419,10 +419,26 @@ const Services = (() => {
       const purchase = await DB.reqToPromise(purchasesStore.get(purchaseId));
       if (!purchase || purchase.voided) return false;
       const itemsStore = t.objectStore('items');
+
+      /* لو البضاعة اتباعت خلاص، إلغاء فاتورة الشرا هيخلي المخزن بالسالب
+         ويطلع رصيد مش حقيقي. بنوقف ونقول له الأصناف بالاسم. */
+      const short = [];
+      for (const line of purchase.lines) {
+        const item = await DB.reqToPromise(itemsStore.get(line.itemId));
+        if (!item) continue;
+        const after = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
+        if (after < 0) short.push({ name: item.name, have: item.stock || 0, need: line.qty });
+      }
+      if (short.length) {
+        throw new Error('مينفعش تلغي الفاتورة دي — البضاعة اتباعت:\n' +
+          short.map(s => `• ${s.name}: في المخزن ${s.have} والفاتورة فيها ${s.need}`).join('\n') +
+          '\n\nلو عايز تصلّح الفاتورة، عدّلها بدل ما تلغيها.');
+      }
+
       for (const line of purchase.lines) {
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
-          item.stock = Math.round(((item.stock || 0) - line.qty) * 100) / 100;
+          item.stock = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
           await DB.reqToPromise(itemsStore.put(item));
         }
         await DB.reqToPromise(t.objectStore('stockMovements').add({

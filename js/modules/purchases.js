@@ -267,7 +267,13 @@ Modules.purchases = (() => {
       if (!(await Lock.require('مسح فاتورة'))) return;
       if (!(await Utils.confirmDialog(
         `هتمسح فاتورة ${editing.number}؟\nالبضاعة هتتشال من المخزن، والفلوس وحساب المورد هيترجعوا زي ما كانوا.`))) return;
-      await Services.voidPurchase(editing.id);
+      try {
+        await Services.voidPurchase(editing.id);
+      } catch (err) {
+        Utils.beep('error');
+        await Utils.confirmDialog(err.message || 'المسح مانجحش');
+        return;
+      }
       await AppState.reloadItems(); await AppState.reloadParties(); await refreshShell();
       Utils.toast('اتمسحت الفاتورة', 'success');
       render(container);
@@ -706,7 +712,13 @@ Modules.purchases = (() => {
       const id = Number(e.target.closest('.line-card').dataset.id);
       if (!(await Lock.require('مسح الفاتورة'))) return;
       if (!(await Utils.confirmDialog('البضاعة هتتشال من المخزن، والفلوس وحساب المورد هيترجعوا زي ما كانوا. متأكد؟'))) return;
-      await Services.voidPurchase(id);
+      try {
+        await Services.voidPurchase(id);
+      } catch (err) {
+        Utils.beep('error');
+        await Utils.confirmDialog(err.message || 'المسح مانجحش');
+        return;
+      }
       await AppState.reloadItems(); await AppState.reloadParties(); await refreshShell();
       Utils.toast('اتمسحت الفاتورة', 'success');
       loadRecent(container);

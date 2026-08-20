@@ -26,8 +26,9 @@ Modules.reports = (() => {
   async function render(container) {
     await AppState.reloadItems();
     await AppState.reloadParties();
-    const [sales, purchases, expenses, cashBalance] = await Promise.all([
-      DB.getAll('sales'), DB.getAll('purchases'), DB.getAll('expenses'), Services.getCashBalance()
+    const [sales, purchases, expenses, returns, cashBalance] = await Promise.all([
+      DB.getAll('sales'), DB.getAll('purchases'), DB.getAll('expenses'),
+      DB.getAll('returns'), Services.getCashBalance()
     ]);
 
     container.innerHTML = `
@@ -60,17 +61,34 @@ Modules.reports = (() => {
       render(container);
     });
 
-    drawStats(container, { sales, purchases, expenses, cashBalance });
+    drawStats(container, { sales, purchases, expenses, returns, cashBalance });
   }
 
-  function drawStats(container, { sales, purchases, expenses, cashBalance }) {
+  function drawStats(container, { sales, purchases, expenses, returns, cashBalance }) {
     const { start, end } = rangeFor(period);
     const salesInRange = sales.filter(s => !s.voided && inRange(s.date, start, end));
     const expensesInRange = expenses.filter(e => inRange(e.date, start, end));
     const purchasesInRange = purchases.filter(p => !p.voided && inRange(p.date, start, end));
 
-    const revenue = salesInRange.reduce((s, sale) => s + sale.total, 0);
-    const cogs = salesInRange.reduce((s, sale) => s + sale.lines.reduce((ls, l) => ls + l.qty * (l.cost || 0), 0), 0);
+    /* المرتجعات لازم تتطرح من المبيعات، وإلا الربح بيبان أعلى من الحقيقة.
+       بنطرح قيمة اللي رجع (بسعر البيع) من الإيراد، وتكلفته من تكلفة
+       البضاعة المباعة — لأن البضاعة رجعت للمخزن فمش محسوبة عليك. */
+    const custReturns = (returns || []).filter(r => r.kind === 'customer' && inRange(r.date, start, end));
+    let returnedValue = 0, returnedCost = 0;
+    for (const r of custReturns) {
+      for (const l of (r.lines || [])) {
+        if (l.mode === 'swap') continue;            // استبدال — مفيش فلوس ولا إيراد اتغير
+        const qty = Number(l.qty || 0);
+        returnedValue += qty * Number(l.price || 0);
+        const it = AppState.items.find(i => i.id === l.itemId);
+        returnedCost += qty * Number((it && it.costPrice) || 0);
+      }
+    }
+
+    const grossRevenue = salesInRange.reduce((s, sale) => s + sale.total, 0);
+    const grossCogs = salesInRange.reduce((s, sale) => s + sale.lines.reduce((ls, l) => ls + l.qty * (l.cost || 0), 0), 0);
+    const revenue = Math.round((grossRevenue - returnedValue) * 100) / 100;
+    const cogs = Math.round((grossCogs - returnedCost) * 100) / 100;
     const grossProfit = revenue - cogs;
     const totalExpenses = expensesInRange.reduce((s, e) => s + e.amount, 0);
     const netProfit = grossProfit - totalExpenses;
@@ -106,7 +124,8 @@ Modules.reports = (() => {
     const box = container.querySelector('#statsArea');
     box.innerHTML = `
       <div class="grid grid-4" style="margin-bottom:16px;">
-        <div class="stat-tile positive"><div class="lbl">إجمالي المبيعات</div><div class="val">${Utils.formatMoney(revenue)}</div><div class="sub">${salesInRange.length} فاتورة</div></div>
+        <div class="stat-tile positive"><div class="lbl">إجمالي المبيعات</div><div class="val">${Utils.formatMoney(revenue)}</div>
+          <div class="sub">${salesInRange.length} فاتورة${returnedValue > 0 ? ` · بعد خصم مرتجع ${Utils.formatMoney(returnedValue)}` : ''}</div></div>
         <div class="stat-tile"><div class="lbl">تكلفة البضاعة المباعة</div><div class="val">${Utils.formatMoney(cogs)}</div></div>
         <div class="stat-tile"><div class="lbl">مجمل الربح</div><div class="val">${Utils.formatMoney(grossProfit)}</div></div>
         <div class="stat-tile negative"><div class="lbl">إجمالي المصروفات</div><div class="val">${Utils.formatMoney(totalExpenses)}</div></div>
