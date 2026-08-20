@@ -35,10 +35,20 @@ const Printing = (() => {
 
     const rows = lines.map(l => {
       const price = isSale ? Number(l.price || 0) : Number(l.cost || 0);
+      /* اللي اتباع/اتشرى عبوة كاملة يتكتب بالعبوة (٢ لفة) وتحتها
+         الكمية بالوحدة الأصلية، عشان الزبون يفهم والحساب يبان */
+      const isPack = Number(l.packQty || 0) > 0;
+      const packOne = l.packCost != null ? l.packCost : l.packPrice;
+      const qtyCell = isPack
+        ? `${Units.fmtQty(l.packQty, l.packName || 'عبوة')}<div class="line-sub">${Units.fmtQty(l.qty, l.unit)}</div>`
+        : Units.fmtQty(l.qty, l.unit);
+      const priceCell = isPack && packOne != null
+        ? `${Number(packOne).toFixed(2)}<div class="line-sub">ال${Utils.escapeHtml(l.unit || '')} ${price.toFixed(2)}</div>`
+        : price.toFixed(2);
       return `<tr>
         <td>${Utils.escapeHtml(l.name || '')}</td>
-        <td>${Units.fmtQty(l.qty, l.unit)}</td>
-        <td>${price.toFixed(2)}</td>
+        <td>${qtyCell}</td>
+        <td>${priceCell}</td>
         <td>${(Number(l.qty || 0) * price).toFixed(2)}</td>
       </tr>`;
     }).join('');

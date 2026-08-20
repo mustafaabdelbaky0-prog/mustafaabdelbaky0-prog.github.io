@@ -14,8 +14,14 @@ Modules.items = (() => {
         <td>${Utils.escapeHtml(item.category || '—')}</td>
         <td>${Utils.escapeHtml(item.unit || 'قطعة')}</td>
         ${Auth.isSeller() ? '' : `<td>${Utils.formatMoney(item.costPrice)}</td>`}
-        <td>${Utils.formatMoney(item.salePrice)}</td>
-        <td>${Units.fmtQty(item.stock, item.unit)}</td>
+        <td>${Utils.formatMoney(item.salePrice)}
+          ${Number(item.packPrice || 0) > 0
+            ? `<div class="unit-cost-sub">ال${Utils.escapeHtml(item.packName || 'عبوة')} ${Utils.formatMoney(item.packPrice)}</div>`
+            : ''}</td>
+        <td>${Units.fmtQty(item.stock, item.unit)}
+          ${Number(item.packSize || 0) > 0 && Number(item.stock || 0) > 0
+            ? `<div class="unit-cost-sub">${Math.floor(Number(item.stock) / Number(item.packSize))} ${Utils.escapeHtml(item.packName || 'عبوة')} كاملة</div>`
+            : ''}</td>
         <td>${stockBadge(item)}</td>
         <td>
           <button class="icon-btn label-item" title="اطبع ملصق باركود">🏷️</button>
@@ -126,11 +132,22 @@ Modules.items = (() => {
           <div class="hint" id="unitHint"></div>
         </div>
       </div>
-      <div class="field">
-        <label>الكرتونة/الشيكارة فيها كام؟ (اختياري)</label>
-        <input type="number" id="fPackSize" min="0" step="0.01" value="${item?.packSize ?? ''}" placeholder="مثال: 50 — سيبها فاضية لو مش بتشتري بالكرتونة">
-        <div class="hint">لو كتبتها، وقت الشراء هيحسبلك تكلفة الوحدة لوحده</div>
+      <div class="field-row">
+        <div class="field">
+          <label>العبوة اسمها إيه؟ <span class="muted">(اختياري)</span></label>
+          <input type="text" id="fPackName" value="${Utils.escapeHtml(item?.packName || '')}" list="packNameList" placeholder="لفة / كرتونة / شيكارة">
+          <datalist id="packNameList">${Units.PACK_TYPES.map(p => `<option value="${p}">`).join('')}</datalist>
+        </div>
+        <div class="field">
+          <label>العبوة فيها كام <span id="packUnitLbl"></span>؟</label>
+          <input type="number" id="fPackSize" min="0" step="0.01" value="${item?.packSize ?? ''}" placeholder="مثال: 100 — سيبها فاضية لو مش بتشتري بالعبوة">
+        </div>
+        <div class="field">
+          <label>سعر بيع العبوة كاملة <span class="muted">(اختياري)</span></label>
+          <input type="number" id="fPackPrice" min="0" step="0.01" value="${item?.packPrice ?? ''}" placeholder="سيبه فاضي لو مش بتبيع عبوة كاملة">
+        </div>
       </div>
+      <div class="hint" id="packHint" style="margin:-4px 0 14px;"></div>
       <div class="field-row">
         <div class="field">
           <label>سعر التكلفة (شراء)</label>
@@ -240,13 +257,51 @@ Modules.items = (() => {
           const unitSel = body.querySelector('#fUnit');
           const unitHint = body.querySelector('#unitHint');
           const stockInput = body.querySelector('#fStock');
+          // خانات العبوة (لفة سلك، كرتونة مفاتيح...)
+          const packNameEl  = body.querySelector('#fPackName');
+          const packSizeEl  = body.querySelector('#fPackSize');
+          const packPriceEl = body.querySelector('#fPackPrice');
+          const packUnitLbl = body.querySelector('#packUnitLbl');
+          const packHint    = body.querySelector('#packHint');
+          const priceEl     = body.querySelector('#fPrice');
+
+          /* بنوريه على طول: العبوة دي معناها المتر بكام، وأرخص بكام من سعر
+             القطاعي. لو طلع أغلى بننبّهه، لأن ده معناه إن فيه رقم غلط. */
+          function syncPack() {
+            const u = unitSel.value;
+            packUnitLbl.textContent = u;
+            const size  = Number(packSizeEl.value || 0);
+            const total = Number(packPriceEl.value || 0);
+            const one   = Number(priceEl.value || 0);
+            if (size > 0 && total > 0) {
+              const per = total / size;
+              const packName = (packNameEl.value || '').trim() || Units.packLabel(u);
+              let txt = `ال${packName} فيها ${Units.fmtQty(size, u)} — يعني ال${u} بـ ${Utils.formatMoney(per)}`;
+              if (one > 0) {
+                const diff = one - per;
+                txt += diff > 0
+                  ? ` · أرخص من القطاعي بـ ${Utils.formatMoney(diff)} لل${u}`
+                  : (diff < 0 ? ` · ⚠️ أغلى من سعر القطاعي — راجع الرقم` : ' · نفس سعر القطاعي');
+              }
+              packHint.textContent = txt;
+            } else if (size > 0) {
+              packHint.textContent = 'لو كتبت سعر العبوة كاملة، البياع هيقدر يبيعها عبوة بسعرها من شاشة البيع';
+            } else {
+              packHint.textContent = '';
+            }
+          }
+
           function syncUnit() {
             const u = unitSel.value;
             const dec = Units.allowsDecimals(u);
             unitHint.textContent = dec ? `بيتباع بالكسور (زي ٢.٥ ${u})` : `بيتباع بالعدد الصحيح`;
             if (stockInput) stockInput.step = Units.step(u);
+            if (!packNameEl.value.trim()) packNameEl.placeholder = Units.packLabel(u);
+            syncPack();
           }
           unitSel.addEventListener('change', syncUnit);
+          [packNameEl, packSizeEl, packPriceEl, priceEl].forEach(el =>
+            el.addEventListener('input', syncPack));
           syncUnit();
           body.querySelector('#itemForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -259,11 +314,15 @@ Modules.items = (() => {
             if (existing) { Utils.toast('في صنف تاني بنفس الباركود: ' + existing.name, 'error'); return; }
 
             const packSize = Number(body.querySelector('#fPackSize').value || 0);
+            const packPrice = Number(body.querySelector('#fPackPrice').value || 0);
+            const packName = body.querySelector('#fPackName').value.trim();
             const payload = {
               barcode, name,
               category: body.querySelector('#fCategory').value.trim(),
               unit: body.querySelector('#fUnit').value || 'قطعة',
               packSize: packSize > 0 ? packSize : null,
+              packName: packSize > 0 ? (packName || Units.packLabel(body.querySelector('#fUnit').value)) : null,
+              packPrice: (packSize > 0 && packPrice > 0) ? packPrice : null,
               costPrice: Number(body.querySelector('#fCost').value || 0),
               salePrice: Number(body.querySelector('#fPrice').value || 0),
               wholesalePrice: Number(body.querySelector('#fWholesale').value || 0) || null,

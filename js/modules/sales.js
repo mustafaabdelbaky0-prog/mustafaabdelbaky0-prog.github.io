@@ -12,7 +12,12 @@ Modules.sales = (() => {
   let wholesale = false; // بيع بسعر الجملة (للأسطوات)
 
   function blankRow() {
-    return { _id: ++rowSeq, itemId: null, barcode: '', name: '', unit: 'قطعة', qty: '', price: '', cost: 0, stock: 0 };
+    return {
+      _id: ++rowSeq, itemId: null, barcode: '', name: '', unit: 'قطعة',
+      qty: '', price: '', cost: 0, stock: 0,
+      // بيانات العبوة: لفة السلك فيها ١٠٠ متر وليها سعر مقطوعية أرخص
+      packSize: 0, packName: '', packPrice: 0, sellPack: false
+    };
   }
 
   function lineToRow(l) {
@@ -22,9 +27,25 @@ Modules.sales = (() => {
     r.barcode = it ? (it.barcode || '') : '';
     r.name = l.name || (it ? it.name : '');
     r.unit = l.unit || (it ? it.unit : 'قطعة');
-    r.qty = l.qty;
-    r.price = l.price;
     r.cost = l.cost || 0;
+    if (it) {
+      r.packSize = Number(it.packSize || 0);
+      r.packName = it.packName || Units.packLabel(r.unit);
+      r.packPrice = Number(it.packPrice || 0);
+    }
+    /* الفاتورة متسجلة دايمًا بالوحدة الأصلية (متر) عشان المخزن والأرباح،
+       فلو السطر كان مباع بالعبوة بنرجّعه لشكله ده تاني وقت التعديل
+       عشان يشوفه زي ما باعه بالظبط */
+    if (Number(l.packQty || 0) > 0 && Number(l.packSize || 0) > 0) {
+      r.sellPack = true;
+      r.packSize = Number(l.packSize);
+      r.packName = l.packName || Units.packLabel(r.unit);
+      r.qty = l.packQty;
+      r.price = l.packPrice != null ? l.packPrice : Number(l.price || 0) * Number(l.packSize);
+    } else {
+      r.qty = l.qty;
+      r.price = l.price;
+    }
     // الرصيد المعروض لازم يحسب إن الفاتورة دي هتترجع الأول
     r.stock = it ? (Number(it.stock || 0) + Number(l.qty || 0)) : 0;
     return r;
@@ -53,10 +74,31 @@ Modules.sales = (() => {
     window.scrollTo(0, 0);
   }
 
+  /* السطر ممكن يكون متكتب بالمتر أو باللفة.
+     qty/price = اللي البياع كتبه بالوحدة اللي مختارها.
+     baseQty/basePrice = نفس الكلام محوّل للوحدة الأصلية (المتر) —
+     ودي اللي بتتسجل في الفاتورة، عشان المخزن والأرباح والمرتجعات
+     يفضلوا شغالين بلغة واحدة مهما البياع باع بإيه. */
   function calc(r) {
     const qty = Number(r.qty || 0);
     const price = Number(r.price || 0);
-    return { qty, price, lineTotal: qty * price };
+    const size = Number(r.packSize || 0);
+    const pack = !!r.sellPack && size > 0;
+    return {
+      qty, price, size, pack,
+      lineTotal: qty * price,
+      baseQty: pack ? Math.round(qty * size * 1000) / 1000 : qty,
+      basePrice: pack ? price / size : price
+    };
+  }
+
+  // هل الصنف ده أصلاً بيتباع بالعبوة؟ (لازم يكون معرّف فيها كام وبكام)
+  function canSellPack(r) {
+    return Number(r.packSize || 0) > 0 && Number(r.packPrice || 0) > 0;
+  }
+
+  function unitLabel(r) {
+    return calc(r).pack ? (r.packName || Units.packLabel(r.unit)) : r.unit;
   }
 
   function filledRows() {
@@ -120,7 +162,7 @@ Modules.sales = (() => {
                 <th style="width:110px;">الكمية</th>
                 <th style="width:90px;">الوحدة</th>
                 <th style="width:120px;">السعر</th>
-                <th style="width:120px;">الإجمالي</th>
+                <th style="width:138px;">الإجمالي</th>
                 <th style="width:40px;"></th>
               </tr>
             </thead>
@@ -271,8 +313,10 @@ Modules.sales = (() => {
       Utils.toast('الباركود ده مش متسجل — سجّله من شاشة المشتريات الأول', 'error');
       return;
     }
-    // لو الصنف موجود في الفاتورة بنزوّد كميته
-    const already = rows.find(r => r.itemId === item.id);
+    /* لو الصنف موجود في الفاتورة بنزوّد كميته.
+       بس لو السطر الموجود متباع بالعبوة (لفة كاملة)، المسح معناه إنه
+       بيبيع بالمتر كمان — فبنفتحله سطر جديد بدل ما نزوّد لفة غلط. */
+    const already = rows.find(r => r.itemId === item.id && !r.sellPack);
     if (already) {
       already.qty = Math.round((Number(already.qty || 0) + 1) * 1000) / 1000;
       Utils.beep('ok');
@@ -296,16 +340,30 @@ Modules.sales = (() => {
     row.stock = item.stock || 0;
     row.retailPrice = item.salePrice || 0;
     row.wholesalePrice = item.wholesalePrice || 0;
+    row.packSize = Number(item.packSize || 0);
+    row.packName = item.packName || Units.packLabel(row.unit);
+    row.packPrice = Number(item.packPrice || 0);
+    row.sellPack = false;   // الأصل إنه بيبيع بالمتر، واللي عايز لفة بيغيّر الوحدة
     // لو مفعّل وضع الجملة والصنف ليه سعر جملة، بنستعمله
     if (!row.price) row.price = (wholesale && item.wholesalePrice) ? item.wholesalePrice : (item.salePrice || '');
     if (!row.qty) row.qty = 1;
+  }
+
+  // بيبدّل السطر بين البيع بالمتر والبيع باللفة
+  function switchRowUnit(r, toPack) {
+    r.sellPack = !!toPack && canSellPack(r);
+    r.qty = 1;
+    r.price = r.sellPack
+      ? r.packPrice
+      : ((wholesale && r.wholesalePrice) ? r.wholesalePrice : (r.retailPrice || ''));
   }
 
   function drawRows(container, focusRowId, focusField) {
     const body = container.querySelector('#invBody');
     body.innerHTML = rows.map((r, idx) => {
       const c = calc(r);
-      const over = r.itemId && c.qty > r.stock;
+      const over = r.itemId && c.baseQty > r.stock;
+      const canPack = canSellPack(r);
       return `
       <tr data-id="${r._id}">
         <td data-label="#" class="row-num">${idx + 1}</td>
@@ -320,13 +378,24 @@ Modules.sales = (() => {
           ${over ? `<div class="line-derived warn">المتاح ${Units.fmtQty(r.stock, r.unit)} بس</div>` : ''}
         </td>
         <td data-label="الكمية">
-          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${Units.step(r.unit)}" inputmode="decimal" placeholder="0">
+          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${c.pack ? '0.01' : Units.step(r.unit)}" inputmode="decimal" placeholder="0">
         </td>
-        <td data-label="الوحدة" class="unit-cell">${Utils.escapeHtml(r.unit)}</td>
+        <td data-label="الوحدة" class="unit-cell">
+          ${canPack ? `
+            <select class="cell f-unitsel" title="بيبيعها بالوحدة ولا بالعبوة كاملة؟">
+              <option value="unit" ${!c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.unit)}</option>
+              <option value="pack" ${c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.packName || Units.packLabel(r.unit))}</option>
+            </select>`
+            : Utils.escapeHtml(r.unit)}
+        </td>
         <td data-label="السعر">
           <input type="number" class="cell f-price num" value="${r.price}" min="0" step="0.01" inputmode="decimal" placeholder="0.00">
+          ${c.pack && c.basePrice > 0 ? `<div class="line-derived">ال${Utils.escapeHtml(r.unit)} بـ ${Utils.formatMoney(c.basePrice)}</div>` : ''}
         </td>
-        <td data-label="الإجمالي" class="cell-total"><div class="line-sum">${Utils.formatMoney(c.lineTotal)}</div></td>
+        <td data-label="الإجمالي" class="cell-total">
+          <div class="line-sum">${Utils.formatMoney(c.lineTotal)}</div>
+          ${c.pack && c.baseQty > 0 ? `<div class="line-derived">= ${Units.fmtQty(c.baseQty, r.unit)}</div>` : ''}
+        </td>
         <td data-label=""><button type="button" class="icon-btn rm-row" title="حذف السطر">🗑️</button></td>
       </tr>`;
     }).join('');
@@ -381,6 +450,14 @@ Modules.sales = (() => {
       $('.f-qty').addEventListener('input', e => { r.qty = e.target.value; refreshLine(container, tr, r); });
       $('.f-price').addEventListener('input', e => { r.price = e.target.value; refreshLine(container, tr, r); });
 
+      // بيبيع بالمتر ولا باللفة كاملة؟
+      if ($('.f-unitsel')) {
+        $('.f-unitsel').addEventListener('change', (e) => {
+          switchRowUnit(r, e.target.value === 'pack');
+          drawRows(container, id, 'qty');
+        });
+      }
+
       $('.rm-row').addEventListener('click', () => {
         rows = rows.filter(x => x._id !== id);
         if (!rows.length) rows.push(blankRow());
@@ -398,7 +475,39 @@ Modules.sales = (() => {
   }
 
   function refreshLine(container, tr, r) {
-    tr.querySelector('.line-sum').textContent = Utils.formatMoney(calc(r).lineTotal);
+    const c = calc(r);
+    tr.querySelector('.line-sum').textContent = Utils.formatMoney(c.lineTotal);
+
+    /* تنبيه "المتاح كذا بس" لازم يتحدّث وهو بيكتب الكمية، مش بعدين.
+       بقى أهم دلوقتي لأن لفة واحدة ممكن تكون ١٠٠ متر. */
+    const nameEl = tr.querySelector('.f-name');
+    if (nameEl) {
+      const oldWarn = nameEl.parentElement.querySelector('.line-derived.warn');
+      if (oldWarn) oldWarn.remove();
+      if (r.itemId && c.baseQty > r.stock) {
+        nameEl.insertAdjacentHTML('afterend',
+          `<div class="line-derived warn">المتاح ${Units.fmtQty(r.stock, r.unit)} بس</div>`);
+      }
+    }
+    // السطور الصغيرة اللي بتترجم اللفة لأمتار
+    const totalCell = tr.querySelector('.cell-total');
+    if (totalCell) {
+      const note = totalCell.querySelector('.line-derived');
+      if (note) note.remove();
+      if (c.pack && c.baseQty > 0) {
+        totalCell.insertAdjacentHTML('beforeend',
+          `<div class="line-derived">= ${Units.fmtQty(c.baseQty, r.unit)}</div>`);
+      }
+    }
+    const priceEl = tr.querySelector('.f-price');
+    if (priceEl) {
+      const old = priceEl.parentElement.querySelector('.line-derived');
+      if (old) old.remove();
+      if (c.pack && c.basePrice > 0) {
+        priceEl.insertAdjacentHTML('afterend',
+          `<div class="line-derived">ال${Utils.escapeHtml(r.unit)} بـ ${Utils.formatMoney(c.basePrice)}</div>`);
+      }
+    }
     updateTotals(container);
   }
 
@@ -455,8 +564,9 @@ Modules.sales = (() => {
 
     // مينفعش نبيع أكتر من اللي في المخزن. بنجمع كمية كل صنف في الفاتورة كلها
     // (ممكن يكون مكتوب في أكتر من سطر) ونقارنها بالمتاح.
+    // بنجمع بالوحدة الأصلية (المتر) عشان اللفة تتحسب بكل أمتارها
     const needed = {};
-    valid.forEach(r => { needed[r.itemId] = (needed[r.itemId] || 0) + calc(r).qty; });
+    valid.forEach(r => { needed[r.itemId] = (needed[r.itemId] || 0) + calc(r).baseQty; });
     const short = [];
     for (const id of Object.keys(needed)) {
       const it = AppState.items.find(i => i.id === Number(id));
@@ -500,10 +610,19 @@ Modules.sales = (() => {
       const customerId = await Services.resolveParty('customers', customerName);
       const sale = {
         date, customerId, discount,
-        lines: valid.map(r => ({
-          itemId: r.itemId, name: r.name, barcode: r.barcode, unit: r.unit,
-          qty: calc(r).qty, price: calc(r).price, cost: r.cost
-        })),
+        // بنسجّل دايمًا بالوحدة الأصلية (المتر)، وبنحتفظ بشكل العبوة
+        // جنبها عشان الفاتورة المطبوعة تقول "٢ لفة" مش "٢٠٠ متر"
+        lines: valid.map(r => {
+          const c = calc(r);
+          return {
+            itemId: r.itemId, name: r.name, barcode: r.barcode, unit: r.unit,
+            qty: c.baseQty, price: c.basePrice, cost: r.cost,
+            packQty: c.pack ? c.qty : null,
+            packPrice: c.pack ? c.price : null,
+            packSize: c.pack ? c.size : null,
+            packName: c.pack ? (r.packName || Units.packLabel(r.unit)) : null
+          };
+        }),
         paidNow
       };
 
@@ -609,7 +728,14 @@ Modules.sales = (() => {
         <table>
           <thead><tr><th>الصنف</th><th>كمية</th><th>سعر</th><th>إجمالي</th></tr></thead>
           <tbody>
-            ${sale.lines.map(l => `<tr><td>${Utils.escapeHtml(l.name)}</td><td>${Units.fmtQty(l.qty, l.unit)}</td><td>${l.price.toFixed(2)}</td><td>${(l.qty * l.price).toFixed(2)}</td></tr>`).join('')}
+            ${sale.lines.map(l => {
+              // اللي اتباع لفة كاملة يتكتب "٢ لفة" مش "٢٠٠ متر"
+              const isPack = Number(l.packQty || 0) > 0;
+              const q = isPack ? Units.fmtQty(l.packQty, l.packName || 'عبوة') : Units.fmtQty(l.qty, l.unit);
+              const p = isPack ? Number(l.packPrice || 0) : Number(l.price || 0);
+              const sub = isPack ? `<div class="line-sub">${Units.fmtQty(l.qty, l.unit)}</div>` : '';
+              return `<tr><td>${Utils.escapeHtml(l.name)}${sub}</td><td>${q}</td><td>${p.toFixed(2)}</td><td>${(l.qty * l.price).toFixed(2)}</td></tr>`;
+            }).join('')}
           </tbody>
         </table>
         ${sale.discount ? `<div class="sub" style="text-align:left;">خصم: ${sale.discount.toFixed(2)}</div>` : ''}

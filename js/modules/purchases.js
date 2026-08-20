@@ -24,6 +24,7 @@ Modules.purchases = (() => {
     r.name = l.name || (it ? it.name : '');
     r.category = it ? (it.category || '') : '';
     r.salePrice = it ? (it.salePrice || '') : '';
+    r.packSalePrice = it ? (it.packPrice || '') : '';
     if (Number(l.packSize || 0) > 0) {
       r.unit = l.unit || 'قطعة';
       r.packType = l.packName || 'كرتونة';
@@ -63,8 +64,25 @@ Modules.purchases = (() => {
   function blankRow() {
     return {
       _id: ++rowSeq, itemId: null, barcode: '', name: '', category: '',
-      unit: 'قطعة', packType: 'قطعة', packSize: '', qty: '', price: '', salePrice: ''
+      unit: 'قطعة', packType: 'قطعة', packSize: '', qty: '', price: '',
+      salePrice: '', packSalePrice: ''
     };
+  }
+
+  /* سطر صغير تحت سعر العبوة بيقول: العبوة دي بتطلع ال«متر» بكام،
+     وبكده يشوف بعينه إنها فعلاً أرخص من القطاعي وإنه لسه كاسب. */
+  function packSaleNote(r, c, u) {
+    const total = Number(r.packSalePrice || 0);
+    if (!(c.pack && total > 0 && c.size > 0)) return '';
+    const per = total / c.size;
+    const one = Number(r.salePrice || 0);
+    const cost = c.unitCost;
+    const bad = cost > 0 && per < cost;
+    let txt = `ال${u} بـ ${Utils.formatMoney(per)}`;
+    if (bad) txt += ' · ⚠️ أقل من التكلفة';
+    else if (one > 0 && per > one) txt += ' · ⚠️ أغلى من القطاعي';
+    else if (one > 0) txt += ` · أرخص بـ ${Utils.formatMoney(one - per)}`;
+    return `<div class="pack-sale-note ${bad ? 'bad' : ''}">${Utils.escapeHtml(txt)}</div>`;
   }
 
   /* القاعدة بسيطة وواضحة: لو كتبت "فيها كام" يبقى النوع ده عبوة، وبنحسب سعر الوحدة منه.
@@ -313,6 +331,7 @@ Modules.purchases = (() => {
     if (item.packSize > 0) {
       row.packType = item.packName || Units.packLabel(row.unit);
       row.packSize = item.packSize;
+      if (!row.packSalePrice) row.packSalePrice = item.packPrice || '';
       if (!row.price) row.price = (item.costPrice || 0) * item.packSize;
     } else {
       row.packType = row.unit;
@@ -369,13 +388,21 @@ Modules.purchases = (() => {
             : `<div class="cell-muted">—</div>`}
         </td>
         <td data-label="سعر البيع">
-          <input type="number" class="cell f-sale num" value="${r.salePrice}" min="0" step="0.01" inputmode="decimal" placeholder="0.00">
+          <input type="number" class="cell f-sale num" value="${r.salePrice}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" title="سعر بيع ال${Utils.escapeHtml(u)} الواحد">
           ${c.unitCost > 0 && Number(r.salePrice || 0) > 0 ? `
             <div class="profit-tag ${Number(r.salePrice) >= c.unitCost ? 'good' : 'bad'}">
               ${Number(r.salePrice) >= c.unitCost
                 ? '+' + Utils.formatMoney(Number(r.salePrice) - c.unitCost)
                 : 'أقل من التكلفة!'}
             </div>` : ''}
+          ${c.pack ? `
+            <div class="pack-sale">
+              <span class="pack-sale-lbl">سعر ال${Utils.escapeHtml(r.packType || 'عبوة')}</span>
+              <input type="number" class="cell f-packsale num" value="${r.packSalePrice}" min="0" step="0.01"
+                     inputmode="decimal" placeholder="اختياري"
+                     title="سعر بيع ال${Utils.escapeHtml(r.packType || 'عبوة')} كاملة لو الزبون خدها بحالها">
+            </div>
+            ${packSaleNote(r, c, u)}` : ''}
         </td>
         <td data-label="الإجمالي" class="cell-total">
           <div class="line-sum">${Utils.formatMoney(c.lineTotal)}</div>
@@ -438,6 +465,9 @@ Modules.purchases = (() => {
       $('.f-qty').addEventListener('input', (e) => { r.qty = e.target.value; refreshLine(container, tr, r); });
       $('.f-price').addEventListener('input', (e) => { r.price = e.target.value; refreshLine(container, tr, r); });
       $('.f-sale').addEventListener('input', (e) => { r.salePrice = e.target.value; refreshLine(container, tr, r); });
+      if ($('.f-packsale')) {
+        $('.f-packsale').addEventListener('input', (e) => { r.packSalePrice = e.target.value; refreshLine(container, tr, r); });
+      }
 
       // النوع: مكتوب بالإيد أو مختار من القايمة
       $('.f-packtype').addEventListener('input', (e) => { r.packType = (e.target.value || '').trim() || 'قطعة'; });
@@ -494,16 +524,22 @@ Modules.purchases = (() => {
         : `<div class="cell-muted">—</div>`;
     }
     // علامة المكسب جنب سعر البيع
-    const saleCell = tr.querySelector('.f-sale') && tr.querySelector('.f-sale').parentElement;
+    const saleEl = tr.querySelector('.f-sale');
+    const saleCell = saleEl && saleEl.parentElement;
     if (saleCell) {
       const old = saleCell.querySelector('.profit-tag');
       if (old) old.remove();
       const sale = Number(r.salePrice || 0);
       if (c.unitCost > 0 && sale > 0) {
         const good = sale >= c.unitCost;
-        saleCell.insertAdjacentHTML('beforeend',
+        saleEl.insertAdjacentHTML('afterend',
           `<div class="profit-tag ${good ? 'good' : 'bad'}">${good ? '+' + Utils.formatMoney(sale - c.unitCost) : 'أقل من التكلفة!'}</div>`);
       }
+      // سطر "ال متر بكام" تحت سعر العبوة
+      const oldNote = saleCell.querySelector('.pack-sale-note');
+      if (oldNote) oldNote.remove();
+      const note = packSaleNote(r, c, u);
+      if (note) saleCell.insertAdjacentHTML('beforeend', note);
     }
     updateTotals(container);
   }
@@ -577,6 +613,9 @@ Modules.purchases = (() => {
       const c = calc(r);
       const u = effUnit(r);
       const sale = Number(r.salePrice || 0);
+      // سعر بيع العبوة كاملة (لفة/كرتونة) — بيتحفظ على الصنف عشان البياع
+      // يلاقيه جاهز في شاشة البيع
+      const packSale = c.pack ? Number(r.packSalePrice || 0) : 0;
       let itemId = r.itemId;
 
       // لو الاسم مطابق لصنف موجود بس المستخدم مادوسش برّه الخانة، نلاقيه هنا
@@ -600,6 +639,7 @@ Modules.purchases = (() => {
             unit: u,
             packSize: c.pack ? c.size : null,
             packName: c.pack ? r.packType : null,
+            packPrice: packSale > 0 ? packSale : null,
             costPrice: c.unitCost, salePrice: sale,
             stock: 0, minStock: 0, active: true
           });
@@ -618,6 +658,7 @@ Modules.purchases = (() => {
           if (c.pack && (it.packSize !== c.size || it.packName !== r.packType)) {
             it.packSize = c.size; it.packName = r.packType; changed = true;
           }
+          if (packSale > 0 && it.packPrice !== packSale) { it.packPrice = packSale; changed = true; }
           if (it.unit !== u) { it.unit = u; changed = true; }
           if (changed) await DB.put('items', it);
         }

@@ -233,6 +233,8 @@ tbody tr:hover{background:#FAFBFC;}
   .receipt table{width:100%;border-collapse:collapse;font-size:12px;}
   .receipt th,.receipt td{padding:4px 2px;border-bottom:1px dashed #999;text-align:right;}
   .receipt .tot{margin-top:8px;font-weight:800;font-size:14px;text-align:left;}
+  /* السطر الصغير اللي بيترجم اللفة لأمتار جوه الفاتورة */
+  .receipt .line-sub, .line-sub{font-size:10px;color:#555;font-weight:600;}
 }
 
 /* ---------- فاتورة على شكل جدول (زي الإكسيل) ---------- */
@@ -306,6 +308,19 @@ tbody tr:hover{background:#FAFBFC;}
 .unit-cost-sub{font-size:10.5px;color:var(--ink-soft);margin-top:2px;}
 .line-derived{font-size:10.5px;color:var(--success);margin-top:2px;font-weight:700;}
 .line-derived.warn{color:var(--danger);}
+
+/* سعر بيع العبوة كاملة (لفة سلك، كرتونة مفاتيح) في فاتورة الشراء */
+.pack-sale{display:flex;flex-direction:column;gap:2px;margin-top:6px;
+  border-top:1px dashed var(--line);padding-top:5px;}
+.pack-sale-lbl{font-size:9.5px;font-weight:800;color:var(--ink-soft);text-align:center;}
+.pack-sale .f-packsale{width:100%;text-align:center;}
+.pack-sale-note{font-size:10px;color:var(--ink-soft);margin-top:2px;font-weight:700;}
+.pack-sale-note.bad{color:var(--danger);}
+
+/* اختيار البيع بالوحدة ولا بالعبوة في فاتورة البيع */
+.invoice-table .unit-cell .f-unitsel{
+  width:100%;text-align:center;font-weight:800;color:var(--navy);
+  background:#FFF7E8;border-color:var(--amber);cursor:pointer;}
 
 .invoice-foot{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px;align-items:flex-start;}
 .foot-left{flex:1;min-width:240px;display:flex;gap:14px;flex-wrap:wrap;}

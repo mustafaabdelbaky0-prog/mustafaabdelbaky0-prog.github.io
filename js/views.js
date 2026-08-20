@@ -31,8 +31,10 @@ const Views = (() => {
     const lines = doc.lines || [];
     const rowsHtml = lines.map((l, i) => {
       const price = isSale ? l.price : l.cost;
+      // في الشراء بنعرض تكلفة العبوة، وفي البيع سعر بيعها
+      const packOne = l.packCost != null ? l.packCost : l.packPrice;
       const packNote = l.packQty
-        ? `<div class="inv-sub">${l.packQty} ${Utils.escapeHtml(l.packName || 'عبوة')} × ${Utils.formatMoney(l.packCost)} — الواحدة ${l.packSize} ${Utils.escapeHtml(l.unit || '')}</div>`
+        ? `<div class="inv-sub">${l.packQty} ${Utils.escapeHtml(l.packName || 'عبوة')} × ${Utils.formatMoney(packOne)} — الواحدة ${l.packSize} ${Utils.escapeHtml(l.unit || '')}</div>`
         : '';
       const retNote = l.returnedQty
         ? `<div class="inv-sub warn">اترجع منها ${Units.fmtQty(l.returnedQty, l.unit)}</div>` : '';
