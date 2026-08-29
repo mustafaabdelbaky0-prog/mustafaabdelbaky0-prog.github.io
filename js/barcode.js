@@ -124,6 +124,13 @@ const Barcode = (() => {
     styleTag.textContent = `
       @media print {
         @page { size: ${s.w}mm ${s.h}mm; margin: 0; }
+        /* لازم نشيل شاشة البرنامج من الحسبة خالص (display:none مش
+           visibility:hidden) — لأن الشاشة بتفضل واخدة مساحتها في
+           الصفحة، وعلى ورق ٢.٥ سم دي بتطلع صفحة زيادة فاضية. */
+        .app-shell{ display:none !important; }
+        body{ margin:0 !important; padding:0 !important; }
+        .print-only{ position:static !important; padding:0 !important;
+                     width:auto !important; }
         .lbl-sheet{ display:block; gap:0; }
         .lbl{
           width:${s.w}mm; height:${s.h}mm;

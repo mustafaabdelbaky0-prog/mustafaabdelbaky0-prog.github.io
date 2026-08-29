@@ -4,6 +4,8 @@ Modules.company = (() => {
     const c = AppState.company || {};
     const cashBal = await Services.getCashBalance();
     const labelSz = await Barcode.labelSize();
+    const apRec = await DB.get('settings', 'autoPrintInvoice');
+    const autoPrintInv = apRec ? !!apRec.value : false;
 
     container.innerHTML = `
       <div class="grid grid-2">
@@ -80,6 +82,18 @@ Modules.company = (() => {
               <button type="submit" class="btn btn-primary">حفظ المقاس</button>
             </div>
           </form>
+
+          <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:16px;">
+            <label class="ws-toggle" style="gap:10px;">
+              <input type="checkbox" id="autoPrintInv" ${autoPrintInv ? 'checked' : ''}>
+              <span style="font-weight:700;">اطبع الفاتورة تلقائي بعد كل بيعة</span>
+            </label>
+            <div class="hint" style="line-height:1.9;margin-top:8px;">
+              سيبها مقفولة لو طابعة الباركود هي الافتراضية — عشان كل بيعة
+              ما تطلعش إيصال على رول الملصقات وتضيّعه.
+              تقدر تطبع أي فاتورة وقت ما تحب من سجل الفواتير.
+            </div>
+          </div>
         </div>
 
         <div class="card">
@@ -501,6 +515,12 @@ Modules.company = (() => {
         if (w <= 0 || h <= 0) { Utils.toast('اكتب المقاس الأول', 'error'); return; }
         await Barcode.saveLabelSize(w, h);
         Barcode.printLabels([{ name: 'ملصق تجربة', barcode: '10001', count: 1, price: 25 }]);
+      });
+
+      const apChk = container.querySelector('#autoPrintInv');
+      if (apChk) apChk.addEventListener('change', async () => {
+        await DB.put('settings', { key: 'autoPrintInvoice', value: apChk.checked });
+        Utils.toast(apChk.checked ? 'هيطبع الفاتورة بعد كل بيعة' : 'مش هيطبع فواتير تلقائي', 'success');
       });
 
       labelForm.addEventListener('submit', async (e) => {

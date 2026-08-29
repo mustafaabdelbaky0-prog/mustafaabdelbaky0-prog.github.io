@@ -10,6 +10,7 @@ Modules.sales = (() => {
   let saving = false;   // بيمنع إن دوستين سريعتين على "حفظ" يعملوا فاتورتين
   let editing = null;   // الفاتورة اللي بنعدّل فيها دلوقتي (null = فاتورة جديدة)
   let wholesale = false; // بيع بسعر الجملة (للأسطوات)
+  let autoPrint = false; // يطبع الفاتورة لوحده بعد الحفظ؟ (بيتقرا من الإعدادات)
 
   function blankRow() {
     return {
@@ -123,6 +124,9 @@ Modules.sales = (() => {
       .filter(e => e.active !== false)
       .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
 
+    const apRec = await DB.get('settings', 'autoPrintInvoice');
+    autoPrint = apRec ? !!apRec.value : false;
+
     container.innerHTML = `
       ${editing ? `
       <div class="edit-banner">
@@ -216,7 +220,7 @@ Modules.sales = (() => {
         <div class="form-actions">
           <button class="btn btn-ghost" id="clearInv">فاتورة جديدة</button>
           ${editing ? `<button class="btn btn-danger" id="deleteInv">🗑️ امسح الفاتورة</button>` : ''}
-          <button class="btn btn-amber" id="completeSale">${editing ? '💾 احفظ التعديل' : '💾 حفظ وطباعة'}</button>
+          <button class="btn btn-amber" id="completeSale">${editing ? '💾 احفظ التعديل' : (autoPrint ? '💾 حفظ وطباعة' : '💾 حفظ الفاتورة')}</button>
         </div>
       </div>
 
@@ -686,13 +690,17 @@ Modules.sales = (() => {
       await refreshShell();
       Utils.beep('ok');
       Utils.toast(wasEditing ? `اتعدّلت الفاتورة ${res.number}` : `اتحفظت فاتورة البيع ${res.number}`, 'success');
-      if (!wasEditing) printReceipt(sale, res, customerName);
+      /* الطباعة التلقائية بقت اختيار.
+
+         مهم جدًا لو طابعة الملصقات هي الافتراضية: من غير الاختيار ده
+         كل بيعة كانت هتطلع إيصال على رول الملصقات وتضيّعه. */
+      if (!wasEditing && autoPrint) printReceipt(sale, res, customerName);
       editing = null;
       render(container);            // بيرسم الشاشة من جديد بزرار جديد
     } catch (e) {
       Utils.beep('error');
       Utils.toast('الحفظ مانجحش: ' + (e.message || 'خطأ'), 'error');
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = editing ? '💾 احفظ التعديل' : '💾 حفظ وطباعة'; }
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = editing ? '💾 احفظ التعديل' : (autoPrint ? '💾 حفظ وطباعة' : '💾 حفظ الفاتورة'); }
     } finally {
       saving = false;
     }
