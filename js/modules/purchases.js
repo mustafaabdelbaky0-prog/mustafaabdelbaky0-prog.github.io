@@ -608,6 +608,7 @@ Modules.purchases = (() => {
     // الأصناف اللي اتعملت في الفاتورة دي — عشان لو نفس الباركود أو الاسم اتكرر
     // في سطرين مايتعملش صنفين مكررين
     const createdInThisInvoice = new Map();
+    const newItemIds = [];   // الأصناف اللي اتعملت لأول مرة — عشان نعرض نطبعلها ملصقات
 
     for (const r of valid) {
       const c = calc(r);
@@ -625,7 +626,7 @@ Modules.purchases = (() => {
       }
 
       if (!itemId) {
-        const barcode = (r.barcode || '').trim() || Utils.genInternalBarcode();
+        const barcode = (r.barcode || '').trim() || await Utils.genInternalBarcode();
         const key = barcode + '|' + r.name.trim();
         if (createdInThisInvoice.has(barcode) || createdInThisInvoice.has(key)) {
           itemId = createdInThisInvoice.get(barcode) || createdInThisInvoice.get(key);
@@ -644,6 +645,7 @@ Modules.purchases = (() => {
             stock: 0, minStock: 0, active: true
           });
           createdInThisInvoice.set(barcode, itemId);
+          newItemIds.push(itemId);
           createdInThisInvoice.set(key, itemId);
         }
       }
@@ -685,6 +687,19 @@ Modules.purchases = (() => {
       (res.dueAmount > 0 ? ` — باقي ${Utils.formatMoney(res.dueAmount)} على المورد` : ''), 'success');
     editing = null;
     render(container);            // بيرسم الشاشة من جديد بزرار جديد
+
+    /* أحسن وقت يطبع فيه الملصقات هو دلوقتي — البضاعة الجديدة لسه
+       قدامه على الترابيزة. فبنسأله بدل ما يفتكر بعدين. */
+    if (newItemIds.length) {
+      setTimeout(async () => {
+        const names = AppState.items.filter(i => newItemIds.includes(i.id)).map(i => i.name);
+        const ok = await Utils.confirmDialog(
+          `في ${newItemIds.length} صنف جديد اتعمل في الفاتورة دي:\n\n` +
+          names.map(n => '• ' + n).join('\n') +
+          '\n\nتطبعلهم ملصقات باركود دلوقتي؟');
+        if (ok) Modules.items.openBulkLabels(newItemIds);
+      }, 700);
+    }
 
     } catch (e) {
       Utils.beep('error');

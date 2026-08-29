@@ -38,9 +38,31 @@ const Utils = (() => {
     return new Date().toISOString();
   }
 
-  // توليد باركود داخلي للأصناف اللي مالهاش باركود مطبوع
-  function genInternalBarcode() {
-    return '2' + Date.now().toString().slice(-11);
+  /* باركود داخلي للأصناف اللي مالهاش باركود من المصنع.
+
+     رقم قصير بالترتيب: 10001، 10002، 10003...
+     قصير عشان تقدر تنطقه في التليفون وتكتبه بالإيد لو الملصق اتخرش،
+     وفي نفس الوقت مايتلخبطش مع باركود المصنع (اللي بيبقى ٨ أو ١٢
+     أو ١٣ رقم).
+
+     كل جهاز ليه مدى لوحده (الكمبيوتر 1xxxx والموبايل 2xxxx) عشان
+     لو الاتنين عملوا صنف جديد وهما مقطوعين عن بعض مايطلعش نفس الرقم. */
+  const BARCODE_SEQ_KEY = 'itemBarcodeSeq';
+
+  async function genInternalBarcode() {
+    const no = (typeof Device !== 'undefined' && Device.current()) ? Device.current() : 1;
+    const base = no * 10000;
+
+    const rec = await DB.get('settings', BARCODE_SEQ_KEY + ':' + no);
+    let seq = rec ? Number(rec.value) : 0;
+
+    // بنتأكد إن الرقم مش مستعمل — لو جه صنف من الجهاز التاني بنعدّي عليه
+    const taken = new Set((await DB.getAll('items')).map(i => String(i.barcode || '')));
+    let code;
+    do { seq++; code = String(base + seq); } while (taken.has(code) && seq < 9999);
+
+    await DB.put('settings', { key: BARCODE_SEQ_KEY + ':' + no, value: seq });
+    return code;
   }
 
   function debounce(fn, wait) {

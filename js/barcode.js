@@ -67,15 +67,37 @@ const Barcode = (() => {
     </svg>`;
   }
 
-  /* ورقة ملصقات جاهزة للطباعة */
-  function labelSheet(items) {
+  /* مقاس الملصق — بيتحفظ في الإعدادات عشان لو غيّر الرول يظبطه بنفسه.
+     الافتراضي ٤ × ٢.٥ سم وده أشهر مقاس في المحلات. */
+  const DEFAULT_SIZE = { w: 40, h: 25 };
+
+  async function labelSize() {
+    const rec = await DB.get('settings', 'labelSize');
+    const s = (rec && rec.value) || {};
+    return {
+      w: Number(s.w) > 0 ? Number(s.w) : DEFAULT_SIZE.w,
+      h: Number(s.h) > 0 ? Number(s.h) : DEFAULT_SIZE.h
+    };
+  }
+  function saveLabelSize(w, h) {
+    return DB.put('settings', { key: 'labelSize', value: { w: Number(w), h: Number(h) } });
+  }
+
+  /* الملصقات جاهزة للطباعة على رول الطابعة الحرارية.
+     كل ملصق صفحة لوحده — الطابعة بتقف عند نهاية كل واحد. */
+  function labelSheet(items, size) {
+    const s = size || DEFAULT_SIZE;
+    // الباركود بياخد حوالي نص طول الملصق، والباقي للاسم والسعر
+    const barH = Math.max(22, Math.round(s.h * 0.42 * 3.78));   // مم → بكسل
+    const mw = s.w <= 32 ? 1.0 : (s.w <= 45 ? 1.25 : 1.6);
+
     const cells = [];
     for (const it of items) {
       const count = Math.max(1, Number(it.count) || 1);
+      let code = '';
+      try { code = svg(it.barcode, { height: barH, moduleWidth: mw, showText: true }); }
+      catch (e) { code = `<div class="lbl-err">الباركود فيه حروف عربية — غيّره لأرقام</div>`; }
       for (let i = 0; i < count; i++) {
-        let code = '';
-        try { code = svg(it.barcode, { height: 40, moduleWidth: 1.4 }); }
-        catch (e) { code = `<div class="lbl-err">الباركود فيه حروف عربية — غيّره لأرقام</div>`; }
         cells.push(`
           <div class="lbl">
             <div class="lbl-name">${Utils.escapeHtml(it.name || '')}</div>
@@ -87,12 +109,48 @@ const Barcode = (() => {
     return `<div class="lbl-sheet">${cells.join('')}</div>`;
   }
 
-  function printLabels(items) {
+  /* قاعدة مقاس الصفحة لازم تتحقن وقت الطباعة بس — مينفعش تتكتب ثابتة
+     في ملف الـ CSS، لأن الفواتير بتتطبع على ورق عادي والملصقات على
+     رول صغير، والمتصفح بياخد آخر قاعدة @page مكتوبة. */
+  let styleTag = null;
+  function applyPageSize(s) {
+    if (!styleTag) {
+      styleTag = document.createElement('style');
+      styleTag.id = 'labelPageSize';
+      document.head.appendChild(styleTag);
+    }
+    const padV = Math.max(0.4, +(s.h * 0.05).toFixed(1));
+    const padH = Math.max(0.4, +(s.w * 0.04).toFixed(1));
+    styleTag.textContent = `
+      @media print {
+        @page { size: ${s.w}mm ${s.h}mm; margin: 0; }
+        .lbl-sheet{ display:block; gap:0; }
+        .lbl{
+          width:${s.w}mm; height:${s.h}mm;
+          border:none; border-radius:0; margin:0;
+          padding:${padV}mm ${padH}mm;
+          display:flex; flex-direction:column;
+          align-items:center; justify-content:center;
+          page-break-after:always; break-after:page; overflow:hidden;
+        }
+        .lbl:last-child{ page-break-after:auto; break-after:auto; }
+        .lbl-code svg{ max-width:100%; max-height:${(s.h * 0.5).toFixed(1)}mm; }
+      }`;
+  }
+  function clearPageSize() { if (styleTag) styleTag.textContent = ''; }
+
+  async function printLabels(items) {
     const area = document.getElementById('printArea');
     if (!area) return;
-    area.innerHTML = labelSheet(items);
-    setTimeout(() => window.print(), 200);
+    const s = await labelSize();
+    applyPageSize(s);
+    area.innerHTML = labelSheet(items, s);
+    setTimeout(() => {
+      window.print();
+      // بنشيل القاعدة بعد الطباعة عشان الفواتير ترجع تطبع على ورقها
+      setTimeout(clearPageSize, 800);
+    }, 200);
   }
 
-  return { svg, encode, labelSheet, printLabels };
+  return { svg, encode, labelSheet, printLabels, labelSize, saveLabelSize, DEFAULT_SIZE };
 })();

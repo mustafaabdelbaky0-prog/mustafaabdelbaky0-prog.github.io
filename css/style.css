@@ -713,17 +713,20 @@ tbody tr:hover{background:#FAFBFC;}
   .day-close-row .btn{width:100%;}
 }
 
-/* ===== ملصقات الباركود ===== */
-.lbl-sheet{display:flex;flex-wrap:wrap;gap:4mm;}
+/* ===== ملصقات الباركود =====
+   المقاس الحقيقي بيتحقن وقت الطباعة من barcode.js حسب مقاس الرول
+   اللي مظبوط في الإعدادات. اللي هنا هو الشكل الأساسي بس. */
+.lbl-sheet{display:block;}
 .lbl{
-  width:48mm;border:1px dashed #999;border-radius:2mm;
-  padding:2mm;text-align:center;break-inside:avoid;
+  text-align:center;break-inside:avoid;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
 }
-.lbl-name{font-size:9pt;font-weight:700;margin-bottom:1mm;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.lbl-name{font-size:7.5pt;font-weight:700;line-height:1.15;
+  max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.lbl-code{line-height:0;}
 .lbl-code svg{max-width:100%;height:auto;}
-.lbl-price{font-size:11pt;font-weight:800;margin-top:1mm;}
-.lbl-err{font-size:8pt;color:#c00;}
+.lbl-price{font-size:9pt;font-weight:800;line-height:1.1;}
+.lbl-err{font-size:7pt;color:#c00;}
 
 /* ===== تنبيه الأصناف اللي قربت تخلص ===== */
 .nav-badge{

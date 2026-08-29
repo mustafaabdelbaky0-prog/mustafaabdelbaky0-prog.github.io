@@ -39,7 +39,10 @@ Modules.items = (() => {
         <div class="search-box" style="max-width:340px;">
           <input type="text" id="itemSearch" placeholder="ابحث بالاسم أو الباركود...">
         </div>
-        ${Auth.isSeller() ? '' : '<button class="btn btn-amber" id="addItemBtn">+ إضافة صنف جديد</button>'}
+        <div class="tag-row">
+          <button class="btn btn-ghost" id="bulkLabelBtn">🏷️ طباعة ملصقات</button>
+          ${Auth.isSeller() ? '' : '<button class="btn btn-amber" id="addItemBtn">+ إضافة صنف جديد</button>'}
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -74,6 +77,7 @@ Modules.items = (() => {
 
     const addBtn = container.querySelector('#addItemBtn');
     if (addBtn) addBtn.addEventListener('click', () => openItemForm());
+    container.querySelector('#bulkLabelBtn').addEventListener('click', () => openBulkLabels());
 
     tbody.addEventListener('click', async (e) => {
       const tr = e.target.closest('tr');
@@ -180,6 +184,130 @@ Modules.items = (() => {
   // prefill: string (treated as barcode) or {barcode, name}
   /* ملصق الباركود — للأصناف اللي مالهاش باركود مطبوع من المصنع
      (المسامير، السلك، الحاجات السايبة). بتطبعه وتلزقه فيقراه الليزر. */
+  /* طباعة ملصقات لكذا صنف مرة واحدة.
+
+     ده أهم شاشة في موضوع الملصقات: لما تدخل بضاعة جديدة مش هتفضل
+     تفتح كل صنف لوحده — تعلّم على اللي عايزه، تكتب عدد الملصقات،
+     وتطبع مرة واحدة. */
+  function openBulkLabels(preselect) {
+    const list = AppState.items.filter(i => (i.barcode || '').trim());
+    const pre = new Set((preselect || []).map(Number));
+
+    const { close } = Utils.openModal({
+      title: 'طباعة ملصقات باركود',
+      wide: true,
+      bodyHtml: `
+        <div class="filter-row" style="margin-bottom:12px;">
+          <div class="field" style="margin:0;flex:2;min-width:200px;">
+            <label>ابحث</label>
+            <input type="text" id="blSearch" placeholder="اسم الصنف أو الباركود" autocomplete="off">
+          </div>
+          <div class="field" style="margin:0;min-width:150px;">
+            <label>عدد الملصقات للكل</label>
+            <input type="number" id="blAll" min="1" max="200" placeholder="مثلاً 10">
+          </div>
+          <button class="btn btn-ghost" id="blPick">علّم على الكل</button>
+          <button class="btn btn-ghost" id="blClear">شيل التعليم</button>
+        </div>
+
+        <div class="table-wrap" style="max-height:46vh;overflow-y:auto;">
+          <table>
+            <thead><tr><th style="width:38px;"></th><th>الصنف</th><th>الباركود</th><th>السعر</th><th style="width:110px;">عدد الملصقات</th></tr></thead>
+            <tbody id="blBody">
+              ${list.length ? list.map(i => `
+                <tr data-id="${i.id}">
+                  <td><input type="checkbox" class="bl-chk" ${pre.has(Number(i.id)) ? 'checked' : ''}></td>
+                  <td style="font-weight:700;">${Utils.escapeHtml(i.name)}</td>
+                  <td style="font-family:monospace;">${Utils.escapeHtml(i.barcode)}</td>
+                  <td>${Utils.formatMoney(i.salePrice)}</td>
+                  <td><input type="number" class="bl-cnt cell num" min="1" max="200" value="${pre.has(Number(i.id)) ? 10 : 1}"></td>
+                </tr>`).join('')
+                : `<tr class="empty-row"><td colspan="5">مفيش أصناف عليها باركود</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="field-row" style="margin-top:14px;">
+          <div class="field">
+            <label>السعر على الملصق</label>
+            <select id="blPrice">
+              <option value="1">يظهر</option>
+              <option value="0">ما يظهرش</option>
+            </select>
+          </div>
+        </div>
+        <div class="notice notice-ok" id="blSum" style="line-height:1.9;"></div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="blCancel">إلغاء</button>
+          <button type="button" class="btn btn-amber" id="blPrint">🖨️ اطبع الملصقات</button>
+        </div>`,
+      onMount: async (body, closeFn) => {
+        const size = await Barcode.labelSize();
+        const bodyEl = body.querySelector('#blBody');
+        const sumEl = body.querySelector('#blSum');
+
+        function chosen() {
+          return [...bodyEl.querySelectorAll('tr[data-id]')]
+            .filter(tr => tr.querySelector('.bl-chk').checked)
+            .map(tr => {
+              const it = list.find(x => x.id === Number(tr.dataset.id));
+              return { it, count: Math.max(1, Math.min(200, Number(tr.querySelector('.bl-cnt').value) || 1)) };
+            });
+        }
+        function sync() {
+          const c = chosen();
+          const total = c.reduce((s, x) => s + x.count, 0);
+          sumEl.innerHTML = c.length
+            ? `<strong>${c.length}</strong> صنف · <strong>${total}</strong> ملصق ·
+               مقاس ${size.w / 10} × ${size.h / 10} سم`
+            : 'علّم على الأصناف اللي عايز تطبعلها ملصقات';
+          body.querySelector('#blPrint').disabled = c.length === 0;
+        }
+        bodyEl.addEventListener('change', sync);
+        bodyEl.addEventListener('input', sync);
+
+        body.querySelector('#blSearch').addEventListener('input', (e) => {
+          const q = e.target.value.trim().toLowerCase();
+          bodyEl.querySelectorAll('tr[data-id]').forEach(tr => {
+            const txt = tr.textContent.toLowerCase();
+            tr.style.display = !q || txt.includes(q) ? '' : 'none';
+          });
+        });
+        body.querySelector('#blPick').addEventListener('click', () => {
+          bodyEl.querySelectorAll('tr[data-id]').forEach(tr => {
+            if (tr.style.display !== 'none') tr.querySelector('.bl-chk').checked = true;
+          });
+          sync();
+        });
+        body.querySelector('#blClear').addEventListener('click', () => {
+          bodyEl.querySelectorAll('.bl-chk').forEach(c => { c.checked = false; });
+          sync();
+        });
+        body.querySelector('#blAll').addEventListener('input', (e) => {
+          const n = Number(e.target.value || 0);
+          if (n <= 0) return;
+          bodyEl.querySelectorAll('tr[data-id]').forEach(tr => {
+            if (tr.querySelector('.bl-chk').checked) tr.querySelector('.bl-cnt').value = n;
+          });
+          sync();
+        });
+        body.querySelector('#blCancel').addEventListener('click', closeFn);
+        body.querySelector('#blPrint').addEventListener('click', () => {
+          const withPrice = body.querySelector('#blPrice').value === '1';
+          const items = chosen().map(x => ({
+            name: x.it.name, barcode: x.it.barcode, count: x.count,
+            price: withPrice ? x.it.salePrice : 0
+          }));
+          if (!items.length) return;
+          closeFn();
+          Barcode.printLabels(items);
+        });
+        sync();
+      }
+    });
+    return { close };
+  }
+
   function openLabelDialog(item) {
     const code = (item.barcode || '').trim();
     if (!code) {
@@ -207,14 +335,15 @@ Modules.items = (() => {
             </select>
           </div>
         </div>
-        <div class="hint" style="line-height:1.9;">
-          هتطبع على ورق ملصقات عادي. لو الخطوط طلعت مش واضحة، اطبع بجودة أعلى
-          أو كبّر المقاس من إعدادات الطابعة.
-        </div>
+        <div class="hint" id="lblSizeHint" style="line-height:1.9;"></div>
         <div class="form-actions">
           <button class="btn btn-amber" id="lblPrint">🖨️ اطبع</button>
         </div>`,
-      onMount: (body, close) => {
+      onMount: async (body, close) => {
+        const s = await Barcode.labelSize();
+        body.querySelector('#lblSizeHint').innerHTML =
+          `مقاس الملصق المضبوط: <strong>${s.w / 10} × ${s.h / 10} سم</strong>. ` +
+          `لو الرول بتاعك مقاس تاني غيّره من <strong>بيانات المؤسسة ← مقاس ملصق الباركود</strong>.`;
         body.querySelector('#lblPrint').addEventListener('click', () => {
           const count = Math.max(1, Math.min(200, Number(body.querySelector('#lblCount').value) || 1));
           const withPrice = body.querySelector('#lblPrice').value === '1';
@@ -245,8 +374,8 @@ Modules.items = (() => {
           if (pre.barcode) body.querySelector('#fBarcode').value = pre.barcode;
           if (pre.name) body.querySelector('#fName').value = pre.name;
           body.querySelector('#cancelItem').addEventListener('click', () => { close(); resolve(null); });
-          body.querySelector('#genBarcodeBtn').addEventListener('click', () => {
-            body.querySelector('#fBarcode').value = Utils.genInternalBarcode();
+          body.querySelector('#genBarcodeBtn').addEventListener('click', async () => {
+            body.querySelector('#fBarcode').value = await Utils.genInternalBarcode();
           });
           body.querySelector('#fScanBtn').addEventListener('click', async () => {
             const code = await Scanner.scan();
@@ -308,7 +437,7 @@ Modules.items = (() => {
             const name = body.querySelector('#fName').value.trim();
             if (!name) { Utils.toast('اسم الصنف مطلوب', 'error'); return; }
             let barcode = body.querySelector('#fBarcode').value.trim();
-            if (!barcode) barcode = Utils.genInternalBarcode();
+            if (!barcode) barcode = await Utils.genInternalBarcode();
 
             const existing = AppState.items.find(i => i.barcode === barcode && i.id !== item?.id);
             if (existing) { Utils.toast('في صنف تاني بنفس الباركود: ' + existing.name, 'error'); return; }
@@ -358,5 +487,5 @@ Modules.items = (() => {
     });
   }
 
-  return { render, openItemForm };
+  return { render, openItemForm, openBulkLabels };
 })();

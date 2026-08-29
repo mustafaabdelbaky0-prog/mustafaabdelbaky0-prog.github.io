@@ -3,6 +3,7 @@ Modules.company = (() => {
   async function render(container) {
     const c = AppState.company || {};
     const cashBal = await Services.getCashBalance();
+    const labelSz = await Barcode.labelSize();
 
     container.innerHTML = `
       <div class="grid grid-2">
@@ -54,6 +55,31 @@ Modules.company = (() => {
               </div>
             </form>
           `}
+        </div>
+
+        <div class="card">
+          <div class="section-head"><h3>مقاس ملصق الباركود</h3></div>
+          <p class="muted" style="font-size:13px;line-height:1.9;margin-bottom:12px;">
+            مقاس الملصق اللي في طابعة الباركود. مكتوب على علبة الرول، أو قيس ملصق
+            واحد بالمسطرة. لو المقاس غلط الباركود هيطلع مقطوع أو في نص الملصق.
+          </p>
+          <form id="labelForm">
+            <div class="field-row">
+              <div class="field">
+                <label>العرض (سم)</label>
+                <input type="number" id="lblW" min="1" max="20" step="0.1" value="${(labelSz.w / 10)}">
+              </div>
+              <div class="field">
+                <label>الارتفاع (سم)</label>
+                <input type="number" id="lblH" min="1" max="20" step="0.1" value="${(labelSz.h / 10)}">
+              </div>
+            </div>
+            <div class="hint" id="lblSizeNote" style="margin:-6px 0 12px;"></div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-ghost" id="lblTest">🖨️ اطبع ملصق تجربة</button>
+              <button type="submit" class="btn btn-primary">حفظ المقاس</button>
+            </div>
+          </form>
         </div>
 
         <div class="card">
@@ -452,6 +478,40 @@ Modules.company = (() => {
       await AppState.reloadCompany();
       Utils.toast('تم حفظ بيانات المؤسسة', 'success');
     });
+
+    // ---------- مقاس ملصق الباركود ----------
+    const labelForm = container.querySelector('#labelForm');
+    if (labelForm) {
+      const wEl = container.querySelector('#lblW');
+      const hEl = container.querySelector('#lblH');
+      const note = container.querySelector('#lblSizeNote');
+      function syncNote() {
+        const w = Number(wEl.value || 0) * 10, h = Number(hEl.value || 0) * 10;
+        note.textContent = (w > 0 && h > 0)
+          ? `يعني ${w} مم عرض × ${h} مم ارتفاع. جرّب اطبع ملصق تجربة وقيسه بالمسطرة قبل ما تطبع الكل.`
+          : 'اكتب المقاس بالسنتيمتر';
+      }
+      wEl.addEventListener('input', syncNote);
+      hEl.addEventListener('input', syncNote);
+      syncNote();
+
+      container.querySelector('#lblTest').addEventListener('click', async () => {
+        const w = Math.round(Number(wEl.value || 0) * 10);
+        const h = Math.round(Number(hEl.value || 0) * 10);
+        if (w <= 0 || h <= 0) { Utils.toast('اكتب المقاس الأول', 'error'); return; }
+        await Barcode.saveLabelSize(w, h);
+        Barcode.printLabels([{ name: 'ملصق تجربة', barcode: '10001', count: 1, price: 25 }]);
+      });
+
+      labelForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const w = Math.round(Number(wEl.value || 0) * 10);
+        const h = Math.round(Number(hEl.value || 0) * 10);
+        if (w <= 0 || h <= 0) { Utils.toast('اكتب المقاس صح', 'error'); return; }
+        await Barcode.saveLabelSize(w, h);
+        Utils.toast('اتحفظ المقاس', 'success');
+      });
+    }
 
     const openingForm = container.querySelector('#openingForm');
     if (openingForm) {
