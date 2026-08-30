@@ -721,17 +721,26 @@ tbody tr:hover{background:#FAFBFC;}
   text-align:center;break-inside:avoid;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
 }
-.lbl-shop{font-size:5pt;font-weight:800;line-height:1.1;letter-spacing:.2px;
+/* اسم المحل ترويسة الملصق: خط عريض وخط رفيع تحته يفصله عن اسم الصنف */
+.lbl-shop{font-size:6.5pt;font-weight:800;line-height:1.15;letter-spacing:.3px;
+  width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  border-bottom:.5px solid #000;padding-bottom:.5mm;}
+.lbl-name{font-size:8.5pt;font-weight:800;line-height:1.15;
   max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.lbl-name{font-size:7pt;font-weight:700;line-height:1.15;
-  max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.lbl-code{line-height:0;}
-.lbl-code svg{max-width:100%;height:auto;}
+/* الأسماء الطويلة بتصغّر لوحدها بدل ما تتقص */
+.lbl-name.long{font-size:6.8pt;}
+.lbl-code{line-height:0;width:100%;}
+/* width:auto لازمة عشان الرسمة تفضل بنسبتها لما نحدّد لها أقصى طول —
+   من غيرها الصندوق بيفضل بعرضه الأصلي والباركود بيتوسّط وسايب فراغ */
+.lbl-code svg{max-width:100%;width:auto;height:auto;}
 /* سطر الأسعار: سعر واحد، أو سعر الوحدة وسعر العبوة جنب بعض */
 .lbl-prices{display:flex;align-items:center;justify-content:center;
   gap:1.2mm;width:100%;line-height:1.1;font-size:6.5pt;font-weight:700;}
 .lbl-prices .lbl-p{white-space:nowrap;}
-.lbl-prices .lbl-p b{font-size:8pt;font-weight:800;}
+.lbl-prices .lbl-p b{font-size:9.5pt;font-weight:800;}
+/* لما يكون في سعرين (المتر واللفة) بنصغّرهم شوية عشان السطر ما يخرجش برة الملصق */
+.lbl-prices.two{font-size:6pt;}
+.lbl-prices.two .lbl-p b{font-size:8pt;}
 .lbl-prices .lbl-sep{width:1px;align-self:stretch;background:#000;opacity:.55;}
 .lbl-price{font-size:9pt;font-weight:800;line-height:1.1;}
 .lbl-err{font-size:7pt;color:#c00;}

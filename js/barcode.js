@@ -23,18 +23,58 @@ const Barcode = (() => {
     '114131','311141','411131','211412','211214','211232','2331112'
   ];
   const START_B = 104;
+  const START_C = 105;
+  const CODE_B = 100;
+  const CODE_C = 99;
   const STOP = 106;
 
-  /* بيحوّل النص لأرقام الرموز، وبيحسب رقم التحقق اللي القارئ بيتأكد بيه */
+  /* بيحوّل النص لأرقام الرموز، وبيحسب رقم التحقق اللي القارئ بيتأكد بيه.
+
+     في CODE-128 نظامين بنستعملهم:
+       B = حرف لكل رمز (بيشيل أرقام وحروف إنجليزية)
+       C = رقمين لكل رمز (أرقام بس)
+
+     باركود الشركة بيبقى ١٣ رقم، وبنظام B كان بيطلع عريض أوي فيملا
+     الملصق من الحرف للحرف — والليزر مش بيقرا كده لأنه محتاج هامش
+     أبيض على الجنبين. نظام C بيقصّره حوالي الثلث فيدخل مظبوط. */
   function encode(text) {
-    const codes = [START_B];
-    for (const ch of String(text)) {
+    const s = String(text);
+    for (const ch of s) {
       const v = ch.charCodeAt(0);
       if (v < 32 || v > 126) throw new Error('الباركود لازم يكون أرقام أو حروف إنجليزية');
-      codes.push(v - 32);
     }
-    let sum = START_B;
-    for (let i = 1; i < codes.length; i++) sum += codes[i] * i;
+
+    const isDigit = (c) => c >= '0' && c <= '9';
+    const digitRun = (i) => { let n = 0; while (i + n < s.length && isDigit(s[i + n])) n++; return n; };
+
+    const codes = [];
+    let mode;
+    const lead = digitRun(0);
+    // بنبدأ بنظام C لو أول ٤ أرقام (أو لو الباركود كله أرقام وعددها زوجي)
+    if (lead >= 4 || (lead === s.length && s.length >= 2 && s.length % 2 === 0)) {
+      codes.push(START_C); mode = 'C';
+    } else {
+      codes.push(START_B); mode = 'B';
+    }
+
+    let i = 0;
+    while (i < s.length) {
+      if (mode === 'C') {
+        if (digitRun(i) >= 2) { codes.push(Number(s.substr(i, 2))); i += 2; }
+        else { codes.push(CODE_B); mode = 'B'; }
+      } else {
+        const run = digitRun(i);
+        // نرجع لـ C بس لو المكسب يستاهل تكلفة رمز التحويل
+        if (run >= 6 || (run >= 4 && i + run === s.length && run % 2 === 0)) {
+          codes.push(CODE_C); mode = 'C';
+        } else {
+          codes.push(s.charCodeAt(i) - 32); i++;
+        }
+      }
+    }
+
+    let sum = codes[0];
+    for (let k = 1; k < codes.length; k++) sum += codes[k] * k;
     codes.push(sum % 103);
     codes.push(STOP);
     return codes;
@@ -112,7 +152,7 @@ const Barcode = (() => {
     const packName = String(it.packName || '').trim();
 
     if (packPrice > 0 && packName) {
-      return `<div class="lbl-prices">
+      return `<div class="lbl-prices two">
         <span class="lbl-p"><b>${unitPrice.toFixed(2)}</b> ال${Utils.escapeHtml(unit || 'وحدة')}</span>
         <span class="lbl-sep"></span>
         <span class="lbl-p"><b>${packPrice.toFixed(2)}</b> ال${Utils.escapeHtml(packName)}</span>
@@ -132,7 +172,11 @@ const Barcode = (() => {
     const s = size || DEFAULT_SIZE;
     // الباركود بياخد حوالي ثلث طول الملصق، والباقي للاسم والأسعار
     const barH = Math.max(20, Math.round(s.h * 0.34 * 3.78));   // مم → بكسل
-    const mw = s.w <= 32 ? 0.95 : (s.w <= 45 ? 1.2 : 1.5);
+    /* عرض الشريطة الواحدة. الباركود القصير كان بيطلع ضيّق في نص
+       الملصق وحواليه فاضي — بنعرّض الشرايط شوية عشان يملا العرض،
+       وده كمان بيخلي الليزر يقراه أسهل. العرض مقفول بـ max-width
+       فالباركود الطويل مش هيخرج برة. */
+    const mw = s.w <= 32 ? 1.05 : (s.w <= 45 ? 1.45 : 1.75);
     const shopName = String(shop || '').trim();
 
     const cells = [];
@@ -142,11 +186,14 @@ const Barcode = (() => {
       try { code = svg(it.barcode, { height: barH, moduleWidth: mw, showText: true }); }
       catch (e) { code = `<div class="lbl-err">الباركود فيه حروف عربية — غيّره لأرقام</div>`; }
       const prices = priceLine(it);
+      // الاسم الطويل بياخد مقاس أصغر بدل ما يتقص بالنقط
+      const nm = String(it.name || '').trim();
+      const nameCls = nm.length > 15 ? 'lbl-name long' : 'lbl-name';
       for (let i = 0; i < count; i++) {
         cells.push(`
           <div class="lbl">
             ${shopName ? `<div class="lbl-shop">${Utils.escapeHtml(shopName)}</div>` : ''}
-            <div class="lbl-name">${Utils.escapeHtml(it.name || '')}</div>
+            <div class="${nameCls}">${Utils.escapeHtml(nm)}</div>
             <div class="lbl-code">${code}</div>
             ${prices}
           </div>`);
@@ -194,12 +241,25 @@ const Barcode = (() => {
           page-break-after:always; break-after:page; overflow:hidden;
         }
         .lbl:last-child{ page-break-after:auto; break-after:auto; }
-        .lbl-code svg{ max-width:100%; max-height:${(s.h * 0.42).toFixed(1)}mm; }
-        /* المقاسات بتتحسب من طول الملصق عشان لو غيّر الرول تفضل مظبوطة */
-        .lbl-shop{ font-size:${(s.h * 0.062).toFixed(1)}mm; }
-        .lbl-name{ font-size:${(s.h * 0.085).toFixed(1)}mm; }
-        .lbl-prices{ font-size:${(s.h * 0.078).toFixed(1)}mm; }
-        .lbl-prices .lbl-p b{ font-size:${(s.h * 0.098).toFixed(1)}mm; }
+        /* ٨٦٪ مش ١٠٠٪: الليزر محتاج هامش أبيض على جنبي الباركود عشان
+           يعرف فين بدايته وفين نهايته. من غيره باركود الشركة الطويل
+           كان بيلزق في حرف الملصق ومبيتقريش. */
+        .lbl-code{ width:100%; }
+        .lbl-code svg{ max-width:86%; max-height:${(s.h * 0.40).toFixed(1)}mm; }
+        /* المقاسات بتتحسب من طول الملصق عشان لو غيّر الرول تفضل مظبوطة.
+           الترتيب في الأهمية: اسم الصنف (البياع بيقراه)، السعر (الزبون
+           بيقراه)، وبعدين اسم المحل كترويسة واضحة فوق. */
+        .lbl-shop{ font-size:${(s.h * 0.090).toFixed(2)}mm;
+                   padding-bottom:${(s.h * 0.020).toFixed(2)}mm;
+                   border-bottom:0.2mm solid #000; width:100%; }
+        .lbl-name{ font-size:${(s.h * 0.115).toFixed(2)}mm; }
+        .lbl-name.long{ font-size:${(s.h * 0.092).toFixed(2)}mm; }
+        .lbl-prices{ font-size:${(s.h * 0.088).toFixed(2)}mm; }
+        .lbl-prices .lbl-p b{ font-size:${(s.h * 0.125).toFixed(2)}mm; }
+        /* السعرين مع بعض محتاجين عرض أكتر، فبيفضلوا بمقاسهم القديم
+           المجرَّب عشان السطر ما يخرجش برة الملصق */
+        .lbl-prices.two{ font-size:${(s.h * 0.078).toFixed(2)}mm; }
+        .lbl-prices.two .lbl-p b{ font-size:${(s.h * 0.098).toFixed(2)}mm; }
       }`;
   }
   function clearPageSize() { if (styleTag) styleTag.textContent = ''; }
