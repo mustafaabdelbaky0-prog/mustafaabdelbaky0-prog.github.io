@@ -721,10 +721,18 @@ tbody tr:hover{background:#FAFBFC;}
   text-align:center;break-inside:avoid;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
 }
-.lbl-name{font-size:7.5pt;font-weight:700;line-height:1.15;
+.lbl-shop{font-size:5pt;font-weight:800;line-height:1.1;letter-spacing:.2px;
+  max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.lbl-name{font-size:7pt;font-weight:700;line-height:1.15;
   max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .lbl-code{line-height:0;}
 .lbl-code svg{max-width:100%;height:auto;}
+/* سطر الأسعار: سعر واحد، أو سعر الوحدة وسعر العبوة جنب بعض */
+.lbl-prices{display:flex;align-items:center;justify-content:center;
+  gap:1.2mm;width:100%;line-height:1.1;font-size:6.5pt;font-weight:700;}
+.lbl-prices .lbl-p{white-space:nowrap;}
+.lbl-prices .lbl-p b{font-size:8pt;font-weight:800;}
+.lbl-prices .lbl-sep{width:1px;align-self:stretch;background:#000;opacity:.55;}
 .lbl-price{font-size:9pt;font-weight:800;line-height:1.1;}
 .lbl-err{font-size:7pt;color:#c00;}
 

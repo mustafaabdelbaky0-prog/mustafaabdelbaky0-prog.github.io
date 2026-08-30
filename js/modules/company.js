@@ -4,6 +4,7 @@ Modules.company = (() => {
     const c = AppState.company || {};
     const cashBal = await Services.getCashBalance();
     const labelSz = await Barcode.labelSize();
+    const labelShopName = await Barcode.labelShop();
     const apRec = await DB.get('settings', 'autoPrintInvoice');
     const autoPrintInv = apRec ? !!apRec.value : false;
 
@@ -74,6 +75,10 @@ Modules.company = (() => {
               <div class="field">
                 <label>الارتفاع (سم)</label>
                 <input type="number" id="lblH" min="1" max="20" step="0.1" value="${(labelSz.h / 10)}">
+              </div>
+              <div class="field" style="flex:2;">
+                <label>الاسم اللي يظهر فوق الملصق</label>
+                <input type="text" id="lblShop" value="${Utils.escapeHtml(labelShopName)}" placeholder="مثلاً: مؤسسة المصطفى">
               </div>
             </div>
             <div class="hint" id="lblSizeNote" style="margin:-6px 0 12px;"></div>
@@ -514,6 +519,7 @@ Modules.company = (() => {
         const h = Math.round(Number(hEl.value || 0) * 10);
         if (w <= 0 || h <= 0) { Utils.toast('اكتب المقاس الأول', 'error'); return; }
         await Barcode.saveLabelSize(w, h);
+        await Barcode.saveLabelShop(container.querySelector('#lblShop').value);
         Barcode.printLabels([{ name: 'ملصق تجربة', barcode: '10001', count: 1, price: 25 }]);
       });
 
@@ -529,6 +535,7 @@ Modules.company = (() => {
         const h = Math.round(Number(hEl.value || 0) * 10);
         if (w <= 0 || h <= 0) { Utils.toast('اكتب المقاس صح', 'error'); return; }
         await Barcode.saveLabelSize(w, h);
+        await Barcode.saveLabelShop(container.querySelector('#lblShop').value);
         Utils.toast('اتحفظ المقاس', 'success');
       });
     }

@@ -296,7 +296,11 @@ Modules.items = (() => {
           const withPrice = body.querySelector('#blPrice').value === '1';
           const items = chosen().map(x => ({
             name: x.it.name, barcode: x.it.barcode, count: x.count,
-            price: withPrice ? x.it.salePrice : 0
+            price: withPrice ? x.it.salePrice : 0,
+            unit: x.it.unit,
+            // سعر العبوة بيظهر جنب سعر الوحدة (المتر واللفة، الكيلو والعلبة)
+            packName: withPrice ? x.it.packName : '',
+            packPrice: withPrice ? x.it.packPrice : 0
           }));
           if (!items.length) return;
           closeFn();
@@ -350,6 +354,9 @@ Modules.items = (() => {
           close();
           Barcode.printLabels([{
             name: item.name, barcode: code, count,
+            unit: item.unit,
+            packName: withPrice ? item.packName : '',
+            packPrice: withPrice ? item.packPrice : 0,
             price: withPrice ? item.salePrice : 0
           }]);
         });

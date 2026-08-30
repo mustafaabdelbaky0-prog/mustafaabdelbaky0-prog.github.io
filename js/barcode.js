@@ -83,13 +83,57 @@ const Barcode = (() => {
     return DB.put('settings', { key: 'labelSize', value: { w: Number(w), h: Number(h) } });
   }
 
+  /* اسم المحل اللي فوق الملصق. الاسم الرسمي طويل ومش هيدخل في ٤ سم،
+     فبناخد أول كلمتين منه كافتراضي — وهو يقدر يكتب اللي هو عايزه. */
+  function shortShopName(full) {
+    const t = String(full || '').trim();
+    if (!t) return '';
+    const words = t.split(/\s+/);
+    return words.length <= 2 ? t : words.slice(0, 2).join(' ');
+  }
+  async function labelShop() {
+    const rec = await DB.get('settings', 'labelShopName');
+    if (rec && typeof rec.value === 'string') return rec.value;
+    const c = await DB.get('company', 1);
+    return shortShopName(c && c.name);
+  }
+  function saveLabelShop(name) {
+    return DB.put('settings', { key: 'labelShopName', value: String(name || '') });
+  }
+
+  /* سطر الأسعار.
+     الصنف العادي: سعر واحد.
+     الصنف اللي بيتباع بالوحدة وبالعبوة (سلك بالمتر وباللفة، مسامير
+     بالكيلو وبالعلبة): السعرين جنب بعض عشان الزبون يشوف الاتنين. */
+  function priceLine(it) {
+    const unitPrice = Number(it.price || 0);
+    const packPrice = Number(it.packPrice || 0);
+    const unit = String(it.unit || '').trim();
+    const packName = String(it.packName || '').trim();
+
+    if (packPrice > 0 && packName) {
+      return `<div class="lbl-prices">
+        <span class="lbl-p"><b>${unitPrice.toFixed(2)}</b> ال${Utils.escapeHtml(unit || 'وحدة')}</span>
+        <span class="lbl-sep"></span>
+        <span class="lbl-p"><b>${packPrice.toFixed(2)}</b> ال${Utils.escapeHtml(packName)}</span>
+      </div>`;
+    }
+    if (unitPrice > 0) {
+      return `<div class="lbl-prices"><span class="lbl-p one">
+        <b>${unitPrice.toFixed(2)}</b> ج.م${unit ? ' / ال' + Utils.escapeHtml(unit) : ''}
+      </span></div>`;
+    }
+    return '';
+  }
+
   /* الملصقات جاهزة للطباعة على رول الطابعة الحرارية.
      كل ملصق صفحة لوحده — الطابعة بتقف عند نهاية كل واحد. */
-  function labelSheet(items, size) {
+  function labelSheet(items, size, shop) {
     const s = size || DEFAULT_SIZE;
-    // الباركود بياخد حوالي نص طول الملصق، والباقي للاسم والسعر
-    const barH = Math.max(22, Math.round(s.h * 0.42 * 3.78));   // مم → بكسل
-    const mw = s.w <= 32 ? 1.0 : (s.w <= 45 ? 1.25 : 1.6);
+    // الباركود بياخد حوالي ثلث طول الملصق، والباقي للاسم والأسعار
+    const barH = Math.max(20, Math.round(s.h * 0.34 * 3.78));   // مم → بكسل
+    const mw = s.w <= 32 ? 0.95 : (s.w <= 45 ? 1.2 : 1.5);
+    const shopName = String(shop || '').trim();
 
     const cells = [];
     for (const it of items) {
@@ -97,12 +141,14 @@ const Barcode = (() => {
       let code = '';
       try { code = svg(it.barcode, { height: barH, moduleWidth: mw, showText: true }); }
       catch (e) { code = `<div class="lbl-err">الباركود فيه حروف عربية — غيّره لأرقام</div>`; }
+      const prices = priceLine(it);
       for (let i = 0; i < count; i++) {
         cells.push(`
           <div class="lbl">
+            ${shopName ? `<div class="lbl-shop">${Utils.escapeHtml(shopName)}</div>` : ''}
             <div class="lbl-name">${Utils.escapeHtml(it.name || '')}</div>
             <div class="lbl-code">${code}</div>
-            ${it.price ? `<div class="lbl-price">${Number(it.price).toFixed(2)} ج.م</div>` : ''}
+            ${prices}
           </div>`);
       }
     }
@@ -138,10 +184,16 @@ const Barcode = (() => {
           padding:${padV}mm ${padH}mm;
           display:flex; flex-direction:column;
           align-items:center; justify-content:center;
+          gap:${(s.h * 0.022).toFixed(2)}mm;
           page-break-after:always; break-after:page; overflow:hidden;
         }
         .lbl:last-child{ page-break-after:auto; break-after:auto; }
-        .lbl-code svg{ max-width:100%; max-height:${(s.h * 0.5).toFixed(1)}mm; }
+        .lbl-code svg{ max-width:100%; max-height:${(s.h * 0.42).toFixed(1)}mm; }
+        /* المقاسات بتتحسب من طول الملصق عشان لو غيّر الرول تفضل مظبوطة */
+        .lbl-shop{ font-size:${(s.h * 0.062).toFixed(1)}mm; }
+        .lbl-name{ font-size:${(s.h * 0.085).toFixed(1)}mm; }
+        .lbl-prices{ font-size:${(s.h * 0.078).toFixed(1)}mm; }
+        .lbl-prices .lbl-p b{ font-size:${(s.h * 0.098).toFixed(1)}mm; }
       }`;
   }
   function clearPageSize() { if (styleTag) styleTag.textContent = ''; }
@@ -150,8 +202,9 @@ const Barcode = (() => {
     const area = document.getElementById('printArea');
     if (!area) return;
     const s = await labelSize();
+    const shop = await labelShop();
     applyPageSize(s);
-    area.innerHTML = labelSheet(items, s);
+    area.innerHTML = labelSheet(items, s, shop);
     setTimeout(() => {
       window.print();
       // بنشيل القاعدة بعد الطباعة عشان الفواتير ترجع تطبع على ورقها
@@ -159,5 +212,6 @@ const Barcode = (() => {
     }, 200);
   }
 
-  return { svg, encode, labelSheet, printLabels, labelSize, saveLabelSize, DEFAULT_SIZE };
+  return { svg, encode, labelSheet, printLabels, labelSize, saveLabelSize,
+           labelShop, saveLabelShop, shortShopName, DEFAULT_SIZE };
 })();

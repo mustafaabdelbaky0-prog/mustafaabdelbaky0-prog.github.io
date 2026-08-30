@@ -203,6 +203,7 @@ Modules.purchases = (() => {
 
         <div class="form-actions">
           <button class="btn btn-ghost" id="clearInv">فاتورة جديدة</button>
+          <button class="btn btn-ghost" id="labelInv">🏷️ اطبع ملصقات البنود</button>
           ${editing ? `<button class="btn btn-danger" id="deleteInv">🗑️ امسح الفاتورة</button>` : ''}
           <button class="btn btn-amber" id="saveInv">${editing ? '💾 احفظ التعديل' : '💾 حفظ الفاتورة'}</button>
         </div>
@@ -308,6 +309,31 @@ Modules.purchases = (() => {
       render(container);
     });
     container.querySelector('#saveInv').addEventListener('click', () => doSave(container));
+
+    /* ملصقات بنود الفاتورة.
+       الأصناف اللي ليها باركود بالفعل (سواء باركود المصنع أو اللي
+       البرنامج ولّده قبل كده) بتتطبع على طول. الأصناف الجديدة لسه
+       ماخدتش باركود لحد ما الفاتورة تتحفظ — فبنقوله يحفظ الأول. */
+    container.querySelector('#labelInv').addEventListener('click', () => {
+      const ready = [], pending = [];
+      for (const r of filledRows()) {
+        const it = r.itemId ? AppState.items.find(i => i.id === r.itemId) : null;
+        if (it && (it.barcode || '').trim()) ready.push(it.id);
+        else pending.push((r.name || '').trim() || 'صنف من غير اسم');
+      }
+      if (!ready.length && !pending.length) {
+        Utils.toast('اكتب بنود الفاتورة الأول', 'error');
+        return;
+      }
+      if (!ready.length) {
+        Utils.toast('الأصناف دي جديدة ولسه ماخدتش باركود — احفظ الفاتورة الأول والبرنامج هيسألك يطبعلهم', 'info');
+        return;
+      }
+      if (pending.length) {
+        Utils.toast(`هيطبع ${ready.length} صنف. الجديد (${pending.join('، ')}) هياخد باركود بعد ما تحفظ`, 'info');
+      }
+      Modules.items.openBulkLabels(ready);
+    });
   }
 
   function onScan(container, code) {
@@ -753,6 +779,7 @@ Modules.purchases = (() => {
         </div>
         <div class="line-side">
           <div class="line-total">${Utils.formatMoney(p.total)}</div>
+          ${!p.voided ? '<button class="icon-btn label-btn" title="اطبع ملصقات أصناف الفاتورة">🏷️</button>' : ''}
           ${!p.voided ? '<button class="icon-btn edit-btn" title="تعديل الفاتورة">✏️</button>' : ''}
           ${!p.voided ? '<button class="icon-btn void-btn" title="مسح الفاتورة">🗑️</button>' : ''}
         </div>
@@ -760,6 +787,21 @@ Modules.purchases = (() => {
 
     box.querySelectorAll('.open-doc').forEach(el => el.addEventListener('click', (e) => {
       Views.showInvoice('purchases', Number(e.currentTarget.closest('.line-card').dataset.id));
+    }));
+
+    // إعادة طباعة ملصقات أصناف فاتورة قديمة
+    box.querySelectorAll('.label-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = Number(e.target.closest('.line-card').dataset.id);
+      const doc = await DB.get('purchases', id);
+      if (!doc) return;
+      const ids = [...new Set((doc.lines || []).map(l => l.itemId).filter(Boolean))]
+        .filter(iid => {
+          const it = AppState.items.find(x => x.id === iid);
+          return it && (it.barcode || '').trim();
+        });
+      if (!ids.length) { Utils.toast('مفيش أصناف عليها باركود في الفاتورة دي', 'error'); return; }
+      Modules.items.openBulkLabels(ids);
     }));
 
     box.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', async (e) => {

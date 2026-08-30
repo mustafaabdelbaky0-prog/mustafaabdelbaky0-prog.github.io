@@ -25,6 +25,7 @@ Modules.inventory = (() => {
         <div class="search-box" style="max-width:340px;">
           <input type="text" id="invSearch" placeholder="ابحث بالاسم أو الباركود...">
         </div>
+        <button class="btn btn-ghost" id="invLabelBtn">🏷️ طباعة ملصقات</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -51,11 +52,14 @@ Modules.inventory = (() => {
           ${Auth.isSeller() ? '' : `<td>${Utils.formatMoney(i.stock * i.costPrice)}</td>`}
           <td>
             ${Auth.isSeller() ? '' : '<button class="icon-btn adj-btn" title="تسوية جرد">⚖️</button>'}
+            <button class="icon-btn label-btn" title="اطبع ملصق باركود">🏷️</button>
             <button class="icon-btn hist-btn" title="سجل الحركة">📜</button>
           </td>
         </tr>`).join('');
     }
     draw(AppState.items);
+
+    container.querySelector('#invLabelBtn').addEventListener('click', () => Modules.items.openBulkLabels());
 
     container.querySelector('#invSearch').addEventListener('input', Utils.debounce((e) => {
       const q = e.target.value.trim().toLowerCase();
@@ -69,6 +73,10 @@ Modules.inventory = (() => {
       const item = AppState.items.find(i => i.id === Number(tr.dataset.id));
       if (e.target.classList.contains('adj-btn')) openAdjustModal(item, () => render(container));
       if (e.target.classList.contains('hist-btn')) openHistoryModal(item);
+      if (e.target.classList.contains('label-btn')) {
+        if (!(item.barcode || '').trim()) { Utils.toast('الصنف ده مالوش باركود', 'error'); return; }
+        Modules.items.openBulkLabels([item.id]);
+      }
     });
   }
 
