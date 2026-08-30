@@ -25,6 +25,16 @@ const Units = (() => {
     return LIST.some(u => u.name === (name || '').trim());
   }
 
+  /* العكس: من اسم العبوة نعرف الوحدة اللي جواها.
+     لفة ← متر، شيكارة ← كيلو. بيوفر خطوة: أول ما يكتب نوع العبوة
+     البرنامج يحط الوحدة الصح لوحده بدل ما يكتبها كل مرة. */
+  function baseUnitFor(packName) {
+    const p = (packName || '').trim();
+    if (!p) return '';
+    const hit = LIST.find(u => u.pack === p);
+    return hit ? hit.name : '';
+  }
+
   // الحاجات اللي بتتباع بالكيلو أو المتر لازم تقبل كسور (٢ ونص كيلو)
   function allowsDecimals(unitName) {
     return find(unitName).decimals;
@@ -52,6 +62,6 @@ const Units = (() => {
       .map(u => `<option value="${u}" ${u === selected ? 'selected' : ''}>${u}</option>`).join('');
   }
 
-  return { LIST, PACK_TYPES, find, allowsDecimals, step, packLabel, fmtQty,
+  return { LIST, PACK_TYPES, find, allowsDecimals, step, packLabel, fmtQty, baseUnitFor,
            optionsHtml, isBaseUnit };
 })();

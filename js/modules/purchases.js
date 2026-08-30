@@ -504,19 +504,30 @@ Modules.purchases = (() => {
         drawRows(container, id, looksLikePack ? 'packsize' : 'qty');
       });
 
+      /* "فيها كام": أول ما تكتب أول رقم السطر بيتحول لعبوة.
+
+         قبل كده كنا بنعيد رسم الجدول كله عند التحويل ده — والخانة
+         كانت بتتعمل من جديد واللي كتبته بيتظلّل، فالرقم اللي بعده
+         يمسح اللي قبله (تكتب 50 يطلع 0). دلوقتي بنحدّث السطر في
+         مكانه من غير ما نلمس الخانة اللي بيكتب فيها. */
       $('.f-packsize').addEventListener('input', (e) => {
         const wasPack = Number(r.packSize || 0) > 0;
         r.packSize = e.target.value;
         const nowPack = Number(r.packSize || 0) > 0;
-        // أول ما يكتب رقم، خانة الوحدة بتتفتح
-        if (wasPack !== nowPack) drawRows(container, id, 'packsize');
-        else refreshLine(container, tr, r);
+        if (wasPack !== nowPack) applyPackState(container, tr, r, id);
+        refreshLine(container, tr, r);
       });
       const un = $('.f-unit');
       if (un) {
-        un.addEventListener('input', (e) => { r.unit = e.target.value.trim() || 'قطعة'; refreshLine(container, tr, r); });
+        // أول ما يكتب الوحدة بنفسه، البرنامج يبطّل يحزرها
+        un.addEventListener('input', (e) => {
+          r.unit = e.target.value.trim() || 'قطعة';
+          r.unitTouched = true;
+          refreshLine(container, tr, r);
+        });
         un.addEventListener('change', (e) => {
           r.unit = e.target.value.trim() || 'قطعة';   // بنقرا من الخانة نفسها
+          r.unitTouched = true;
           refreshLine(container, tr, r);
         });
       }
@@ -535,6 +546,55 @@ Modules.purchases = (() => {
         drawRows(container, rows[idx + 1]._id, 'barcode');
       }));
     });
+  }
+
+  /* بيحوّل السطر بين "وحدة" و"عبوة" في مكانه — من غير ما يعيد رسم
+     الجدول، عشان الخانة اللي بيكتب فيها ما تتلمسش.
+     اللي بيتغيّر: خانة الوحدة جنب "فيها كام"، خطوة الكمية،
+     وخانة سعر بيع العبوة تحت سعر البيع. */
+  function applyPackState(container, tr, r, id) {
+    /* لما يتحوّل لعبوة أول مرة، بنحزر الوحدة من نوع العبوة:
+       لفة ← متر، شيكارة ← كيلو. بس لو الصنف جديد ولسه ما غيّرش
+       الوحدة بنفسه — عشان ما نلغيش اختياره. */
+    if (Number(r.packSize || 0) > 0 && !r.itemId && !r.unitTouched) {
+      const guess = Units.baseUnitFor(r.packType);
+      if (guess) r.unit = guess;
+    }
+    const c = calc(r);
+    const u = effUnit(r);
+
+    const unitEl = tr.querySelector('.f-unit');
+    if (unitEl) {
+      unitEl.value = c.pack ? (r.unit || 'قطعة') : '';
+      unitEl.placeholder = u;
+    }
+
+    const qtyEl = tr.querySelector('.f-qty');
+    if (qtyEl) qtyEl.step = c.pack ? '0.01' : Units.step(u);
+
+    const saleEl = tr.querySelector('.f-sale');
+    const saleCell = saleEl && saleEl.parentElement;
+    if (saleCell) {
+      saleEl.title = 'سعر بيع ال' + u + ' الواحد';
+      const old = saleCell.querySelector('.pack-sale');
+      if (c.pack && !old) {
+        saleCell.insertAdjacentHTML('beforeend', `
+          <div class="pack-sale">
+            <span class="pack-sale-lbl">سعر ال${Utils.escapeHtml(r.packType || 'عبوة')}</span>
+            <input type="number" class="cell f-packsale num" value="${r.packSalePrice}" min="0" step="0.01"
+                   inputmode="decimal" placeholder="اختياري"
+                   title="سعر بيع ال${Utils.escapeHtml(r.packType || 'عبوة')} كاملة لو الزبون خدها بحالها">
+          </div>`);
+        const ps = saleCell.querySelector('.f-packsale');
+        if (ps) ps.addEventListener('input', (ev) => {
+          r.packSalePrice = ev.target.value; refreshLine(container, tr, r);
+        });
+      } else if (!c.pack && old) {
+        old.remove();
+        const note = saleCell.querySelector('.pack-sale-note');
+        if (note) note.remove();
+      }
+    }
   }
 
   // تحديث الأرقام في السطر من غير ما نعيد رسم الجدول (عشان الكتابة متتقطعش)
