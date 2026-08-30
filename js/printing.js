@@ -21,6 +21,8 @@ const Printing = (() => {
   function go(html) {
     const area = document.getElementById('printArea');
     if (!area) return;
+    // الفاتورة بتطبع على ورق عادي — نشيل مقاس ملصق الباركود لو كان متحطوط
+    if (typeof Barcode !== 'undefined' && Barcode.clearPageSize) Barcode.clearPageSize();
     area.innerHTML = `<div class="receipt">${html}</div>`;
     setTimeout(() => window.print(), 150);
   }

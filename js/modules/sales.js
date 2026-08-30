@@ -778,6 +778,7 @@ Modules.sales = (() => {
   function printReceipt(sale, res, customerName) {
     const c = AppState.company || {};
     const printArea = document.getElementById('printArea');
+    if (typeof Barcode !== 'undefined' && Barcode.clearPageSize) Barcode.clearPageSize();
     printArea.innerHTML = `
       <div class="receipt">
         <h2>${Utils.escapeHtml(c.name || 'مؤسسة المصطفى للأدوات الكهربائية والحدايد')}</h2>

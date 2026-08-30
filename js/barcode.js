@@ -174,9 +174,15 @@ const Barcode = (() => {
            visibility:hidden) — لأن الشاشة بتفضل واخدة مساحتها في
            الصفحة، وعلى ورق ٢.٥ سم دي بتطلع صفحة زيادة فاضية. */
         .app-shell{ display:none !important; }
-        body{ margin:0 !important; padding:0 !important; }
+        /* الأهم: البرنامج مظبّط html و body على height:100% عشان
+           الشاشة، ودي بتخلي الورقة كلها بطول صفحة واحدة — فالملصقات
+           كانت بتتكوّم فوق بعض في صفحة واحدة بدل ما كل واحد يطلع
+           في ورقة. لازم نحرّر الطول وقت طباعة الملصقات. */
+        html, body{ height:auto !important; min-height:0 !important;
+                    overflow:visible !important;
+                    margin:0 !important; padding:0 !important; }
         .print-only{ position:static !important; padding:0 !important;
-                     width:auto !important; }
+                     width:auto !important; height:auto !important; }
         .lbl-sheet{ display:block; gap:0; }
         .lbl{
           width:${s.w}mm; height:${s.h}mm;
@@ -205,13 +211,15 @@ const Barcode = (() => {
     const shop = await labelShop();
     applyPageSize(s);
     area.innerHTML = labelSheet(items, s, shop);
-    setTimeout(() => {
-      window.print();
-      // بنشيل القاعدة بعد الطباعة عشان الفواتير ترجع تطبع على ورقها
-      setTimeout(clearPageSize, 800);
-    }, 200);
+    setTimeout(() => window.print(), 200);
+    /* مبنشيلش قاعدة المقاس بعد وقت معيّن.
+
+       مع الطباعة الصامتة (kiosk-printing) الأمر بيرجع فورًا والطباعة
+       بتتم في الخلفية — فلو شلنا القاعدة بعد شوية، كروم ممكن يكون
+       لسه بيجهّز الورق ويلاقي المقاس اتشال، فيطبع كل الملصقات على
+       صفحة واحدة. بنسيبها، والفواتير هي اللي بتشيلها قبل ما تطبع. */
   }
 
   return { svg, encode, labelSheet, printLabels, labelSize, saveLabelSize,
-           labelShop, saveLabelShop, shortShopName, DEFAULT_SIZE };
+           labelShop, saveLabelShop, shortShopName, clearPageSize, DEFAULT_SIZE };
 })();
