@@ -21,6 +21,22 @@ Modules.treasury = (() => {
   // الفلاتر بتفضل زي ما سيبتها وانت بتروح وترجع للشاشة
   let q = '', fromDate = '', toDate = '';
 
+  /* الحركات الملغاة والمعدّلة متخبية افتراضيًا.
+     لما تعدّل فاتورة، الخزنة بتسجّل ٣ سطور لنفس العملية: الأصلية،
+     وسطر بيرجّع فلوسها، والجديدة. السطور دي لازم تفضل في الدفتر
+     (دي فلوس، ومينفعش نمسح من دفتر مالي) — بس مش لازم تتشاف كل
+     مرة. الاختيار بيتحفظ فبيفضل زي ما سابه. */
+  const HIDE_KEY = 'hideVoidedMoves';
+  let hideVoided = true;
+  let prefsLoaded = false;
+
+  async function loadPrefs() {
+    if (prefsLoaded) return;
+    const rec = await DB.get('settings', HIDE_KEY);
+    if (rec && typeof rec.value === 'boolean') hideVoided = rec.value;
+    prefsLoaded = true;
+  }
+
   function matches(m, names) {
     if (fromDate && Utils.dateKey(m.date) < fromDate) return false;
     if (toDate && Utils.dateKey(m.date) > toDate) return false;
@@ -33,6 +49,7 @@ Modules.treasury = (() => {
   }
 
   async function render(container) {
+    await loadPrefs();
     const balance = await Services.getCashBalance();
     const all = await DB.getAll('treasury');
     all.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -53,7 +70,11 @@ Modules.treasury = (() => {
       linked.set(String(m.id), n);
     }
 
-    const shown = all.filter(m => matches(m, linked));
+    /* السطور اللي بتلغي بعضها (الأصلية + اللي رجّعت فلوسها) */
+    const voided = Services.reversedMoveIds(all);
+    const matched = all.filter(m => matches(m, linked));
+    const voidedCount = matched.filter(m => voided.has(Number(m.id))).length;
+    const shown = hideVoided ? matched.filter(m => !voided.has(Number(m.id))) : matched;
     const filtering = !!(q || fromDate || toDate);
     const shownIn = shown.filter(m => m.direction === 'in').reduce((s, m) => s + m.amount, 0);
     const shownOut = shown.filter(m => m.direction === 'out').reduce((s, m) => s + m.amount, 0);
@@ -98,6 +119,11 @@ Modules.treasury = (() => {
           </div>
           <button class="btn btn-ghost" id="trClear" ${filtering ? '' : 'disabled'}>امسح البحث</button>
         </div>
+        <label class="void-toggle">
+          <input type="checkbox" id="trShowVoid" ${hideVoided ? '' : 'checked'}>
+          <span>ورّيني الحركات الملغاة والمعدّلة</span>
+          ${voidedCount ? `<em class="void-count">${voidedCount} حركة</em>` : ''}
+        </label>
         ${filtering ? `
           <div class="notice notice-ok" style="margin:12px 0 0;line-height:1.9;">
             <strong>${shown.length}</strong> حركة طلعت في البحث ·
@@ -113,10 +139,15 @@ Modules.treasury = (() => {
             ${shown.length ? shown.map(m => {
               const manual = Services.isManualMove(m);
               const who = (m.name || '').trim() || linked.get(String(m.id)) || '';
+              // سطر ملغي: بيتعرض باهت ومشطوب عشان العين تعدّي عليه
+              const dead = voided.has(Number(m.id));
+              const tag = dead
+                ? `<span class="badge badge-void">${Services.isReversalMove(m) ? 'سطر الإلغاء' : 'ملغاة'}</span>`
+                : '';
               return `
-              <tr data-id="${m.id}">
+              <tr data-id="${m.id}"${dead ? ' class="tr-void"' : ''}>
                 <td>${Utils.formatDateTime(m.date)}</td>
-                <td><span class="badge badge-muted">${SOURCE_LABELS[m.source] || m.source}</span></td>
+                <td><span class="badge badge-muted">${SOURCE_LABELS[m.source] || m.source}</span>${tag}</td>
                 <td>${who ? Utils.escapeHtml(who) : '<span class="muted">—</span>'}</td>
                 <td>${Utils.escapeHtml(m.note || '—')}</td>
                 <td style="color:var(--success);font-weight:700;">${m.direction === 'in' ? Utils.formatMoney(m.amount) : ''}</td>
@@ -158,6 +189,11 @@ Modules.treasury = (() => {
     container.querySelector('#trTo').addEventListener('change', (e) => { toDate = e.target.value; render(container); });
     container.querySelector('#trClear').addEventListener('click', () => {
       q = ''; fromDate = ''; toDate = ''; render(container);
+    });
+    container.querySelector('#trShowVoid').addEventListener('change', async (e) => {
+      hideVoided = !e.target.checked;
+      await DB.put('settings', { key: HIDE_KEY, value: hideVoided });
+      render(container);
     });
 
     // ---------- تعديل / حذف ----------

@@ -162,6 +162,20 @@ tbody tr:hover{background:#FAFBFC;}
 .badge-warn{background:#FEF3E2;color:var(--amber-deep);}
 .badge-danger{background:var(--danger-bg);color:var(--danger);}
 .badge-muted{background:var(--steel-light);color:var(--ink-soft);}
+.badge-void{background:var(--danger-bg);color:var(--danger);margin-right:6px;}
+
+/* ---------- الحركات الملغاة في الخزنة ----------
+   سطر اتلغى أو اتعدّل: بيفضل مكتوب (دفتر مالي مبيتمسحش منه) بس
+   باهت ومشطوب عشان العين تعدّي عليه وتشوف السطر الشغال. */
+tr.tr-void > td{background:#FDF2F2;color:#B02B2B;opacity:.72;
+  text-decoration:line-through;text-decoration-color:rgba(176,43,43,.55);}
+tr.tr-void > td:last-child{text-decoration:none;}
+tr.tr-void .badge-void{text-decoration:none;opacity:1;}
+.void-toggle{display:flex;align-items:center;gap:8px;margin-top:12px;
+  font-size:12.5px;font-weight:700;color:var(--ink-soft);cursor:pointer;user-select:none;}
+.void-toggle input{width:16px;height:16px;cursor:pointer;margin:0;}
+.void-toggle .void-count{font-style:normal;font-weight:800;font-size:11px;
+  background:var(--danger-bg);color:var(--danger);border-radius:999px;padding:2px 9px;}
 
 /* ---------- Search live ---------- */
 .search-box{position:relative;}

@@ -13,7 +13,7 @@ const Services = (() => {
     return rec ? rec.value : 0;
   }
 
-  async function _writeTreasuryMove(t, { direction, amount, source, refId, note, date, name, kind }) {
+  async function _writeTreasuryMove(t, { direction, amount, source, refId, note, date, name, kind, reversal }) {
     amount = Math.round((Number(amount) || 0) * 100) / 100;
     if (amount <= 0) return null;
     const curBal = await _readBalance(t);
@@ -24,7 +24,9 @@ const Services = (() => {
     const id = await DB.reqToPromise(store.add({
       date: when, direction, amount, source,
       refId: refId ?? null, note: note || '', name: (name || '').trim(),
-      kind: kind || null, balanceAfter: newBal
+      kind: kind || null, balanceAfter: newBal,
+      // الحركة دي بترجّع فلوس حركة قبلها (إلغاء أو تعديل مستند)
+      reversal: reversal ? true : undefined
     }));
 
     /* لو الحركة اتسجلت بتاريخ قديم (مثلاً مصروف صرفته امبارح وكتبته
@@ -169,7 +171,8 @@ const Services = (() => {
         }));
       }
       if (sale.paidNow > 0) {
-        await _writeTreasuryMove(t, { direction: 'out', amount: sale.paidNow, source: 'sale', refId: saleId, note: `إلغاء فاتورة بيع ${sale.number}` });
+        await _writeTreasuryMove(t, { direction: 'out', amount: sale.paidNow, source: 'sale', refId: saleId,
+          reversal: true, note: `إلغاء فاتورة بيع ${sale.number}` });
       }
       if (sale.dueAmount > 0 && sale.customerId) {
         await _bumpPartyBalance(t, 'customers', sale.customerId, -sale.dueAmount);
@@ -214,7 +217,7 @@ const Services = (() => {
       }
       if (old.paidNow > 0) {
         await _writeTreasuryMove(t, { direction: 'out', amount: old.paidNow, source: 'sale',
-          refId: saleId, note: `تعديل فاتورة بيع ${old.number}` });
+          refId: saleId, reversal: true, note: `تعديل فاتورة بيع ${old.number}` });
       }
       if (old.dueAmount > 0 && old.customerId) {
         await _bumpPartyBalance(t, 'customers', old.customerId, -old.dueAmount);
@@ -290,7 +293,7 @@ const Services = (() => {
       }
       if (old.paidNow > 0) {
         await _writeTreasuryMove(t, { direction: 'in', amount: old.paidNow, source: 'purchase',
-          refId: purchaseId, note: `تعديل فاتورة شراء ${old.number}` });
+          refId: purchaseId, reversal: true, note: `تعديل فاتورة شراء ${old.number}` });
       }
       if (old.dueAmount > 0 && old.supplierId) {
         await _bumpPartyBalance(t, 'suppliers', old.supplierId, -old.dueAmount);
@@ -487,7 +490,8 @@ const Services = (() => {
         }));
       }
       if (purchase.paidNow > 0) {
-        await _writeTreasuryMove(t, { direction: 'in', amount: purchase.paidNow, source: 'purchase', refId: purchaseId, note: `إلغاء فاتورة شراء ${purchase.number}` });
+        await _writeTreasuryMove(t, { direction: 'in', amount: purchase.paidNow, source: 'purchase', refId: purchaseId,
+          reversal: true, note: `إلغاء فاتورة شراء ${purchase.number}` });
       }
       if (purchase.dueAmount > 0 && purchase.supplierId) {
         await _bumpPartyBalance(t, 'suppliers', purchase.supplierId, -purchase.dueAmount);
@@ -829,7 +833,8 @@ const Services = (() => {
       if (exp.source === 'depreciation') {
         throw new Error('ده إهلاك أصول ثابتة — امسحه من شاشة الأصول الثابتة');
       }
-      await _writeTreasuryMove(t, { direction: 'in', amount: exp.amount, source: 'expense', refId: expenseId, note: 'إلغاء مصروف: ' + exp.category });
+      await _writeTreasuryMove(t, { direction: 'in', amount: exp.amount, source: 'expense', refId: expenseId,
+        reversal: true, note: 'إلغاء مصروف: ' + exp.category });
       await DB.reqToPromise(store.delete(expenseId));
       return true;
     });
@@ -860,6 +865,55 @@ const Services = (() => {
 
   function isManualMove(m) {
     return !!m && MANUAL_SOURCES.includes(m.source);
+  }
+
+  /* ---------- الحركات اللي اتلغت أو اتعدلت ----------
+
+     لما تعدّل فاتورة، الخزنة بتسجّل ٣ سطور: الفاتورة الأصلية، وسطر
+     بيرجّع فلوسها، وسطر الفاتورة الجديدة. ولما تلغي فاتورة بيبقى
+     سطرين. ده لازم يفضل كده — دي فلوس، والدفتر المالي مبيتمسحش منه
+     أبدًا وإلا الأرقام تبوظ ومتعرفش بعدين اللي حصل إيه.
+
+     بس صاحب المحل مش محتاج يشوف ٣ سطور لعملية واحدة. الدالة دي
+     بتطلّع أرقام السطور اللي بتلغي بعضها عشان الشاشة تخبّيهم أو
+     تعرضهم بلون الملغي.
+
+     بتشتغل بحاجتين: العلامة اللي البرنامج بيكتبها دلوقتي (reversal)،
+     وكمان بيان الحركة نفسه — عشان الحركات القديمة اللي اتسجلت قبل
+     ما نضيف العلامة تتحسب صح هي كمان. */
+  const REVERSAL_NOTE = /^\s*(إلغاء|الغاء|تعديل)\s/;
+
+  function isReversalMove(m) {
+    if (!m) return false;
+    if (m.reversal === true) return true;
+    return REVERSAL_NOTE.test(String(m.note || ''));
+  }
+
+  function reversedMoveIds(rows) {
+    const sorted = (rows || []).slice().sort((a, b) => Number(a.id) - Number(b.id));
+    const paired = new Set();   // أصل اتربط بحركة إلغاء خلاص
+    const out = new Set();
+
+    for (const rev of sorted) {
+      if (!isReversalMove(rev)) continue;
+      /* بندوّر على الأصل: نفس المستند، عكس الاتجاه، نفس المبلغ،
+         ومتسجّل قبلها. لو اتعدلت أكتر من مرة بناخد الأقرب ليها. */
+      let orig = null;
+      for (const o of sorted) {
+        if (Number(o.id) >= Number(rev.id)) break;
+        if (paired.has(Number(o.id))) continue;
+        if (isReversalMove(o)) continue;
+        if (String(o.refId ?? '') !== String(rev.refId ?? '')) continue;
+        if (o.direction === rev.direction) continue;
+        if (Math.abs(Number(o.amount || 0) - Number(rev.amount || 0)) > 0.005) continue;
+        orig = o;
+      }
+      if (!orig) continue;
+      paired.add(Number(orig.id));
+      out.add(Number(orig.id));
+      out.add(Number(rev.id));
+    }
+    return out;
   }
 
   async function _restack(t) {
@@ -1113,7 +1167,8 @@ const Services = (() => {
       // اللي طلع فلوس من الخزنة لازم يرجعلها
       if (m.type === 'advance' || m.type === 'payment') {
         await _writeTreasuryMove(t, { direction: 'in', amount: m.amount, source: 'adjust',
-          refId: m.employeeId, note: 'إلغاء ' + (m.type === 'advance' ? 'سلفة' : 'صرف') + ' — ' + (emp ? emp.name : '') });
+          refId: m.employeeId, reversal: true,
+          note: 'إلغاء ' + (m.type === 'advance' ? 'سلفة' : 'صرف') + ' — ' + (emp ? emp.name : '') });
       }
       m.voided = true;
       await DB.reqToPromise(store.put(m));
@@ -1456,7 +1511,8 @@ const Services = (() => {
     saveExpense, deleteExpense, manualTreasuryMove,
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
     closeDay, daySummary,
-    isManualMove, updateTreasuryMove, deleteTreasuryMove,
+    isManualMove, isReversalMove, reversedMoveIds,
+    updateTreasuryMove, deleteTreasuryMove,
     employeeAdvance, payEmployee, employeeAdjust, employeeSales,
     closePayrollMonth, voidPayrollClosing, voidEmployeeMove, monthRange,
     monthlyDepreciation, accumulatedDepreciation, depreciationPlan,
