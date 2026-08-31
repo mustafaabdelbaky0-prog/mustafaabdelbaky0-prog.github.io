@@ -331,7 +331,10 @@ Modules.employees = (() => {
                 ${rows.map(r => `
                   <tr>
                     <td class="strong">${Utils.escapeHtml(r.e.name)}</td>
-                    <td>${r.rate > 0 ? Utils.formatMoney(r.sold.total) + `<div class="unit-cost-sub">${r.sold.count} فاتورة</div>` : '<span class="muted">—</span>'}</td>
+                    <td>${r.rate > 0 ? Utils.formatMoney(r.sold.total) +
+                      `<div class="unit-cost-sub">${r.sold.count} فاتورة${
+                        r.sold.returned > 0.005 ? ' · بعد خصم مرتجع ' + Utils.formatMoney(r.sold.returned) : ''}</div>`
+                      : '<span class="muted">—</span>'}</td>
                     <td>${Utils.formatMoney(r.salary)}</td>
                     <td>${r.commission > 0 ? Utils.formatMoney(r.commission) + `<div class="unit-cost-sub">${r.rate}%</div>` : '<span class="muted">—</span>'}</td>
                     <td class="strong">${Utils.formatMoney(r.total)}</td>

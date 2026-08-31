@@ -154,28 +154,79 @@ const Services = (() => {
   }
 
   async function voidSale(saleId) {
-    return DB.tx(['items', 'stockMovements', 'sales', 'treasury', 'settings', 'customers'], 'readwrite', async (t) => {
+    return DB.tx(['items', 'stockMovements', 'sales', 'treasury', 'settings', 'customers', 'returns'], 'readwrite', async (t) => {
       const salesStore = t.objectStore('sales');
       const sale = await DB.reqToPromise(salesStore.get(saleId));
       if (!sale || sale.voided) return false;
       const itemsStore = t.objectStore('items');
-      for (const line of sale.lines) {
-        const item = await DB.reqToPromise(itemsStore.get(line.itemId));
-        if (item) {
-          item.stock = Math.round(((item.stock || 0) + line.qty) * 1000) / 1000;
-          await DB.reqToPromise(itemsStore.put(item));
+
+      /* لو فيه مرتجع من نفس العميل بعد الفاتورة دي وما اتربطش بيها،
+         مينفعش نلغي — لأننا مش عارفين المرتجع ده منها ولا من فاتورة
+         تانية، ولو رجّعنا الكمية كاملة البضاعة والفلوس هيرجعوا مرتين.
+         بنقوله يمسح المرتجع الأول. */
+      const rets = await DB.reqToPromise(t.objectStore('returns').getAll());
+      const saleDay = new Date(sale.date).getTime();
+      const itemIds = new Set((sale.lines || []).map(l => Number(l.itemId)));
+      const risky = [];
+      for (const r of rets) {
+        if (r.voided || r.kind !== 'customer') continue;
+        if (Number(r.partyId || 0) !== Number(sale.customerId || 0)) continue;
+        if (new Date(r.date).getTime() + 86400000 < saleDay) continue;
+        for (const l of (r.lines || [])) {
+          if (l.saleId) continue;                     // مربوط بفاتورة — مفيش لبس
+          if (!itemIds.has(Number(l.itemId))) continue;
+          risky.push(`${l.name} (مرتجع ${r.number})`);
         }
-        await DB.reqToPromise(t.objectStore('stockMovements').add({
-          itemId: line.itemId, type: 'return_in', qty: Math.abs(line.qty),
-          unitCost: line.cost || 0, date: Utils.nowISO(), refType: 'sale-void', refId: saleId, note: 'إلغاء فاتورة بيع ' + sale.number
-        }));
       }
-      if (sale.paidNow > 0) {
-        await _writeTreasuryMove(t, { direction: 'out', amount: sale.paidNow, source: 'sale', refId: saleId,
+      if (risky.length) {
+        throw new Error('مينفعش تلغي الفاتورة دي — فيه مرتجع من نفس العميل على نفس الأصناف:\n• ' +
+          risky.join('\n• ') +
+          '\n\nامسح المرتجع الأول من شاشة المرتجعات، وبعدين الغِ الفاتورة.');
+      }
+
+      for (const line of sale.lines) {
+        /* بنرجّع اللي لسه مع العميل بس. لو رجّع منها ٣ قبل كده،
+           الـ٣ دول رجعوا المخزن خلاص ومش هيرجعوا تاني. */
+        const back = Math.round((Number(line.qty || 0) - Number(line.returnedQty || 0)) * 1000) / 1000;
+        if (back > 0) {
+          const item = await DB.reqToPromise(itemsStore.get(line.itemId));
+          if (item) {
+            item.stock = Math.round(((item.stock || 0) + back) * 1000) / 1000;
+            await DB.reqToPromise(itemsStore.put(item));
+          }
+          await DB.reqToPromise(t.objectStore('stockMovements').add({
+            itemId: line.itemId, type: 'return_in', qty: Math.abs(back),
+            unitCost: line.cost || 0, date: Utils.nowISO(), refType: 'sale-void', refId: saleId, note: 'إلغاء فاتورة بيع ' + sale.number
+          }));
+        }
+      }
+
+      /* الفلوس: لازم نفرّق بين المرتجع اللي رجّعناه كاش واللي نزّلناه
+         من حساب العميل — الاتنين بيتعاملوا مختلف:
+           • كاش   → الفلوس طلعت من الدرج خلاص، مترجعهاش تاني
+           • حساب  → نزّلت من اللي عليه خلاص، متنزّلهاش تاني */
+      let backFromCash = 0, backFromAccount = 0;
+      for (const r of rets) {
+        if (r.voided || r.kind !== 'customer') continue;
+        const onAccount = !!(r.partyId && r.settle === 'account');
+        for (const l of (r.lines || [])) {
+          if (Number(l.saleId || 0) !== Number(saleId)) continue;
+          if (l.mode === 'swap') continue;
+          const amt = Number(l.qty || 0) * Number(l.price || 0);
+          if (onAccount) backFromAccount += amt; else backFromCash += amt;
+        }
+      }
+      backFromCash = Math.round(backFromCash * 100) / 100;
+      backFromAccount = Math.round(backFromAccount * 100) / 100;
+
+      const backCash = Math.round(Math.max(0, Number(sale.paidNow || 0) - backFromCash) * 100) / 100;
+      if (backCash > 0) {
+        await _writeTreasuryMove(t, { direction: 'out', amount: backCash, source: 'sale', refId: saleId,
           reversal: true, note: `إلغاء فاتورة بيع ${sale.number}` });
       }
-      if (sale.dueAmount > 0 && sale.customerId) {
-        await _bumpPartyBalance(t, 'customers', sale.customerId, -sale.dueAmount);
+      const backDue = Math.round(Math.max(0, Number(sale.dueAmount || 0) - backFromAccount) * 100) / 100;
+      if (backDue > 0 && sale.customerId) {
+        await _bumpPartyBalance(t, 'customers', sale.customerId, -backDue);
       }
       sale.voided = true;
       await DB.reqToPromise(salesStore.put(sale));
@@ -594,7 +645,7 @@ const Services = (() => {
      زي إلغاء الفاتورة بالظبط — بنضيف حركات عكسية مش بنمسح القديمة،
      عشان الدمج بين الأجهزة يفضل سليم ويفضل عندك سجل. */
   async function voidReturn(returnId) {
-    return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers'], 'readwrite', async (t) => {
+    return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers', 'sales'], 'readwrite', async (t) => {
       const store = t.objectStore('returns');
       const doc = await DB.reqToPromise(store.get(returnId));
       if (!doc) throw new Error('المرتجع مش موجود');
@@ -680,6 +731,18 @@ const Services = (() => {
         }
       }
 
+      /* لو المرتجع كان مربوط بفاتورة، لازم نفك الربط —
+         وإلا الفاتورة تفضل فاكرة إن فيها كمية مترجعة وهي مرجعتش */
+      for (const l of (doc.lines || [])) {
+        if (!l.saleId) continue;
+        const s = await DB.reqToPromise(t.objectStore('sales').get(l.saleId));
+        if (!s || !s.lines || !s.lines[l.saleLineIndex]) continue;
+        const sl = s.lines[l.saleLineIndex];
+        sl.returnedQty = Math.max(0, Math.round(
+          ((Number(sl.returnedQty || 0)) - Number(l.qty || 0)) * 1000) / 1000);
+        await DB.reqToPromise(t.objectStore('sales').put(s));
+      }
+
       doc.voided = true;
       doc.voidedAt = now;
       await DB.reqToPromise(store.put(doc));
@@ -687,8 +750,55 @@ const Services = (() => {
     });
   }
 
+  /* ---------- ربط المرتجع بالفاتورة اللي جه منها ----------
+
+     شاشة المرتجعات مش بتسأل عن رقم الفاتورة — العميل بيجي بالقطعة
+     في إيده والبياع بيكتبها وخلاص، وده الصح في محل عدة.
+
+     بس البرنامج محتاج يعرف المرتجع ده من أنهي فاتورة، عشان:
+       • لو لغيت الفاتورة بعد كده، البضاعة والفلوس ما يرجعوش مرتين
+       • جدول ربح الأصناف يخصم المرتجع
+       • عمولة البائع تتحسب على المبيع الصافي
+
+     فبيدوّر لوحده: آخر فاتورة لنفس العميل فيها الصنف ده ولسه
+     فيها كمية مترجعتش. لو ملقاش (عميل كاش مثلاً) بيسيبه من غير
+     ربط زي ما كان — مفيش حاجة بتتكسر. */
+  const LINK_WINDOW_DAYS = 120;
+
+  async function _linkReturnToSale(t, itemId, qty, partyId, dateISO) {
+    const sales = await DB.reqToPromise(t.objectStore('sales').getAll());
+    const when = new Date(dateISO || Utils.nowISO()).getTime();
+    const oldestOk = when - LINK_WINDOW_DAYS * 86400000;
+    let best = null, bestLine = -1;
+    for (const s of sales) {
+      if (s.voided) continue;
+      /* لو العميل معروف بندوّر في فواتيره هو. ولو المرتجع كاش
+         (زبون عدّى وراح) بندوّر في فواتير الكاش — أغلب البيع في
+         المحل كاش، ولو ما ربطناهاش العمولة والأرباح تطلع غلط. */
+      if (partyId) { if (Number(s.customerId) !== Number(partyId)) continue; }
+      else { if (s.customerId) continue; }
+      const sd = new Date(s.date).getTime();
+      if (sd > when + 86400000) continue;   // فاتورة بعد المرتجع
+      if (sd < oldestOk) continue;          // أقدم من اللازم
+      const lines = s.lines || [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (Number(l.itemId) !== Number(itemId)) continue;
+        const left = Math.round((Number(l.qty || 0) - Number(l.returnedQty || 0)) * 1000) / 1000;
+        if (left + 0.0001 < qty) continue;
+        // بناخد الأحدث — الأقرب للمرتجع
+        if (!best || new Date(s.date).getTime() > new Date(best.date).getTime()) { best = s; bestLine = i; }
+      }
+    }
+    if (!best) return null;
+    const line = best.lines[bestLine];
+    line.returnedQty = Math.round(((Number(line.returnedQty || 0)) + qty) * 1000) / 1000;
+    await DB.reqToPromise(t.objectStore('sales').put(best));
+    return { saleId: best.id, saleNumber: best.number, lineIndex: bestLine, sellerId: best.sellerId || null };
+  }
+
   async function saveReturn(doc) {
-    return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers'], 'readwrite', async (t) => {
+    return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers', 'sales'], 'readwrite', async (t) => {
       const itemsStore = t.objectStore('items');
       const movStore = t.objectStore('stockMovements');
       const isCustomer = doc.kind === 'customer';
@@ -763,8 +873,25 @@ const Services = (() => {
         }
 
         await DB.reqToPromise(itemsStore.put(item));
+
+        /* بنثبّت التكلفة وقت المرتجع. من غير كده التقارير كانت
+           بتحسب تكلفة المرتجع بسعر النهاردة، فلو اشترى بضاعة بسعر
+           جديد كان ربح الشهور اللي فاتت بيتغيّر لوحده. */
+        const costNow = Math.round(Number(item.costPrice || 0) * 100) / 100;
+
+        // بنحاول نربطه بالفاتورة (للعملاء بس — المورد ملوش فاتورة بيع)
+        let link = null;
+        if (isCustomer && !swap) {
+          link = await _linkReturnToSale(t, item.id, qty, doc.partyId, doc.date);
+        }
+
         lines.push({
           itemId: item.id, name: item.name, unit: item.unit, qty, price,
+          cost: costNow,
+          saleId: link ? link.saleId : null,
+          saleNumber: link ? link.saleNumber : null,
+          saleLineIndex: link ? link.lineIndex : null,
+          sellerId: link ? link.sellerId : null,
           condition: l.condition, mode: l.mode, reason: l.reason || '',
           partyId: l.partyId || null,
           // لو رجّع لفة كاملة بنفتكرها بشكلها ده كمان (الكمية فوق بالمتر)
@@ -1047,21 +1174,35 @@ const Services = (() => {
   /* مبيعات الموظف في فترة — أساس العمولة.
      بنطرح المرتجعات المربوطة بفواتيره عشان ماياخدش عمولة على بضاعة رجعت. */
   async function employeeSales(employeeId, fromISO, toISO) {
-    const sales = await DB.getAll('sales');
+    const [sales, returns] = await Promise.all([DB.getAll('sales'), DB.getAll('returns')]);
     const from = new Date(fromISO), to = new Date(toISO);
     let total = 0, count = 0;
+    const mine = new Set();
     for (const s of sales) {
       if (s.voided) continue;
       if (Number(s.sellerId || 0) !== Number(employeeId)) continue;
       const d = new Date(s.date);
       if (d < from || d > to) continue;
-      /* s.total بيكون منزّل منه المرتجع الجزئي أصلاً (returnSaleItems
-         بتنقّص الإجمالي)، فلو طرحناه تاني كنا هنخصم مرتين والعمولة
-         تطلع أقل من حقه. */
       total += Number(s.total || 0);
+      mine.add(Number(s.id));
       count++;
     }
-    return { total: Math.round(total * 100) / 100, count };
+
+    /* المرتجعات لازم تتخصم من المبيع قبل حساب العمولة — وإلا البائع
+       بياخد عمولة على بضاعة العميل رجّعها. بنخصم المرتجع المربوط
+       بفواتير البائع نفسه بس. */
+    let returned = 0;
+    for (const r of returns) {
+      if (r.voided || r.kind !== 'customer') continue;
+      for (const l of (r.lines || [])) {
+        if (l.mode === 'swap') continue;
+        if (!mine.has(Number(l.saleId || 0))) continue;
+        returned += Number(l.qty || 0) * Number(l.price || 0);
+      }
+    }
+    returned = Math.round(returned * 100) / 100;
+    const net = Math.max(0, Math.round((total - returned) * 100) / 100);
+    return { total: net, gross: Math.round(total * 100) / 100, returned, count };
   }
 
   // حدود الشهر (مثال: '2026-08' → من ١ أغسطس لآخر لحظة في ٣١ أغسطس)
@@ -1274,7 +1415,13 @@ const Services = (() => {
       }
 
       const expected = await _readBalance(t);
-      const cash = Math.round((Number(counted) || 0) * 100) / 100;
+      /* لازم رقم حقيقي. لو جه فاضي وحسبناه صفر، البرنامج هيسجّل
+         سحب بكل اللي في الدرج ويفضّي الخزنة — الشاشة بتمنع ده، بس
+         دي فلوس فمينفعش نعتمد على الشاشة وحدها. */
+      if (counted === null || counted === undefined || counted === '' || !isFinite(Number(counted))) {
+        throw new Error('اكتب اللي عديته في الدرج — من غيره مينفعش نقفل اليومية');
+      }
+      const cash = Math.round(Number(counted) * 100) / 100;
       const diff = Math.round((cash - expected) * 100) / 100;
 
       let moveId = null;
@@ -1365,7 +1512,10 @@ const Services = (() => {
       const itemsStore = t.objectStore('items');
       const item = await DB.reqToPromise(itemsStore.get(itemId));
       if (!item) return false;
-      const diff = Math.round((newQty - (item.stock || 0)) * 100) / 100;
+      /* بنقرّب على ٣ خانات زي باقي البرنامج. كان بيقرّب على خانتين
+         بس، فالجرد بكمية زي ٩٧.١٢٥ متر كان بيسيب فرق بين المخزون
+         المسجّل والمحسوب من الحركات. */
+      const diff = Math.round((newQty - (item.stock || 0)) * 1000) / 1000;
       item.stock = newQty;
       await DB.reqToPromise(itemsStore.put(item));
       if (diff !== 0) {
@@ -1419,8 +1569,17 @@ const Services = (() => {
     const employeeDues = Math.round(employees.reduce((s, e) =>
       s + Math.max(0, Number(e.balance || 0)), 0) * 100) / 100;
 
-    const totalAssets = Math.round((cash + inventory + receivable + assetsNet) * 100) / 100;
-    const totalLiabilities = Math.round((payable + employeeDues) * 100) / 100;
+    /* العميل اللي دفع أكتر من اللي عليه: الزيادة دي **مش ربح** —
+       دي أمانة عندك لازم ترجّعها أو تخصمها من مشترياته الجاية.
+       وكذلك اللي دفعناه للمورد زيادة هو حقنا عنده (أصل).
+       من غير السطرين دول الفلوس دي كانت بتتحسب أرباح محتجزة. */
+    const customerCredit = Math.round(customers.reduce((s, c) =>
+      s + Math.max(0, -Number(c.balance || 0)), 0) * 100) / 100;
+    const supplierPrepaid = Math.round(suppliers.reduce((s, x) =>
+      s + Math.max(0, -Number(x.balance || 0)), 0) * 100) / 100;
+
+    const totalAssets = Math.round((cash + inventory + receivable + assetsNet + supplierPrepaid) * 100) / 100;
+    const totalLiabilities = Math.round((payable + employeeDues + customerCredit) * 100) / 100;
     const equity = Math.round((totalAssets - totalLiabilities) * 100) / 100;
 
     // رأس المال اللي دخل من جيبه، والمسحوبات الشخصية
@@ -1435,8 +1594,9 @@ const Services = (() => {
     const retained = Math.round((equity - capital + drawings) * 100) / 100;
 
     return {
-      cash, inventory, receivable, assetsCost, accumDep, assetsNet, totalAssets,
-      payable, employeeDues, totalLiabilities,
+      cash, inventory, receivable, assetsCost, accumDep, assetsNet,
+      supplierPrepaid, totalAssets,
+      payable, employeeDues, customerCredit, totalLiabilities,
       equity, capital, drawings, retained
     };
   }
@@ -1451,13 +1611,24 @@ const Services = (() => {
     for (const c of customers) {
       const bal = Number(c.balance || 0);
       if (bal <= 0.005) continue;
-      // بنقرّب عمر الدين من أقدم فاتورة آجل لسه مش مسدّدة
-      let oldest = null;
-      for (const s of sales) {
-        if (s.voided || Number(s.customerId) !== Number(c.id)) continue;
-        if (Number(s.dueAmount || 0) <= 0) continue;
-        const d = new Date(s.date).getTime();
-        if (oldest === null || d < oldest) oldest = d;
+      /* عمر الدين: الفلوس اللي بيدفعها العميل بتسدّد الأقدم الأول
+         (ده العُرف المحاسبي وده اللي بيحصل في الواقع).
+
+         فبنجمع فواتيره الآجلة من الأحدث للأقدم لغاية ما نغطي
+         الرصيد اللي عليه دلوقتي — آخر فاتورة نوصلها هي أقدم
+         فاتورة لسه مش مدفوعة، ومنها بنحسب العمر.
+
+         الطريقة القديمة كانت بتاخد أقدم فاتورة آجل على الإطلاق حتى
+         لو سددها من زمان، فكان البرنامج بيقول على عميل منتظم إنه
+         متأخر ٩٥ يوم وهو دينه من امبارح. */
+      const credit = sales
+        .filter(s => !s.voided && Number(s.customerId) === Number(c.id) && Number(s.dueAmount || 0) > 0)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));   // الأحدث الأول
+      let covered = 0, oldest = null;
+      for (const s of credit) {
+        oldest = new Date(s.date).getTime();
+        covered += Number(s.dueAmount || 0);
+        if (covered >= bal - 0.005) break;
       }
       const days = oldest === null ? 0 : Math.floor((now - oldest) / DAY);
       const bucket = days > 90 ? 'over90' : days > 60 ? 'd61_90' : days > 30 ? 'd31_60' : 'd0_30';

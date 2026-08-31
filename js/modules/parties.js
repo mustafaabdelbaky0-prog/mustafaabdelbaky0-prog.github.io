@@ -155,7 +155,8 @@ Modules.parties = (() => {
           <p class="muted" style="font-size:13px;">الرصيد الحالي: <strong>${Utils.formatMoney(party.balance)}</strong></p>
           <div class="field">
             <label>المبلغ</label>
-            <input type="number" id="settleAmount" min="0.01" max="${party.balance}" step="0.01" value="${party.balance}" autofocus>
+            <input type="number" id="settleAmount" min="0.01" step="0.01" value="${party.balance}" autofocus>
+            <span class="hint">لو ${isCust ? 'دفعلك' : 'دفعت'} أكتر من الرصيد، الزيادة هتتسجّل ${isCust ? 'أمانة عندك' : 'مقدّم عند المورد'}</span>
           </div>
           <div class="form-actions">
             <button type="submit" class="btn btn-amber">${isCust ? 'تسجيل التحصيل' : 'تسجيل السداد'}</button>
@@ -165,7 +166,19 @@ Modules.parties = (() => {
         body.querySelector('#settleForm').addEventListener('submit', async (e) => {
           e.preventDefault();
           const amount = Number(body.querySelector('#settleAmount').value || 0);
-          if (amount <= 0 || amount > party.balance) { Utils.toast('مبلغ غير صحيح', 'error'); return; }
+          if (amount <= 0) { Utils.toast('اكتب مبلغ صحيح', 'error'); return; }
+          /* الزيادة عن الرصيد مسموحة — بتحصل كتير في المحل — بس
+             لازم يعرف إنها أمانة مش إيراد، عشان ميحسبهاش ربح */
+          const extra = Math.round((amount - Number(party.balance || 0)) * 100) / 100;
+          if (extra > 0.005) {
+            const ok = await Utils.confirmDialog(
+              `الرصيد ${Utils.formatMoney(party.balance)} والمبلغ ${Utils.formatMoney(amount)}.\n\n` +
+              `الزيادة ${Utils.formatMoney(extra)} هتتسجّل ` +
+              (isCust ? 'أمانة عندك للعميل — تخصمها من مشترياته الجاية أو ترجّعهاله.'
+                      : 'مقدّم عند المورد — يتخصم من فواتيرك الجاية.') +
+              `\n\nنكمّل؟`);
+            if (!ok) return;
+          }
           if (isCust) await Services.collectFromCustomer(party.id, amount, 'تحصيل من ' + party.name);
           else await Services.payToSupplier(party.id, amount, 'سداد لـ ' + party.name);
           await AppState.reloadParties();

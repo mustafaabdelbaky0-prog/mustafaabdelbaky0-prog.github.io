@@ -97,9 +97,18 @@ const Merge = (() => {
           }
         }
         for (const r of returns) {
-          if (!r.voided && r.partyId === p.id && r.kind === (isCust ? 'customer' : 'supplier') && r.settle === 'account') {
-            calc -= Number(r.total || 0);
+          if (r.voided || r.partyId !== p.id) continue;
+          if (r.kind !== (isCust ? 'customer' : 'supplier') || r.settle !== 'account') continue;
+          /* لو الفاتورة اللي جه منها المرتجع اتلغت، دينها اتشال من
+             الحساب فوق أصلاً — فمينفعش نطرح المرتجع كمان، وإلا رصيد
+             العميل يطلع بالسالب وهو مش دافع حاجة زيادة. */
+          let amt = Number(r.total || 0);
+          for (const l of (r.lines || [])) {
+            if (!l.saleId) continue;
+            const src = sales.find(s => Number(s.id) === Number(l.saleId));
+            if (src && src.voided) amt -= Number(l.qty || 0) * Number(l.price || 0);
           }
+          calc -= Math.max(0, money(amt));
         }
         for (const t of treasury) {
           if (t.refId === p.id && t.source === (isCust ? 'collect' : 'pay')) calc -= Number(t.amount || 0);

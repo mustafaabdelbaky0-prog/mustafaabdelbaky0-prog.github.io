@@ -108,6 +108,7 @@ Modules.finance = (() => {
             <tr><td>فلوس في الخزنة</td><td>${Utils.formatMoney(pos.cash)}</td></tr>
             <tr><td>بضاعة في المخزن (بالتكلفة)</td><td>${Utils.formatMoney(pos.inventory)}</td></tr>
             <tr><td>فلوس عند العملاء</td><td>${Utils.formatMoney(pos.receivable)}</td></tr>
+            ${pos.supplierPrepaid > 0.005 ? `<tr><td>مقدّم عند الموردين</td><td>${Utils.formatMoney(pos.supplierPrepaid)}</td></tr>` : ''}
             <tr><td>عدد وأجهزة (بعد الإهلاك)</td><td>${Utils.formatMoney(pos.assetsNet)}
               ${pos.accumDep > 0 ? `<div class="unit-cost-sub">أصلها ${Utils.formatMoney(pos.assetsCost)} · اتهلك ${Utils.formatMoney(pos.accumDep)}</div>` : ''}</td></tr>
             <tr class="mini-total"><td>الإجمالي</td><td>${Utils.formatMoney(pos.totalAssets)}</td></tr>
@@ -119,6 +120,7 @@ Modules.finance = (() => {
           <table class="mini-table">
             <tr><td>مستحق للموردين</td><td>${Utils.formatMoney(pos.payable)}</td></tr>
             <tr><td>مستحق للموظفين</td><td>${Utils.formatMoney(pos.employeeDues)}</td></tr>
+            ${pos.customerCredit > 0.005 ? `<tr><td>أمانات عملاء (دفعوا زيادة)</td><td>${Utils.formatMoney(pos.customerCredit)}</td></tr>` : ''}
             <tr class="mini-total"><td>الإجمالي</td><td>${Utils.formatMoney(pos.totalLiabilities)}</td></tr>
           </table>
 

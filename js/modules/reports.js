@@ -73,15 +73,29 @@ Modules.reports = (() => {
     /* المرتجعات لازم تتطرح من المبيعات، وإلا الربح بيبان أعلى من الحقيقة.
        بنطرح قيمة اللي رجع (بسعر البيع) من الإيراد، وتكلفته من تكلفة
        البضاعة المباعة — لأن البضاعة رجعت للمخزن فمش محسوبة عليك. */
+    /* لو الفاتورة اتلغت بالكامل، إيرادها اتشال من الحسبة أصلاً —
+       فمرتجعها ماينفعش يتخصم كمان، وإلا بنخصم مرتين والمبيعات
+       تطلع أقل من الحقيقة. */
+    const voidedSales = new Set((sales || []).filter(s => s.voided).map(s => Number(s.id)));
     const custReturns = (returns || []).filter(r =>
       r.kind === 'customer' && !r.voided && inRange(r.date, start, end));
     let returnedValue = 0, returnedCost = 0, damagedLoss = 0;
+    const retByItem = {};   // المرتجع لكل صنف — عشان جدول ربح الأصناف
     for (const r of custReturns) {
       for (const l of (r.lines || [])) {
         if (l.mode === 'swap') continue;            // استبدال — مفيش فلوس ولا إيراد اتغير
+        if (l.saleId && voidedSales.has(Number(l.saleId))) continue;   // فاتورتها ملغاة
         const qty = Number(l.qty || 0);
+        /* التكلفة المتسجلة وقت المرتجع هي الصح. لو استعملنا تكلفة
+           النهاردة، أي شرا جديد بسعر مختلف كان بيغيّر ربح الشهور
+           اللي فاتت بأثر رجعي. (المرتجعات القديمة اللي اتسجلت قبل
+           التعديل ده مالهاش تكلفة محفوظة، فبناخد الحالية) */
         const it = AppState.items.find(i => i.id === l.itemId);
-        const unitCost = Number((it && it.costPrice) || 0);
+        const unitCost = l.cost != null ? Number(l.cost) : Number((it && it.costPrice) || 0);
+        if (!retByItem[l.itemId]) retByItem[l.itemId] = { qty: 0, value: 0, cost: 0, linked: 0 };
+        const e = retByItem[l.itemId];
+        e.qty += qty; e.value += qty * Number(l.price || 0); e.cost += qty * unitCost;
+        if (l.saleId) e.linked += qty;              // دي متخصومة من الفاتورة أصلاً
         returnedValue += qty * Number(l.price || 0);
         /* البضاعة السليمة رجعت للرف فتكلفتها تتشال من تكلفة المبيعات.
            لكن التالف مرجعش يتباع تاني — تكلفته خسارة فعلية وبتفضل
@@ -112,16 +126,20 @@ Modules.reports = (() => {
     const netProfit = grossProfit - totalExpenses;
     const purchasesTotal = purchasesInRange.reduce((s, p) => s + p.total, 0);
 
-    const inventoryValue = AppState.items.reduce((s, i) => s + (i.stock * i.costPrice), 0);
-    const receivable = AppState.customers.reduce((s, c) => s + (c.balance || 0), 0);
-    const payable = AppState.suppliers.reduce((s, s2) => s + (s2.balance || 0), 0);
+    /* نفس طريقة شاشة المركز المالي بالظبط عشان الشاشتين ما يقولوش
+       رقمين مختلفين: الرصيد بالسالب مش بيقلّل قيمة المخزون، والعميل
+       اللي دافع زيادة مش بيقلّل مديونية باقي العملاء. */
+    const inventoryValue = AppState.items.reduce((s, i) =>
+      s + Math.max(0, Number(i.stock || 0)) * Number(i.costPrice || 0), 0);
+    const receivable = AppState.customers.reduce((s, c) => s + Math.max(0, Number(c.balance || 0)), 0);
+    const payable = AppState.suppliers.reduce((s, s2) => s + Math.max(0, Number(s2.balance || 0)), 0);
 
     const lowStock = AppState.items.filter(i => i.minStock && i.stock <= i.minStock);
 
     // الربح لكل صنف — بنجمع المبيعات ونطرح تكلفتها عشان نعرف مين اللي بيكسّب فعلاً
     const salesByItem = {};
     salesInRange.forEach(sale => sale.lines.forEach(l => {
-      const sold = Math.max(0, l.qty - (l.returnedQty || 0));   // المرتجع مش بيع
+      const sold = Math.max(0, l.qty - (l.returnedQty || 0));   // المرتجع المربوط بالفاتورة
       if (!salesByItem[l.itemId]) {
         salesByItem[l.itemId] = { name: l.name, unit: l.unit, qty: 0, total: 0, cost: 0 };
       }
@@ -130,6 +148,19 @@ Modules.reports = (() => {
       e.total += sold * l.price;
       e.cost += sold * (l.cost || 0);
     }));
+    /* المرتجع اللي البرنامج ماعرفش يربطه بفاتورة (عميل كاش مثلاً)
+       لازم يتخصم هنا كمان — من غير كده الجدول كان بيقول باع ١٠ وهو
+       باع ٦، والرقم ما كانش بيطابق "مجمل الربح" اللي فوقه. */
+    Object.keys(retByItem).forEach(id => {
+      const e = salesByItem[id]; if (!e) return;
+      const r = retByItem[id];
+      const loose = Math.max(0, r.qty - r.linked);
+      if (loose <= 0) return;
+      const share = r.qty > 0 ? loose / r.qty : 0;
+      e.qty = Math.max(0, Math.round((e.qty - loose) * 1000) / 1000);
+      e.total = Math.max(0, e.total - r.value * share);
+      e.cost = Math.max(0, e.cost - r.cost * share);
+    });
     const itemStats = Object.values(salesByItem).map(e => ({
       ...e, profit: e.total - e.cost,
       margin: e.total > 0 ? ((e.total - e.cost) / e.total) * 100 : 0
@@ -146,7 +177,8 @@ Modules.reports = (() => {
           <div class="sub">${salesInRange.length} فاتورة${returnedValue > 0 ? ` · بعد خصم مرتجع ${Utils.formatMoney(returnedValue)}` : ''}</div></div>
         <div class="stat-tile"><div class="lbl">تكلفة البضاعة المباعة</div><div class="val">${Utils.formatMoney(cogs)}</div>
           ${shrinkage > 0.005 ? `<div class="sub">منها عجز جرد ${Utils.formatMoney(shrinkage)}</div>`
-            : (shrinkage < -0.005 ? `<div class="sub">بعد زيادة جرد ${Utils.formatMoney(-shrinkage)}</div>` : '')}</div>
+            : (shrinkage < -0.005 ? `<div class="sub">بعد زيادة جرد ${Utils.formatMoney(-shrinkage)}</div>` : '')}
+          ${damagedLoss > 0.005 ? `<div class="sub">وبضاعة تالفة رجعت من العملاء بـ ${Utils.formatMoney(damagedLoss)}</div>` : ''}</div>
         <div class="stat-tile"><div class="lbl">مجمل الربح</div><div class="val">${Utils.formatMoney(grossProfit)}</div></div>
         <div class="stat-tile negative"><div class="lbl">إجمالي المصروفات</div><div class="val">${Utils.formatMoney(totalExpenses)}</div></div>
       </div>
