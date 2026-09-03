@@ -443,9 +443,12 @@ Modules.purchases = (() => {
     if (focusRowId) {
       const tr = body.querySelector(`tr[data-id="${focusRowId}"]`);
       if (tr) {
-        const sel = { barcode: '.f-barcode', name: '.f-name', qty: '.f-qty',
-                      price: '.f-price', packsize: '.f-packsize' }[focusField || 'qty'];
-        const el = tr.querySelector(sel);
+        /* أي خانة في السطر — والاسم بييجي من الكلاس (f-qty ← qty).
+           لو الخانة دي مش موجودة في السطر الجديد (مثلاً سعر العبوة
+           بيظهر بس لما يكون بيشتري بالعبوة) بنرجع للكمية. */
+        const el = tr.querySelector('.f-' + (focusField || 'qty'))
+                || tr.querySelector('.f-qty')
+                || tr.querySelector('.f-barcode');
         if (el) { el.focus(); el.select && el.select(); }
         tr.classList.add('flash-row');
       }
@@ -538,12 +541,15 @@ Modules.purchases = (() => {
         drawRows(container);
       });
 
+      /* Enter بينزّلك على نفس الخانة في السطر اللي تحت — زي الإكسيل.
+         كان بينزّلك على خانة الباركود دايمًا، فلو كان بيملا عمود
+         الكميات كان لازم يمسك الماوس كل سطر. */
       tr.querySelectorAll('.cell').forEach(el => el.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
         e.preventDefault();
         const idx = rows.findIndex(x => x._id === id);
         if (idx === rows.length - 1) rows.push(blankRow());
-        drawRows(container, rows[idx + 1]._id, 'barcode');
+        drawRows(container, rows[idx + 1]._id, Utils.fieldOf(e.target));
       }));
     });
   }

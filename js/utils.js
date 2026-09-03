@@ -170,9 +170,17 @@ const Utils = (() => {
     });
   }
 
+  /* اسم الخانة من الكلاس بتاعها: "cell f-qty num" ← "qty".
+     بنستعملها عشان Enter ينزّل على نفس العمود في السطر اللي تحت
+     زي الإكسيل — في فواتير الشرا والبيع والمرتجعات. */
+  function fieldOf(el) {
+    const m = String((el && el.className) || '').match(/\bf-([a-z]+)\b/);
+    return m ? m[1] : 'barcode';
+  }
+
   return {
     formatMoney, formatDate, formatDateTime, todayISO, nowISO, dateKey,
-    genInternalBarcode, debounce, el, escapeHtml,
+    genInternalBarcode, debounce, el, escapeHtml, fieldOf,
     beep, toast, openModal, confirmDialog
   };
 })();

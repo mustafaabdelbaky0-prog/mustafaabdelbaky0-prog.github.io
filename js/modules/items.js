@@ -212,17 +212,32 @@ Modules.items = (() => {
 
         <div class="table-wrap" style="max-height:46vh;overflow-y:auto;">
           <table>
-            <thead><tr><th style="width:38px;"></th><th>الصنف</th><th>الباركود</th><th>السعر</th><th style="width:110px;">عدد الملصقات</th></tr></thead>
+            <thead><tr><th style="width:38px;"></th><th>الصنف</th><th>الباركود</th><th>السعر</th><th>عندك كام</th><th style="width:110px;">عدد الملصقات</th></tr></thead>
             <tbody id="blBody">
-              ${list.length ? list.map(i => `
-                <tr data-id="${i.id}">
+              ${list.length ? list.map(i => {
+                /* بنوريه رصيد كل صنف جنبه — عشان يعرف يطبع قد إيه
+                   من غير ما يخرج من الشاشة ويروح يدوّر في المخزون */
+                const have = Math.max(0, Math.round(Number(i.stock || 0) * 1000) / 1000);
+                /* اللي بيتباع بالمتر أو الكيلو ملوش ملصق لكل متر —
+                   بنقترح عدد العبوات الكاملة لو الصنف ليه عبوة */
+                const cnt = !Units.allowsDecimals(i.unit || 'قطعة');
+                const pk = Number(i.packSize || 0) > 0 ? Math.floor(have / Number(i.packSize)) : 0;
+                const sug = cnt && have > 0 ? Math.min(200, Math.ceil(have))
+                          : (pk > 0 ? Math.min(200, pk) : 10);
+                return `
+                <tr data-id="${i.id}" data-have="${sug}">
                   <td><input type="checkbox" class="bl-chk" ${pre.has(Number(i.id)) ? 'checked' : ''}></td>
                   <td style="font-weight:700;">${Utils.escapeHtml(i.name)}</td>
                   <td style="font-family:monospace;">${Utils.escapeHtml(i.barcode)}</td>
                   <td>${Utils.formatMoney(i.salePrice)}</td>
-                  <td><input type="number" class="bl-cnt cell num" min="1" max="200" value="${pre.has(Number(i.id)) ? 10 : 1}"></td>
-                </tr>`).join('')
-                : `<tr class="empty-row"><td colspan="5">مفيش أصناف عليها باركود</td></tr>`}
+                  <td class="bl-have">${have > 0
+                      ? `<a href="#" class="bl-use" title="خد الرقم ده">${Units.fmtQty(have, i.unit)}</a>` +
+                        (pk > 0 ? `<div class="unit-cost-sub">${pk} ${Utils.escapeHtml(i.packName || 'عبوة')}</div>` : '')
+                      : '<span class="badge badge-danger">نفذ</span>'}</td>
+                  <td><input type="number" class="bl-cnt cell num" min="1" max="200" value="${
+                      pre.has(Number(i.id)) ? sug : 1}"></td>
+                </tr>`; }).join('')
+                : `<tr class="empty-row"><td colspan="6">مفيش أصناف عليها باركود</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -265,6 +280,20 @@ Modules.items = (() => {
         }
         bodyEl.addEventListener('change', sync);
         bodyEl.addEventListener('input', sync);
+
+        // دوس على الرصيد → يتحط في خانة عدد الملصقات ويتعلّم عليه
+        bodyEl.addEventListener('click', (e) => {
+          const link = e.target.closest('.bl-use');
+          if (!link) return;
+          e.preventDefault();
+          const tr = link.closest('tr[data-id]');
+          const have = Math.ceil(Number(tr.dataset.have || 0));
+          if (have > 0) {
+            tr.querySelector('.bl-cnt').value = Math.min(200, have);
+            tr.querySelector('.bl-chk').checked = true;
+            sync();
+          }
+        });
 
         body.querySelector('#blSearch').addEventListener('input', (e) => {
           const q = e.target.value.trim().toLowerCase();
@@ -322,14 +351,38 @@ Modules.items = (() => {
     try { preview = Barcode.svg(code, { height: 44, moduleWidth: 1.5 }); }
     catch (e) { preview = `<div class="notice notice-warn">${Utils.escapeHtml(e.message)}</div>`; }
 
+    /* بنوريه رصيده وبنقترح العدد عليه — عشان ميقعدش يفكّر
+       "أنا عندي كام منه؟" ويروح يدوّر في شاشة تانية */
+    const have = Math.max(0, Math.round(Number(item.stock || 0) * 1000) / 1000);
+    const unit = (item.unit || 'قطعة').trim();
+    /* الحاجات اللي بتتعد (قطعة، علبة) كل واحدة عايزة ملصق، فبنقترح
+       عدد اللي عنده. لكن اللي بيتباع بالمتر أو الكيلو مبيتلزقش عليه
+       ملصق لكل متر — الملصق بيتحط على اللفة أو على الرف. */
+    const countable = !Units.allowsDecimals(unit);
+    const packs = Number(item.packSize || 0) > 0
+      ? Math.floor(have / Number(item.packSize)) : 0;
+    const suggest = countable && have > 0 ? Math.min(200, Math.ceil(have))
+                  : (packs > 0 ? Math.min(200, packs) : 12);
+
     Utils.openModal({
       title: 'ملصق باركود: ' + item.name,
       bodyHtml: `
         <div style="text-align:center;padding:10px 0 16px;">${preview}</div>
+        <div class="notice ${have > 0 ? 'notice-ok' : 'notice-warn'}" style="margin-bottom:14px;line-height:1.9;">
+          ${have > 0
+            ? `عندك في المخزن <strong>${Units.fmtQty(have, unit)}</strong> من الصنف ده.` +
+              (packs > 0 ? ` يعني <strong>${packs} ${Utils.escapeHtml(item.packName || 'عبوة')}</strong> كاملة.` : '') +
+              (countable ? '' : ` <span class="muted">— بيتباع بال${Utils.escapeHtml(unit)}، فالملصق بيتحط على العبوة أو على الرف.</span>`)
+            : `الصنف ده رصيده <strong>صفر</strong> في المخزن دلوقتي.`}
+        </div>
         <div class="field-row">
           <div class="field">
             <label>عدد الملصقات</label>
-            <input type="number" id="lblCount" min="1" max="200" value="12">
+            <input type="number" id="lblCount" min="1" max="200" value="${suggest}">
+            ${have > 0 ? `<span class="hint">دوس <a href="#" id="lblAll">${
+                countable ? Math.min(200, Math.ceil(have)) + ' — عدد اللي عندك'
+                          : (packs > 0 ? packs + ' — عدد العبوات اللي عندك' : '12')
+              }</a></span>` : ''}
           </div>
           <div class="field">
             <label>السعر على الملصق</label>
@@ -348,6 +401,11 @@ Modules.items = (() => {
         body.querySelector('#lblSizeHint').innerHTML =
           `مقاس الملصق المضبوط: <strong>${s.w / 10} × ${s.h / 10} سم</strong>. ` +
           `لو الرول بتاعك مقاس تاني غيّره من <strong>بيانات المؤسسة ← مقاس ملصق الباركود</strong>.`;
+        const allLink = body.querySelector('#lblAll');
+        if (allLink) allLink.addEventListener('click', (e) => {
+          e.preventDefault();
+          body.querySelector('#lblCount').value = suggest;
+        });
         body.querySelector('#lblPrint').addEventListener('click', () => {
           const count = Math.max(1, Math.min(200, Number(body.querySelector('#lblCount').value) || 1));
           const withPrice = body.querySelector('#lblPrice').value === '1';
@@ -494,5 +552,5 @@ Modules.items = (() => {
     });
   }
 
-  return { render, openItemForm, openBulkLabels };
+  return { render, openItemForm, openBulkLabels, openLabelDialog };
 })();

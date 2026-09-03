@@ -298,8 +298,11 @@ Modules.returns = (() => {
     if (focusId) {
       const tr = body.querySelector(`tr[data-id="${focusId}"]`);
       if (tr) {
-        const sel = { barcode: '.f-barcode', name: '.f-name', qty: '.f-qty', price: '.f-price' }[focusField || 'qty'];
-        const el = tr.querySelector(sel);
+        /* أي خانة في السطر — الاسم بييجي من الكلاس (f-qty ← qty).
+           ولو الخانة دي مش موجودة في السطر الجديد بنرجع للكمية. */
+        const el = tr.querySelector('.f-' + (focusField || 'qty'))
+                || tr.querySelector('.f-qty')
+                || tr.querySelector('.f-barcode');
         if (el) { el.focus(); el.select && el.select(); }
         tr.classList.add('flash-row');
       }
@@ -358,12 +361,13 @@ Modules.returns = (() => {
         drawRows(container);
       });
 
+      /* Enter بينزّلك على نفس الخانة في السطر اللي تحت — زي الإكسيل */
       tr.querySelectorAll('.cell').forEach(el => el.addEventListener('keydown', e => {
         if (e.key !== 'Enter') return;
         e.preventDefault();
         const idx = rows.findIndex(x => x._id === id);
         if (idx === rows.length - 1) rows.push(blankRow());
-        drawRows(container, rows[idx + 1]._id, 'barcode');
+        drawRows(container, rows[idx + 1]._id, Utils.fieldOf(e.target));
       }));
     });
   }

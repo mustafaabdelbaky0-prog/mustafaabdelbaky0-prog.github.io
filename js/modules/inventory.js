@@ -75,7 +75,9 @@ Modules.inventory = (() => {
       if (e.target.classList.contains('hist-btn')) openHistoryModal(item);
       if (e.target.classList.contains('label-btn')) {
         if (!(item.barcode || '').trim()) { Utils.toast('الصنف ده مالوش باركود', 'error'); return; }
-        Modules.items.openBulkLabels([item.id]);
+        /* هو دايس على صنف بعينه — نفتحله ملصق الصنف ده على طول،
+           مش قايمة الأصناف كلها. القايمة ليها زرارها فوق. */
+        Modules.items.openLabelDialog(item);
       }
     });
   }
