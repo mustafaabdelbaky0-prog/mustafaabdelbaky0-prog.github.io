@@ -38,6 +38,14 @@ async function refreshShell() {
   if (box) box.style.display = '';
   const bal = await Services.getCashBalance();
   document.getElementById('cashPill').textContent = Utils.formatMoney(bal);
+  /* الخزنة بالسالب: يعني دفع من فلوس بره لسه ما اتسجلتش. مش غلطة —
+     بنعلّم عليها بالأحمر وخلاص، وأول ما يسجّل الفلوس بترجع موجبة. */
+  if (box) {
+    box.classList.toggle('cash-neg', bal < -0.005);
+    box.title = bal < -0.005
+      ? 'الخزنة بالسالب — فيه فلوس اتصرفت من بره لسه ما اتسجلتش. سجّل إيداع والرقم هيتظبط.'
+      : '';
+  }
 }
 
 function refreshRoleUI() {

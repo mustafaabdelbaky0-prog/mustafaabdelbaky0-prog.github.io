@@ -293,6 +293,7 @@ Modules.returns = (() => {
     }).join('');
 
     bindRows(container);
+    bindPicker(container);
     updateTotals(container);
 
     if (focusId) {
@@ -307,6 +308,25 @@ Modules.returns = (() => {
         tr.classList.add('flash-row');
       }
     }
+  }
+
+  /* البحث جوّه خانات الجدول — بيتربط مرة واحدة على الجدول كله
+     مش على كل سطر، لأن الجدول بيتعاد رسمه كتير وانت بتكتب */
+  let pickerBound = null;
+  function bindPicker(container) {
+    if (pickerBound === container) return;
+    pickerBound = container;
+    const take = (it, input) => {
+      const id = Number(input.closest('tr').dataset.id);
+      const r = rows.find(x => x._id === id);
+      if (!r) return;
+      applyItem(r, it);
+      drawRows(container, id, 'qty');
+    };
+    Picker.bind(container, {
+      '.f-barcode': { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take },
+      '.f-name':    { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take }
+    });
   }
 
   function bindRows(container) {

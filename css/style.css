@@ -711,6 +711,43 @@ tr.row-missing select.cell{border-color:#E9A8A8;}
 .pc-chip.worst .pc-sup::after{content:' الأغلى';font-weight:800;color:var(--danger);}
 .pc-gap{font-weight:800;color:var(--danger);font-variant-numeric:tabular-nums;}
 
+/* ===== قايمة البحث جوّه خانات الفاتورة ===== */
+.pick-box{
+  position:absolute;z-index:9000;max-height:44vh;overflow-y:auto;
+  background:#fff;border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 10px 30px rgba(15,36,56,.16);padding:4px;
+}
+.pick-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 10px;border-radius:9px;cursor:pointer;
+}
+.pick-row.on,.pick-row:hover{background:var(--steel-light);}
+.pick-main{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.pick-name{font-weight:700;font-size:13px;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pick-code{font-family:Consolas,monospace;font-size:11px;color:var(--ink-soft);}
+.pick-side{display:flex;flex-direction:column;align-items:flex-start;gap:1px;flex:0 0 auto;}
+.pick-stock{font-size:12px;font-weight:800;color:var(--success);
+  font-variant-numeric:tabular-nums;}
+.pick-stock.zero{color:var(--ink-soft);}
+.pick-stock.neg{color:var(--danger);}
+.pick-cost{font-size:10.5px;color:var(--ink-soft);}
+
+/* ===== بضاعة اتباعت ولسه ما اتسجلتش / خزنة بالسالب ===== */
+.nav-badge.badge-neg{background:var(--danger);color:#fff;}
+.cash-pill.cash-neg{background:var(--danger-bg);border-color:var(--danger);}
+.cash-pill.cash-neg #cashPill{color:var(--danger);}
+.notice-danger{
+  background:var(--danger-bg);border:1px solid var(--danger);
+  border-right:5px solid var(--danger);border-radius:12px;
+  padding:12px 15px;color:#7A2020;
+}
+.notice-danger strong{color:var(--danger);}
+.neg-chip{
+  display:inline-block;background:#fff;border:1px solid #E9A8A8;border-radius:999px;
+  padding:3px 11px;margin:3px 3px 0 0;font-size:12px;font-weight:700;color:#7A2020;
+}
+
 /* شريط البحث في الفواتير */
 .inv-search{
   display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;

@@ -452,6 +452,7 @@ Modules.sales = (() => {
     }).join('');
 
     bindRows(container);
+    bindPicker(container);
     updateTotals(container);
 
     if (focusRowId) {
@@ -466,6 +467,25 @@ Modules.sales = (() => {
         tr.classList.add('flash-row');
       }
     }
+  }
+
+  /* البحث جوّه خانات الجدول — بيتربط مرة واحدة على الجدول كله
+     مش على كل سطر، لأن الجدول بيتعاد رسمه كتير وانت بتكتب */
+  let pickerBound = null;
+  function bindPicker(container) {
+    if (pickerBound === container) return;
+    pickerBound = container;
+    const take = (it, input) => {
+      const id = Number(input.closest('tr').dataset.id);
+      const r = rows.find(x => x._id === id);
+      if (!r) return;
+      applyItem(r, it);
+      drawRows(container, id, 'qty');
+    };
+    Picker.bind(container, {
+      '.f-barcode': { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take },
+      '.f-name':    { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take }
+    });
   }
 
   function bindRows(container) {
@@ -631,13 +651,17 @@ Modules.sales = (() => {
         short.push({ name: it.name, unit: it.unit, want: needed[id], have });
       }
     }
+    /* البيع من بضاعة لسه ما اتسجلتش حاجة عادية في المحل: البضاعة
+       نزلت والزبون طلبها قبل ما تلحق تدخّلها. بنبيع عادي وبنعلّم
+       على الصنف بالأحمر في المخزون، وأول ما تسجّل فاتورة الشراء
+       الرقم بيتظبط لوحده. */
     if (short.length) {
-      Utils.beep('error');
       const go = await Utils.confirmDialog(
-        'مفيش رصيد كافي في المخزن:\n\n' +
-        short.map(s => `• ${s.name}: عايز ${Units.fmtQty(s.want, s.unit)} — المتاح ${Units.fmtQty(s.have, s.unit)}`).join('\n') +
-        '\n\nراجع الكميات. لو البضاعة موجودة فعلًا في المحل بس لسه متسجلتش، سجّل فاتورة الشراء الأول.\n\n' +
-        'تكمل بالسالب على مسؤوليتك؟'
+        'الأصناف دي رصيدها في البرنامج أقل من اللي بتبيعه:\n\n' +
+        short.map(s => `• ${s.name}: بتبيع ${Units.fmtQty(s.want, s.unit)} — المسجّل ${Units.fmtQty(s.have, s.unit)}`).join('\n') +
+        '\n\nلو البضاعة موجودة فعلاً في المحل وانت لسه ما دخّلتش فاتورة الشراء، كمّل عادي.\n' +
+        'هتلاقيها متعلّمة بالأحمر في المخزون، وأول ما تسجّل فاتورة الشراء الرقم هيتظبط لوحده.\n\n' +
+        'نكمّل البيع؟'
       );
       if (!go) return;
     }

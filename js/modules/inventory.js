@@ -13,6 +13,8 @@ Modules.inventory = (() => {
     const totalValue = AppState.items.reduce((s, i) => s + (i.stock * i.costPrice), 0);
     const lowStock = AppState.items.filter(i => i.minStock && i.stock <= i.minStock && i.stock > 0);
     const outOfStock = AppState.items.filter(i => i.stock <= 0);
+    // اللي اتباع ولسه ما اتسجلش — الرصيد بالسالب
+    const neg = AppState.negativeStockItems();
 
     container.innerHTML = `
       <div class="grid ${Auth.isSeller() ? 'grid-2' : 'grid-3'}" style="margin-bottom:18px;">
@@ -20,6 +22,17 @@ Modules.inventory = (() => {
         <div class="stat-tile ${lowStock.length ? 'negative' : ''}"><div class="lbl">أصناف قاربت تخلص</div><div class="val">${lowStock.length}</div></div>
         <div class="stat-tile ${outOfStock.length ? 'negative' : ''}"><div class="lbl">أصناف نفدت</div><div class="val">${outOfStock.length}</div></div>
       </div>
+
+      ${neg.length ? `
+      <div class="notice notice-danger" style="margin-bottom:14px;line-height:1.9;">
+        <strong>${neg.length} صنف اتباع ولسه ما اتسجلش في المشتريات:</strong>
+        ${neg.slice(0, 8).map(i =>
+          `<span class="neg-chip">${Utils.escapeHtml(i.name)} — ناقص ${Units.fmtQty(-i.stock, i.unit)}</span>`).join(' ')}
+        ${neg.length > 8 ? `<span class="muted">و${neg.length - 8} كمان…</span>` : ''}
+        <div class="hint" style="margin-top:6px;">
+          سجّل فاتورة الشراء بتاعتهم والأرقام هتتظبط لوحدها — مش محتاج تعمل أي حاجة تانية.
+        </div>
+      </div>` : ''}
 
       <div class="section-head">
         <div class="search-box" style="max-width:340px;">
@@ -42,11 +55,18 @@ Modules.inventory = (() => {
         tbody.innerHTML = `<tr class="empty-row"><td colspan="${Auth.isSeller() ? 6 : 7}">مفيش أصناف</td></tr>`;
         return;
       }
-      tbody.innerHTML = list.map(i => `
-        <tr data-id="${i.id}">
+      tbody.innerHTML = list.map(i => {
+        /* الرصيد بالسالب = بضاعة اتباعت ولسه ما اتسجلتش في المشتريات.
+           بننوّر السطر أحمر ونقوله المطلوب يدخّله كام. */
+        const neg = Number(i.stock || 0) < -0.0001;
+        return `
+        <tr data-id="${i.id}"${neg ? ' class="row-missing" title="اتباع ولسه ما اتسجلش — سجّل فاتورة الشراء والرقم هيتظبط لوحده"' : ''}>
           <td>${Utils.escapeHtml(i.barcode || '—')}</td>
           <td style="font-weight:700;">${Utils.escapeHtml(i.name)}</td>
-          <td>${i.stock <= 0 ? '<span class="badge badge-danger">0</span>' : Units.fmtQty(i.stock, i.unit)}</td>
+          <td>${neg
+                ? `<span class="badge badge-danger">ناقص ${Units.fmtQty(-i.stock, i.unit)}</span>
+                   <div class="unit-cost-sub">اتباع ولسه ما اتسجلش</div>`
+                : (i.stock <= 0 ? '<span class="badge badge-danger">0</span>' : Units.fmtQty(i.stock, i.unit))}</td>
           <td>${i.damagedQty > 0 ? `<span class="badge badge-warn">${Units.fmtQty(i.damagedQty, i.unit)}</span>` : '<span class="muted">—</span>'}</td>
           <td>${Units.fmtQty(i.minStock || 0, i.unit)}</td>
           ${Auth.isSeller() ? '' : `<td>${Utils.formatMoney(i.stock * i.costPrice)}</td>`}
@@ -55,7 +75,7 @@ Modules.inventory = (() => {
             <button class="icon-btn label-btn" title="اطبع ملصق باركود">🏷️</button>
             <button class="icon-btn hist-btn" title="سجل الحركة">📜</button>
           </td>
-        </tr>`).join('');
+        </tr>`; }).join('');
     }
     draw(AppState.items);
 

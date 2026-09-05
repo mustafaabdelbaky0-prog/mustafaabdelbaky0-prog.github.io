@@ -78,6 +78,37 @@ Modules.purchases = (() => {
   let draftTimer = null;
   let restored = false;      // بنوريه رسالة "رجّعنا اللي كنت بتكتبه" مرة واحدة
 
+  /* كل ٥ دقايق بنحفظ نسخة من المسودة في بيانات البرنامج نفسها
+     (data.json) مش في المتصفح بس.
+
+     ليه: المتصفح ممكن يتمسح، والنور ممكن يقطع، وممكن يفتح البرنامج
+     من الموبايل. البيانات دي بتتاخد لها نسخة احتياطية تلقائية في ٤
+     أماكن (جنب البرنامج + المستندات + جوجل درايف + الفلاشة)، فالمسودة
+     بتبقى محمية زي أي حاجة تانية في البرنامج. */
+  const DRAFT_STORE_KEY = 'purchaseDraftSaved';
+  const AUTO_MS = 5 * 60 * 1000;
+  let autoTimer = null;
+  let lastAuto = '';
+
+  async function saveDraftToDB() {
+    if (editing) return;
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) {
+        if (lastAuto !== '') { await DB.put('settings', { key: DRAFT_STORE_KEY, value: null }); lastAuto = ''; }
+        return;
+      }
+      if (raw === lastAuto) return;               // ما اتغيرش — مش هنكتب على الفاضي
+      await DB.put('settings', { key: DRAFT_STORE_KEY, value: JSON.parse(raw) });
+      lastAuto = raw;
+    } catch (e) { /* لو الحفظ فشل مش هنوقف شغله */ }
+  }
+
+  function startAutoSave() {
+    clearInterval(autoTimer);
+    autoTimer = setInterval(saveDraftToDB, AUTO_MS);
+  }
+
   function hasContent() {
     return rows.some(r => (r.name || '').trim() || (r.barcode || '').trim() ||
                           Number(r.qty || 0) > 0 || Number(r.price || 0) > 0);
@@ -103,16 +134,27 @@ Modules.purchases = (() => {
   function clearDraft() {
     clearTimeout(draftTimer);
     try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    lastAuto = '';
+    DB.put('settings', { key: DRAFT_STORE_KEY, value: null }).catch(() => {});
     restored = false;
   }
 
-  function readDraft() {
+  function okDraft(d) {
+    return (d && Array.isArray(d.rows) && d.rows.length) ? d : null;
+  }
+
+  /* بندوّر في المتصفح الأول (ده الأحدث دايمًا لأنه بيتحفظ مع كل
+     حرف)، ولو فاضي بندوّر في بيانات البرنامج — وده اللي بينجّينا
+     لو المتصفح اتمسح أو فتح من جهاز تاني. */
+  async function readDraft() {
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
-      if (!raw) return null;
-      const d = JSON.parse(raw);
-      if (!d || !Array.isArray(d.rows) || !d.rows.length) return null;
-      return d;
+      const local = raw ? okDraft(JSON.parse(raw)) : null;
+      if (local) return local;
+    } catch (e) {}
+    try {
+      const rec = await DB.get('settings', DRAFT_STORE_KEY);
+      return okDraft(rec && rec.value);
     } catch (e) { return null; }
   }
 
@@ -191,7 +233,7 @@ Modules.purchases = (() => {
     if (!keepEdit) {
       editing = null;
       /* لو فيه فاتورة لسه ما اتحفظتش بنرجّعها بدل ما نبدأ من الأول */
-      draft = readDraft();
+      draft = await readDraft();
       if (draft) {
         rows = draft.rows;
         rowSeq = Math.max(rowSeq, ...draft.rows.map(r => Number(r._id) || 0));
@@ -412,6 +454,68 @@ Modules.purchases = (() => {
        الشاشة أو البرنامج قفل يلاقيها زي ما سابها */
     container.addEventListener('input', () => scheduleDraft(container));
     container.addEventListener('change', () => scheduleDraft(container));
+    startAutoSave();
+
+    /* البحث جوّه خانات الجدول: الباركود والصنف والنوع.
+       بيتربط بالجدول مرة واحدة — الجدول بيتعاد رسمه كتير وانت
+       بتكتب، فمينفعش نربط كل سطر لوحده. */
+    const pickRow = (r) => {
+      const tr = container.querySelector(`#invBody tr[data-id="${r._id}"]`);
+      return tr;
+    };
+    Picker.bind(container, {
+      '.f-barcode': {
+        search: (q) => Picker.searchItems(q),
+        render: Picker.itemRow,
+        onPick: (it, input) => {
+          const id = Number(input.closest('tr').dataset.id);
+          const r = rows.find(x => x._id === id);
+          if (!r) return;
+          r.barcode = it.barcode || '';
+          applyItem(r, it);
+          drawRows(container, id, 'qty');
+          scheduleDraft(container);
+        }
+      },
+      '.f-name': {
+        search: (q) => Picker.searchItems(q),
+        render: Picker.itemRow,
+        onPick: (it, input) => {
+          const id = Number(input.closest('tr').dataset.id);
+          const r = rows.find(x => x._id === id);
+          if (!r) return;
+          r.barcode = it.barcode || r.barcode;
+          applyItem(r, it);
+          drawRows(container, id, 'qty');
+          scheduleDraft(container);
+        }
+      },
+      '.f-packtype': {
+        search: (q) => Picker.searchText(q, Units.LIST.map(u => u.name).concat(Units.PACK_TYPES)),
+        render: Picker.textRow,
+        onPick: (t, input) => {
+          const id = Number(input.closest('tr').dataset.id);
+          const r = rows.find(x => x._id === id);
+          if (!r) return;
+          r.packType = t;
+          drawRows(container, id, Units.isBaseUnit(t) ? 'qty' : 'packsize');
+          scheduleDraft(container);
+        }
+      },
+      '.f-category': {
+        search: (q) => Picker.searchText(q, [...new Set(AppState.items
+          .map(i => (i.category || '').trim()).filter(Boolean))]),
+        render: Picker.textRow,
+        onPick: (t, input) => {
+          const id = Number(input.closest('tr').dataset.id);
+          const r = rows.find(x => x._id === id);
+          if (!r) return;
+          r.category = t;
+          input.value = t;
+          scheduleDraft(container);
+        }
+      }
+    });
 
     if (draft) {
       const sup = container.querySelector('#supplierName');
@@ -1041,5 +1145,6 @@ Modules.purchases = (() => {
     }));
   }
 
-  return { render };
+  // _autoSaveNow بيستعملها الاختبار عشان ما يستناش ٥ دقايق
+  return { render, _autoSaveNow: saveDraftToDB };
 })();

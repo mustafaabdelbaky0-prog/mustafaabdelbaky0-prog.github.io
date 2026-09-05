@@ -1,7 +1,7 @@
 /* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-09-05 · مسودة الفاتورة + مقارنة أسعار';
+const APP_VERSION = '2026-09-05 · بحث في الفاتورة + البيع بالسالب';
 
 const Modules = {};
 
@@ -25,17 +25,35 @@ const AppState = {
       Number(i.stock || 0) <= Number(i.minStock));
   },
 
+  /* الأصناف اللي رصيدها بالسالب: يعني اتباعت وهي لسه ما اتسجلتش
+     في المشتريات. مش غلطة — بيحصل كل يوم لما البضاعة تنزل والزبون
+     يطلبها قبل ما تلحق تدخّلها. بنعلّم عليها بالأحمر وخلاص، وأول ما
+     تسجّل فاتورة الشراء بترجع موجبة لوحدها والأحمر بيختفي. */
+  negativeStockItems() {
+    return this.items.filter(i => Number(i.stock || 0) < -0.0001);
+  },
+
   refreshLowStockBadge() {
     try {
       const el = document.getElementById('lowBadge');
       if (!el) return;
+      const neg = this.negativeStockItems().length;
       const n = this.lowStockItems().length;
-      if (n > 0) {
+      if (neg > 0) {
+        // الأهم: اللي بالسالب — دي بضاعة اتباعت وما اتسجلتش
+        el.textContent = neg;
+        el.hidden = false;
+        el.classList.add('badge-neg');
+        el.title = neg + ' صنف اتباع ولسه ما اتسجلش في المشتريات' +
+                   (n > 0 ? ` · و${n} صنف قرب يخلص` : '');
+      } else if (n > 0) {
         el.textContent = n;
         el.hidden = false;
+        el.classList.remove('badge-neg');
         el.title = n + ' صنف خلص أو قرب يخلص';
       } else {
         el.hidden = true;
+        el.classList.remove('badge-neg');
       }
     } catch (e) { }
   },

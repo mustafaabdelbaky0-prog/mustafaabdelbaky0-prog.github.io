@@ -1,6 +1,10 @@
 Modules.items = (() => {
 
   function stockBadge(item) {
+    // بالسالب = اتباع ولسه ما اتسجلش في المشتريات
+    if (Number(item.stock || 0) < -0.0001) {
+      return `<span class="badge badge-danger">لسه ما اتسجلش</span>`;
+    }
     if (item.stock <= 0) return `<span class="badge badge-danger">نفذ</span>`;
     if (item.minStock && item.stock <= item.minStock) return `<span class="badge badge-warn">منخفض</span>`;
     return `<span class="badge badge-ok">متوفر</span>`;

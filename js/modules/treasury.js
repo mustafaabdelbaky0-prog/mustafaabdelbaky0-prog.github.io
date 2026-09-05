@@ -84,8 +84,18 @@ Modules.treasury = (() => {
     const todayOut = all.filter(m => Utils.dateKey(m.date) === todayStr && m.direction === 'out').reduce((s, m) => s + m.amount, 0);
 
     container.innerHTML = `
+      ${balance < -0.005 ? `
+      <div class="notice notice-danger" style="margin-bottom:14px;line-height:1.9;">
+        <strong>الخزنة بالسالب ${Utils.formatMoney(-balance)}</strong> —
+        يعني فيه فلوس اتصرفت من بره الخزنة ولسه ما اتسجلتش.
+        <div class="hint" style="margin-top:6px;">
+          مفيش مشكلة، سيبها كده لحد ما تسجّلها. أول ما تعمل <strong>+ إيداع</strong> بالمبلغ اللي دخّلته
+          من بره، الرقم هيرجع موجب لوحده.
+        </div>
+      </div>` : ''}
+
       <div class="grid grid-3" style="margin-bottom:18px;">
-        <div class="stat-tile"><div class="lbl">رصيد الخزنة الحالي</div><div class="val">${Utils.formatMoney(balance)}</div></div>
+        <div class="stat-tile ${balance < -0.005 ? 'negative' : ''}"><div class="lbl">رصيد الخزنة الحالي</div><div class="val">${Utils.formatMoney(balance)}</div></div>
         <div class="stat-tile positive"><div class="lbl">داخل النهاردة</div><div class="val">${Utils.formatMoney(todayIn)}</div></div>
         <div class="stat-tile negative"><div class="lbl">خارج النهاردة</div><div class="val">${Utils.formatMoney(todayOut)}</div></div>
       </div>
