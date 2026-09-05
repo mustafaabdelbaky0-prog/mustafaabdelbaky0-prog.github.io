@@ -458,10 +458,41 @@ const Services = (() => {
     });
   }
 
+  /* ---------- تظبيط تكلفة البيعات اللي اتعملت قبل الشرا ----------
+
+     لما يبيع صنف لسه ما دخّلش فاتورة شرائه، البرنامج مبيبقاش عارف
+     تكلفته — فبيسجّلها صفر في سطر البيع. لو سيبناها كده، ربح
+     البيعة دي هيفضل غلط للأبد (هيبان إن كل الفلوس ربح).
+
+     أول ما يسجّل فاتورة الشراء بقينا عارفين التكلفة، فبنرجع نحطها
+     في سطور البيع اللي كانت بصفر — وبكده الربح يبقى صح. */
+  async function _fillMissingSaleCosts(t, itemId, cost) {
+    if (!(Number(cost) > 0)) return 0;
+    const store = t.objectStore('sales');
+    const sales = await DB.reqToPromise(store.getAll());
+    let fixed = 0;
+    for (const s of sales) {
+      if (s.voided) continue;
+      let touched = false;
+      for (const l of (s.lines || [])) {
+        if (Number(l.itemId) !== Number(itemId)) continue;
+        if (Number(l.cost || 0) > 0) continue;          // تكلفتها معروفة خلاص
+        l.cost = Number(cost);
+        l.costFilledAt = Utils.nowISO();
+        touched = true; fixed++;
+      }
+      if (touched) {
+        s.updatedAt = Utils.nowISO();
+        await DB.reqToPromise(store.put(s));
+      }
+    }
+    return fixed;
+  }
+
   // ---------- المشتريات ----------
   // purchase: { date, supplierId, lines:[{itemId,name,barcode,qty,cost}], paidNow }
   async function savePurchase(purchase) {
-    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers'], 'readwrite', async (t) => {
+    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers', 'sales'], 'readwrite', async (t) => {
       const itemsStore = t.objectStore('items');
       const movStore = t.objectStore('stockMovements');
       const total = Math.round(purchase.lines.reduce((s, l) => s + l.qty * l.cost, 0) * 100) / 100;
@@ -480,6 +511,8 @@ const Services = (() => {
           // بنفتكر آخر مورد جبنا منه الصنف — عشان لما نرجّعه يطلع اسمه لوحده
           if (purchase.supplierId) item.lastSupplierId = purchase.supplierId;
           await DB.reqToPromise(itemsStore.put(item));
+          // بيعات اتعملت قبل ما نعرف التكلفة — دلوقتي بقينا عارفينها
+          await _fillMissingSaleCosts(t, line.itemId, line.cost);
         }
         await DB.reqToPromise(movStore.add({
           itemId: line.itemId, type: 'purchase', qty: Math.abs(line.qty),

@@ -614,20 +614,64 @@ Modules.sales = (() => {
   async function doSave(container) {
     if (saving) return;   // الحفظ شغال بالفعل — مش هنعمله تاني
 
-    // لو فيه سطر مكتوب فيه حاجة بس الصنف مش متعرّف، مننفعش نتجاهله في صمت
-    const orphan = rows.find(r => !r.itemId && ((r.name || '').trim() || (r.barcode || '').trim()));
-    if (orphan) {
+    /* سطر مكتوب فيه صنف مش متعرّف.
+
+       الأول بندوّر عليه بالاسم أو الباركود — يمكن يكون موجود وهو
+       كتبه بإيده. لو ملقناهوش يبقى صنف جديد فعلاً: البضاعة نزلت
+       والزبون طلبها قبل ما يلحق يدخّل فاتورة الشراء.
+
+       بنعمله صنف على طول بدل ما نوقّف البيعة. رصيده هيبقى بالسالب
+       وتكلفته صفر، والاتنين هيتظبطوا لوحدهم أول ما يسجّل فاتورة
+       الشراء — وبنعلّم عليه بالأحمر لحد ما يعملها. */
+    const orphans = rows.filter(r => !r.itemId && ((r.name || '').trim() || (r.barcode || '').trim()));
+    const born = [];
+    for (const orphan of orphans) {
+      const nm = (orphan.name || '').trim();
+      const bc = (orphan.barcode || '').trim();
       const it = AppState.items.find(i =>
-        i.barcode === (orphan.barcode || '').trim() ||
-        (i.name || '').trim() === (orphan.name || '').trim());
-      if (it) {
-        applyItem(orphan, it);   // لقيناه - نكمل عادي
-        drawRows(container, orphan._id, 'qty');
-      } else {
-        Utils.toast(`"${(orphan.name || orphan.barcode).trim()}" مش متسجل في الأصناف — سجّله من المشتريات الأول`, 'error');
+        (bc && i.barcode === bc) || (nm && (i.name || '').trim() === nm));
+      if (it) { applyItem(orphan, it); continue; }   // لقيناه — نكمل عادي
+
+      if (!nm) {
+        Utils.toast(`الباركود "${bc}" مش متسجل — اكتب اسم الصنف جنبه عشان نسجّله`, 'error');
         Utils.beep('error');
+        drawRows(container, orphan._id, 'name');
         return;
       }
+      if (!(calc(orphan).price > 0)) {
+        Utils.toast(`اكتب سعر البيع للصنف الجديد: ${nm}`, 'error');
+        Utils.beep('error');
+        drawRows(container, orphan._id, 'price');
+        return;
+      }
+      born.push({ row: orphan, name: nm, barcode: bc });
+    }
+
+    if (born.length) {
+      const ok = await Utils.confirmDialog(
+        (born.length === 1
+          ? `"${born[0].name}" مش متسجل في الأصناف.`
+          : `${born.length} صنف مش متسجلين في الأصناف:\n` + born.map(b => '• ' + b.name).join('\n')) +
+        `\n\nهنسجّله دلوقتي وهنكمّل البيع عادي.\n` +
+        `هتلاقيه بالأحمر في المخزون لحد ما تدخّل فاتورة الشراء بتاعته،` +
+        ` وساعتها الرصيد وسعر الشراء هيتظبطوا لوحدهم.\n\n` +
+        `نكمّل؟`);
+      if (!ok) return;
+
+      for (const b of born) {
+        const unit = (b.row.unit || 'قطعة').trim() || 'قطعة';
+        const id = await DB.put('items', {
+          barcode: b.barcode || await Utils.genInternalBarcode(),
+          name: b.name, category: '', unit,
+          costPrice: 0,                       // لسه ما نعرفهاش — هتتظبط من فاتورة الشراء
+          salePrice: Number(calc(b.row).price || 0),
+          stock: 0, damagedQty: 0, minStock: 0, active: true
+        });
+        await AppState.reloadItems();
+        const fresh = AppState.items.find(i => i.id === id);
+        if (fresh) applyItem(b.row, fresh);
+      }
+      drawRows(container);
     }
 
     const valid = filledRows();
