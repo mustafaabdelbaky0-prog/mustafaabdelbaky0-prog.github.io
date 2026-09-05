@@ -1,7 +1,7 @@
 /* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-08-31 · Enter زي الإكسيل + ملصق الصنف';
+const APP_VERSION = '2026-09-05 · مسودة الفاتورة + مقارنة أسعار';
 
 const Modules = {};
 
@@ -82,6 +82,7 @@ const ROUTES = {
   items: { title: 'الأصناف', mod: 'items' },
   inventory: { title: 'المخزون', mod: 'inventory' },
   parties: { title: 'العملاء والموردين', mod: 'parties' },
+  pricecompare: { title: 'مقارنة أسعار الموردين', mod: 'pricecompare' },
   expenses: { title: 'المصروفات', mod: 'expenses' },
   treasury: { title: 'الخزنة', mod: 'treasury' },
   employees: { title: 'الموظفين', mod: 'employees' },

@@ -676,6 +676,41 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .edit-banner strong{color:#0F2438;font-size:15px;}
 .edit-banner .btn{flex:0 0 auto;}
 
+/* شريط الفاتورة اللي رجعت من المسودة */
+.draft-banner{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:#EAF4FF;border:1px solid #5B9BD5;border-right:5px solid #5B9BD5;
+  border-radius:12px;padding:13px 16px;margin-bottom:14px;color:#2C4F70;
+}
+.draft-banner strong{color:#0F2438;font-size:15px;}
+.draft-banner .btn{flex:0 0 auto;}
+
+/* السطر اللي لسه ناقص فيه سعر أو كمية — بيتنوّر أحمر عشان يشوفه */
+tr.row-missing > td{background:#FDF2F2;}
+tr.row-missing > td:first-child{box-shadow:inset 3px 0 0 var(--danger);}
+tr.row-missing input.cell,
+tr.row-missing select.cell{border-color:#E9A8A8;}
+.line-card.card-missing{background:#FDF2F2;border-color:#E9A8A8;}
+
+/* ===== مقارنة أسعار الموردين ===== */
+.price-cmp{display:flex;flex-wrap:wrap;gap:8px;}
+.pc-chip{
+  display:flex;flex-direction:column;gap:1px;min-width:120px;
+  border:1px solid var(--line);border-radius:10px;padding:7px 11px;background:#fff;
+}
+.pc-chip .pc-sup{font-size:12px;font-weight:700;color:var(--ink-soft);}
+.pc-chip .pc-cost{font-size:15px;font-weight:800;color:var(--ink);
+  font-variant-numeric:tabular-nums;}
+.pc-chip .pc-when{font-size:10.5px;color:var(--ink-soft);opacity:.8;}
+/* الأرخص أخضر والأغلى أحمر — اللي بينهم بيفضل عادي */
+.pc-chip.best{background:var(--success-bg);border-color:var(--success);}
+.pc-chip.best .pc-cost{color:var(--success);}
+.pc-chip.best .pc-sup::after{content:' ✓ الأرخص';font-weight:800;color:var(--success);}
+.pc-chip.worst{background:var(--danger-bg);border-color:var(--danger);}
+.pc-chip.worst .pc-cost{color:var(--danger);}
+.pc-chip.worst .pc-sup::after{content:' الأغلى';font-weight:800;color:var(--danger);}
+.pc-gap{font-weight:800;color:var(--danger);font-variant-numeric:tabular-nums;}
+
 /* شريط البحث في الفواتير */
 .inv-search{
   display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;

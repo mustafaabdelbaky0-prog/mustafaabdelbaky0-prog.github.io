@@ -69,6 +69,53 @@ Modules.purchases = (() => {
     };
   }
 
+  /* ---------- المسودة ----------
+     الفاتورة اللي لسه بيكتبها لازم تفضل مكانها لو ساب الشاشة —
+     زبون دخل فراح لنقطة البيع، أو البرنامج قفل على صاحب المحل.
+     بنحفظها في المتصفح مع كل حرف بيكتبه (بتأخير بسيط عشان
+     مانتقلش عليه)، وبنمسحها أول ما يحفظ الفاتورة فعلاً. */
+  const DRAFT_KEY = 'purchaseDraft';
+  let draftTimer = null;
+  let restored = false;      // بنوريه رسالة "رجّعنا اللي كنت بتكتبه" مرة واحدة
+
+  function hasContent() {
+    return rows.some(r => (r.name || '').trim() || (r.barcode || '').trim() ||
+                          Number(r.qty || 0) > 0 || Number(r.price || 0) > 0);
+  }
+
+  function saveDraft(container) {
+    if (editing) return;                 // تعديل فاتورة متسجلة — مش مسودة
+    try {
+      if (!hasContent()) { localStorage.removeItem(DRAFT_KEY); return; }
+      const g = (id) => { const el = container && container.querySelector(id); return el ? el.value : ''; };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        at: Utils.nowISO(), rows,
+        supplier: g('#supplierName'), date: g('#invDate'), paid: g('#paidNow')
+      }));
+    } catch (e) { /* المتصفح رافض يخزّن — مش هنوقف الشغل عشان كده */ }
+  }
+
+  function scheduleDraft(container) {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => saveDraft(container), 400);
+  }
+
+  function clearDraft() {
+    clearTimeout(draftTimer);
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    restored = false;
+  }
+
+  function readDraft() {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      if (!d || !Array.isArray(d.rows) || !d.rows.length) return null;
+      return d;
+    } catch (e) { return null; }
+  }
+
   /* سطر صغير تحت سعر العبوة بيقول: العبوة دي بتطلع ال«متر» بكام،
      وبكده يشوف بعينه إنها فعلاً أرخص من القطاعي وإنه لسه كاسب. */
   function packSaleNote(r, c, u) {
@@ -108,8 +155,29 @@ Modules.purchases = (() => {
 
   function invoiceTotal() { return rows.reduce((s, r) => s + calc(r).lineTotal, 0); }
 
+  /* السطر يتحفظ لو فيه اسم وكمية — حتى لو السعر لسه ناقص.
+     ده بيحصل كتير: البضاعة وصلت والتاجر لسه ما بعتش السعر، أو هو
+     لسه ما سعّرش البيع. بنحفظله اللي كتبه وبننوّر السطر أحمر. */
   function filledRows() {
-    return rows.filter(r => (r.name || '').trim() && calc(r).totalUnits > 0 && calc(r).unitCost > 0);
+    return rows.filter(r => (r.name || '').trim() && calc(r).totalUnits > 0);
+  }
+
+  /* إيه الناقص في السطر ده — بنستعملها للتنوير الأحمر وللتنبيه */
+  function missingIn(r) {
+    const c = calc(r);
+    const out = [];
+    if (!(r.name || '').trim()) return out;          // سطر فاضي خالص
+    if (!(c.totalUnits > 0)) out.push('الكمية');
+    if (!(c.unitCost > 0)) out.push('سعر الشراء');
+    if (!(Number(r.salePrice || 0) > 0)) out.push('سعر البيع');
+    // "فيها كام" ناقصة بس لو كاتب نوع عبوة مش وحدة بيع
+    const pt = (r.packType || '').trim();
+    if (pt && !Units.isBaseUnit(pt) && !(Number(r.packSize || 0) > 0)) out.push('فيها كام');
+    return out;
+  }
+
+  function incompleteRows() {
+    return rows.filter(r => (r.name || '').trim() && missingIn(r).length);
   }
 
   function headerHint() {
@@ -119,10 +187,33 @@ Modules.purchases = (() => {
   async function render(container, keepEdit) {
     await AppState.reloadItems();
     await AppState.reloadParties();
-    if (!keepEdit) { editing = null; rows = [blankRow()]; }
+    let draft = null;
+    if (!keepEdit) {
+      editing = null;
+      /* لو فيه فاتورة لسه ما اتحفظتش بنرجّعها بدل ما نبدأ من الأول */
+      draft = readDraft();
+      if (draft) {
+        rows = draft.rows;
+        rowSeq = Math.max(rowSeq, ...draft.rows.map(r => Number(r._id) || 0));
+        restored = true;
+      } else {
+        rows = [blankRow()];
+        restored = false;
+      }
+    }
     if (detachScanner) { detachScanner(); detachScanner = null; }
 
     container.innerHTML = `
+      ${restored && !editing ? `
+      <div class="draft-banner" id="draftBanner">
+        <div>
+          <strong>رجّعنالك الفاتورة اللي كنت بتكتبها</strong>
+          <div class="hint" style="margin-top:2px;">
+            آخر تعديل ${draft ? Utils.formatDateTime(draft.at) : ''} — كمّل عادي، ولا اتحفظت لسه
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="dropDraft">امسحها وابدأ جديدة</button>
+      </div>` : ''}
       ${editing ? `
       <div class="edit-banner">
         <div>
@@ -305,9 +396,32 @@ Modules.purchases = (() => {
       container.querySelector('#paidNow').value = '0'; updateTotals(container);
     });
     container.querySelector('#clearInv').addEventListener('click', async () => {
-      if (filledRows().length && !(await Utils.confirmDialog('هتمسح الفاتورة وتبدأ واحدة جديدة؟'))) return;
+      if (hasContent() && !(await Utils.confirmDialog('هتمسح الفاتورة وتبدأ واحدة جديدة؟'))) return;
+      clearDraft();
       render(container);
     });
+
+    const dropBtn = container.querySelector('#dropDraft');
+    if (dropBtn) dropBtn.addEventListener('click', async () => {
+      if (!(await Utils.confirmDialog('هتمسح الفاتورة اللي كنت بتكتبها وتبدأ واحدة جديدة؟'))) return;
+      clearDraft();
+      render(container);
+    });
+
+    /* أي حرف بيكتبه في أي خانة بيتحفظ في المسودة — عشان لو ساب
+       الشاشة أو البرنامج قفل يلاقيها زي ما سابها */
+    container.addEventListener('input', () => scheduleDraft(container));
+    container.addEventListener('change', () => scheduleDraft(container));
+
+    if (draft) {
+      const sup = container.querySelector('#supplierName');
+      if (sup && draft.supplier) sup.value = draft.supplier;
+      const dt = container.querySelector('#invDate');
+      if (dt && draft.date) dt.value = draft.date;
+      const pd = container.querySelector('#paidNow');
+      if (pd && draft.paid) pd.value = draft.paid;
+      updateTotals(container);
+    }
     container.querySelector('#saveInv').addEventListener('click', () => doSave(container));
 
     /* ملصقات بنود الفاتورة.
@@ -372,8 +486,9 @@ Modules.purchases = (() => {
     body.innerHTML = rows.map((r, idx) => {
       const c = calc(r);
       const u = effUnit(r);
+      const gaps = missingIn(r);
       return `
-      <tr data-id="${r._id}">
+      <tr data-id="${r._id}"${gaps.length ? ` class="row-missing" title="ناقص: ${Utils.escapeHtml(gaps.join(' · '))}"` : ''}>
         <td data-label="#" class="row-num">${idx + 1}</td>
         <td data-label="الباركود">
           <div class="cell-scan">
@@ -608,6 +723,12 @@ Modules.purchases = (() => {
     const c = calc(r);
     const u = effUnit(r);
     tr.querySelector('.line-sum').textContent = Utils.formatMoney(c.lineTotal);
+
+    /* السطر الناقص بيتنوّر أحمر وانت بتكتب — عشان تشوف بعينك
+       اللي لسه محتاج تكمّله قبل ما تحفظ */
+    const gaps = missingIn(r);
+    tr.classList.toggle('row-missing', gaps.length > 0);
+    tr.title = gaps.length ? 'ناقص: ' + gaps.join(' · ') : '';
     const box = tr.querySelector('.cell-unitcost');
     if (box) {
       box.innerHTML = c.unitCost > 0
@@ -662,14 +783,29 @@ Modules.purchases = (() => {
     if (saving) return;   // الحفظ شغال بالفعل — مش هنعمله تاني
 
     const valid = filledRows();
-    if (!valid.length) { Utils.toast('اكتب صنف واحد على الأقل بكمية وسعر', 'error'); Utils.beep('error'); return; }
+    if (!valid.length) { Utils.toast('اكتب صنف واحد على الأقل بكمية', 'error'); Utils.beep('error'); return; }
 
+    /* الاسم والكمية لازمين — من غيرهم السطر مالوش معنى.
+       السعر لأ: البضاعة بتوصل والتاجر لسه ما بعتش السعر. */
     for (const r of rows) {
       const c = calc(r);
       if (!(r.name || '').trim() && !r.barcode && !r.qty && !r.price) continue;
       if (!(r.name || '').trim()) { Utils.toast('فيه سطر من غير اسم صنف', 'error'); Utils.beep('error'); return; }
       if (!(c.totalUnits > 0)) { Utils.toast(`اكتب الكمية للصنف: ${r.name}`, 'error'); Utils.beep('error'); return; }
-      if (!(c.unitCost > 0)) { Utils.toast(`اكتب السعر للصنف: ${r.name}`, 'error'); Utils.beep('error'); return; }
+    }
+
+    /* الأسعار الناقصة بتتحفظ — بس بنفكّره، عشان الصنف اللي تكلفته
+       صفر لو اتباع هيطلع ربحه غلط لحد ما يكمّل السعر. */
+    const short = incompleteRows();
+    if (short.length) {
+      const list = short.slice(0, 6).map(r => `• ${r.name} — ناقص ${missingIn(r).join(' و')}`).join('\n');
+      const ok = await Utils.confirmDialog(
+        `فيه ${short.length} سطر ناقص:\n\n${list}` +
+        (short.length > 6 ? `\n… و${short.length - 6} كمان` : '') +
+        `\n\nهتتحفظ عادي وهتلاقيها بالأحمر في الفاتورة عشان تكمّلها بعدين.` +
+        `\nبس خلي بالك: الصنف اللي سعر شرائه ناقص لو اتباع، ربحه هيطلع غلط لحد ما تكمّله.` +
+        `\n\nنحفظ كده؟`);
+      if (!ok) return;
     }
 
     const dateVal = container.querySelector('#invDate').value;
@@ -757,11 +893,14 @@ Modules.purchases = (() => {
           if (changed) await DB.put('items', it);
         }
       }
+      const gaps = missingIn(r);
       lines.push({
         itemId, name: r.name.trim(), unit: u,
         qty: c.totalUnits, cost: c.unitCost,
         packQty: c.pack ? c.qty : null, packCost: c.pack ? c.price : null,
-        packSize: c.pack ? c.size : null, packName: c.pack ? r.packType : null
+        packSize: c.pack ? c.size : null, packName: c.pack ? r.packType : null,
+        // اللي لسه ناقص في السطر — عشان يبان أحمر في الفاتورة بعدين
+        missing: gaps.length ? gaps : undefined
       });
     }
 
@@ -777,7 +916,12 @@ Modules.purchases = (() => {
     Utils.toast(
       (editing ? `اتعدّلت الفاتورة ${res.number}` : `اتحفظت الفاتورة ${res.number}`) +
       (res.dueAmount > 0 ? ` — باقي ${Utils.formatMoney(res.dueAmount)} على المورد` : ''), 'success');
+    /* المسودة بتتمسح بس لو كنا بنحفظ فاتورة جديدة. لو كان بيعدّل
+       فاتورة قديمة، يبقى ممكن يكون سايب فاتورة جديدة نصّها مكتوبة —
+       ماينفعش نمسحهاله. */
+    const wasEditing = !!editing;
     editing = null;
+    if (!wasEditing) clearDraft();
     render(container);            // بيرسم الشاشة من جديد بزرار جديد
 
     /* أحسن وقت يطبع فيه الملصقات هو دلوقتي — البضاعة الجديدة لسه
@@ -835,11 +979,15 @@ Modules.purchases = (() => {
 
     box.innerHTML = `
       ${searching ? `<div class="hint" style="margin-bottom:8px;">لقينا <strong>${list.length}</strong> فاتورة</div>` : ''}
-      ${list.map(p => `
-      <div class="line-card clickable" data-id="${p.id}">
+      ${list.map(p => {
+      // فاتورة فيها أسعار لسه ناقصة — بتبان أحمر عشان يفتكر يكمّلها
+      const gaps = (p.lines || []).filter(l => l.missing && l.missing.length).length;
+      return `
+      <div class="line-card clickable${gaps && !p.voided ? ' card-missing' : ''}" data-id="${p.id}">
         <div class="line-main open-doc">
           <div class="line-name"><span class="stmt-link">${p.number}</span>
             ${p.voided ? '<span class="badge badge-danger">ملغاة</span>' : ''}
+            ${gaps && !p.voided ? `<span class="badge badge-danger">${gaps} سطر ناقص</span>` : ''}
             ${p.editedAt ? '<span class="badge badge-muted">اتعدّلت</span>' : ''}</div>
           <div class="line-detail">${Utils.formatDate(p.date)} · ${Utils.escapeHtml(supName(p.supplierId))} · ${p.lines.length} صنف${p.dueAmount > 0 ? ' · <span style="color:var(--amber-deep)">آجل ' + Utils.formatMoney(p.dueAmount) + '</span>' : ''}</div>
         </div>
@@ -849,7 +997,7 @@ Modules.purchases = (() => {
           ${!p.voided ? '<button class="icon-btn edit-btn" title="تعديل الفاتورة">✏️</button>' : ''}
           ${!p.voided ? '<button class="icon-btn void-btn" title="مسح الفاتورة">🗑️</button>' : ''}
         </div>
-      </div>`).join('')}`;
+      </div>`; }).join('')}`;
 
     box.querySelectorAll('.open-doc').forEach(el => el.addEventListener('click', (e) => {
       Views.showInvoice('purchases', Number(e.currentTarget.closest('.line-card').dataset.id));

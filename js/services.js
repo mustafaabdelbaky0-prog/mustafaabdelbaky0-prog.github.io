@@ -473,7 +473,10 @@ const Services = (() => {
         if (item) {
           const av = _avgIn(item.stock || 0, item.costPrice || 0, line.qty, line.cost);
           item.stock = av.qty;
-          item.costPrice = av.cost;
+          /* لو السعر لسه ما اتكتبش (البضاعة وصلت والتاجر ما بعتش
+             السعر)، مبنغيّرش التكلفة المتوسطة — وإلا الصفر ده هيسحب
+             متوسط التكلفة لتحت ويخلي الأرباح تبان أعلى من الحقيقة. */
+          if (Number(line.cost) > 0) item.costPrice = av.cost;
           // بنفتكر آخر مورد جبنا منه الصنف — عشان لما نرجّعه يطلع اسمه لوحده
           if (purchase.supplierId) item.lastSupplierId = purchase.supplierId;
           await DB.reqToPromise(itemsStore.put(item));
