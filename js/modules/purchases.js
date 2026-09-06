@@ -114,6 +114,54 @@ Modules.purchases = (() => {
                           Number(r.qty || 0) > 0 || Number(r.price || 0) > 0);
   }
 
+  /* ---------- البحث جوه سطور الفاتورة ----------
+     الفاتورة ممكن تبقى ٤٠ سطر. لما يدوّر على صنف عشان يعدّله،
+     بنخبّي السطور اللي مش مطابقة بدل ما يفضل يدوّر بعينه.
+
+     مهم: الخبي شكلي بس — السطور كلها بتفضل في الفاتورة والإجماليات
+     بتتحسب على الكل، عشان البحث ما يبوّظش الفاتورة. */
+  let rowFilter = '';
+
+  function rowMatches(r, q) {
+    if (!q) return true;
+    return [r.name, r.barcode, r.category, r.packType, r.unit]
+      .map(v => String(v || '').toLowerCase()).join(' ').includes(q);
+  }
+
+  function applyRowFilter(container) {
+    const body = container.querySelector('#invBody');
+    if (!body) return;
+    const q = rowFilter.trim().toLowerCase();
+    let shown = 0;
+    body.querySelectorAll('tr[data-id]').forEach(tr => {
+      const r = rows.find(x => x._id === Number(tr.dataset.id));
+      const ok = !r || rowMatches(r, q);
+      tr.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    const cnt = container.querySelector('#rowFindCount');
+    const clr = container.querySelector('#rowFindClear');
+    if (cnt) cnt.textContent = q ? `${shown} من ${rows.length} سطر` : '';
+    if (clr) clr.hidden = !q;
+
+    /* لو البحث خبّى كل السطور، الجدول بيبقى فاضي خالص وشكله كإن
+       البرنامج باظ — بنكتبله إن مفيش نتيجة وإن الفاتورة زي ما هي. */
+    let msg = body.querySelector('.rf-empty');
+    if (q && shown === 0) {
+      if (!msg) {
+        msg = document.createElement('tr');
+        msg.className = 'empty-row rf-empty';
+        msg.innerHTML = `<td colspan="12"></td>`;
+        body.appendChild(msg);
+      }
+      msg.querySelector('td').textContent =
+        `مفيش سطر فيه "${rowFilter.trim()}" في الفاتورة دي — السطور الـ${rows.length} كلها زي ما هي`;
+      msg.style.display = '';
+    } else if (msg) {
+      msg.remove();
+    }
+  }
+
   function saveDraft(container) {
     if (editing) return;                 // تعديل فاتورة متسجلة — مش مسودة
     try {
@@ -229,6 +277,7 @@ Modules.purchases = (() => {
   async function render(container, keepEdit) {
     await AppState.reloadItems();
     await AppState.reloadParties();
+    rowFilter = '';   // بحث السطور بيبدأ فاضي كل مرة تفتح الشاشة
     let draft = null;
     if (!keepEdit) {
       editing = null;
@@ -286,6 +335,15 @@ Modules.purchases = (() => {
         <div class="scan-strip">
           <span>📡 امسح بالليزر في أي وقت — الصنف هيتحط في سطر جديد لوحده</span>
           <button type="button" class="btn btn-ghost btn-sm" id="camBtn">📷 كاميرا</button>
+        </div>
+
+        <!-- بحث جوه سطور الفاتورة نفسها: الفاتورة ممكن تبقى ٤٠ سطر
+             وعايز توصل لسطر معيّن تعدّله من غير ما تفضل تدوّر بعينك -->
+        <div class="row-find">
+          <span class="rf-ic">🔍</span>
+          <input type="text" id="rowFind" placeholder="دوّر في سطور الفاتورة دي — بالاسم أو الباركود أو النوع" autocomplete="off">
+          <button type="button" class="btn btn-ghost btn-sm" id="rowFindClear" hidden>امسح البحث</button>
+          <span class="rf-count" id="rowFindCount"></span>
         </div>
 
         <div class="table-wrap invoice-table-wrap">
@@ -455,6 +513,23 @@ Modules.purchases = (() => {
     container.addEventListener('input', () => scheduleDraft(container));
     container.addEventListener('change', () => scheduleDraft(container));
     startAutoSave();
+
+    // البحث في سطور الفاتورة
+    const findEl = container.querySelector('#rowFind');
+    if (findEl) {
+      findEl.value = rowFilter;
+      findEl.addEventListener('input', () => {
+        rowFilter = findEl.value;
+        applyRowFilter(container);
+      });
+      container.querySelector('#rowFindClear').addEventListener('click', () => {
+        rowFilter = ''; findEl.value = ''; applyRowFilter(container); findEl.focus();
+      });
+      findEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { rowFilter = ''; findEl.value = ''; applyRowFilter(container); }
+      });
+      applyRowFilter(container);
+    }
 
     /* البحث جوّه خانات الجدول: الباركود والصنف والنوع.
        بيتربط بالجدول مرة واحدة — الجدول بيتعاد رسمه كتير وانت
@@ -658,10 +733,18 @@ Modules.purchases = (() => {
 
     bindRows(container);
     updateTotals(container);
+    applyRowFilter(container);   // البحث بيفضل شغال بعد إعادة رسم الجدول
 
     if (focusRowId) {
       const tr = body.querySelector(`tr[data-id="${focusRowId}"]`);
       if (tr) {
+        // لو السطر متخبي بالبحث بنشيل البحث عشان يشوفه
+        if (tr.style.display === 'none') {
+          rowFilter = '';
+          const fe = container.querySelector('#rowFind');
+          if (fe) fe.value = '';
+          applyRowFilter(container);
+        }
         /* أي خانة في السطر — والاسم بييجي من الكلاس (f-qty ← qty).
            لو الخانة دي مش موجودة في السطر الجديد (مثلاً سعر العبوة
            بيظهر بس لما يكون بيشتري بالعبوة) بنرجع للكمية. */

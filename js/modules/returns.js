@@ -114,6 +114,14 @@ Modules.returns = (() => {
           <button type="button" class="btn btn-ghost btn-sm" id="camBtn">📷 كاميرا</button>
         </div>
 
+        <!-- بحث جوه سطور الفاتورة نفسها -->
+        <div class="row-find">
+          <span class="rf-ic">🔍</span>
+          <input type="text" id="rowFind" placeholder="دوّر في سطور الفاتورة دي — بالاسم أو الباركود" autocomplete="off">
+          <button type="button" class="btn btn-ghost btn-sm" id="rowFindClear" hidden>امسح البحث</button>
+          <span class="rf-count" id="rowFindCount"></span>
+        </div>
+
         <div class="table-wrap invoice-table-wrap">
           <table class="invoice-table ret-table">
             <thead>
@@ -293,7 +301,9 @@ Modules.returns = (() => {
     }).join('');
 
     bindRows(container);
+    applyRowFilter(container);   // البحث بيفضل شغال بعد إعادة رسم الجدول
     bindPicker(container);
+    bindRowFind(container);
     updateTotals(container);
 
     if (focusId) {
@@ -327,6 +337,60 @@ Modules.returns = (() => {
       '.f-barcode': { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take },
       '.f-name':    { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take }
     });
+  }
+
+  /* بحث جوه سطور الفاتورة — بيخبّي اللي مش مطابق شكليًا بس،
+     السطور كلها بتفضل في الفاتورة والإجماليات على الكل */
+  let rowFilter = '';
+  function rowMatches(r, q) {
+    if (!q) return true;
+    return [r.name, r.barcode, r.unit, r.packName]
+      .map(v => String(v || '').toLowerCase()).join(' ').includes(q);
+  }
+  function applyRowFilter(container) {
+    const body = container.querySelector('#retBody');
+    if (!body) return;
+    const q = rowFilter.trim().toLowerCase();
+    let shown = 0;
+    body.querySelectorAll('tr[data-id]').forEach(tr => {
+      const r = rows.find(x => x._id === Number(tr.dataset.id));
+      const ok = !r || rowMatches(r, q);
+      tr.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    const cnt = container.querySelector('#rowFindCount');
+    const clr = container.querySelector('#rowFindClear');
+    if (cnt) cnt.textContent = q ? shown + ' من ' + rows.length + ' سطر' : '';
+    if (clr) clr.hidden = !q;
+    /* لو البحث خبّى كل السطور بنكتبله إن مفيش نتيجة — عشان الجدول
+       الفاضي شكله كإن البرنامج باظ */
+    let msg = body.querySelector('.rf-empty');
+    if (q && shown === 0) {
+      if (!msg) {
+        msg = document.createElement('tr');
+        msg.className = 'empty-row rf-empty';
+        msg.innerHTML = '<td colspan="12"></td>';
+        body.appendChild(msg);
+      }
+      msg.querySelector('td').textContent =
+        'مفيش سطر فيه "' + rowFilter.trim() + '" في الفاتورة دي — السطور الـ' + rows.length + ' كلها زي ما هي';
+      msg.style.display = '';
+    } else if (msg) { msg.remove(); }
+  }
+  let findBound = null;
+  function bindRowFind(container) {
+    const el = container.querySelector('#rowFind');
+    if (!el) return;
+    el.value = rowFilter;
+    if (findBound === el) return;   // الجدول بيتعاد رسمه كتير — مننفعش نربط مرتين
+    findBound = el;
+    el.addEventListener('input', () => { rowFilter = el.value; applyRowFilter(container); });
+    const c = container.querySelector('#rowFindClear');
+    if (c) c.addEventListener('click', () => { rowFilter = ''; el.value = ''; applyRowFilter(container); el.focus(); });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { rowFilter = ''; el.value = ''; applyRowFilter(container); }
+    });
+    applyRowFilter(container);
   }
 
   function bindRows(container) {

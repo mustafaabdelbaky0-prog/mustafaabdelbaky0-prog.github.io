@@ -733,6 +733,23 @@ tr.row-missing select.cell{border-color:#E9A8A8;}
 .pick-stock.neg{color:var(--danger);}
 .pick-cost{font-size:10.5px;color:var(--ink-soft);}
 
+/* ===== البحث جوه سطور الفاتورة ===== */
+.row-find{
+  display:flex;align-items:center;gap:10px;margin:0 0 10px;
+  background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 12px;
+}
+.row-find .rf-ic{font-size:15px;opacity:.7;flex:0 0 auto;}
+.row-find input{
+  flex:1;min-width:0;border:none;outline:none;background:transparent;
+  font-size:13.5px;font-family:inherit;color:var(--ink);padding:4px 0;
+}
+.row-find input::placeholder{color:var(--ink-soft);opacity:.75;}
+.row-find .btn{flex:0 0 auto;}
+.row-find .rf-count{
+  flex:0 0 auto;font-size:12px;font-weight:800;color:var(--ink-soft);
+  font-variant-numeric:tabular-nums;
+}
+
 /* ===== بضاعة اتباعت ولسه ما اتسجلتش / خزنة بالسالب ===== */
 .nav-badge.badge-neg{background:var(--danger);color:#fff;}
 .cash-pill.cash-neg{background:var(--danger-bg);border-color:var(--danger);}
