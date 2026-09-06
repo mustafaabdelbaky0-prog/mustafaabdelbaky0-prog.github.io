@@ -981,6 +981,33 @@ Modules.purchases = (() => {
       if (!(c.totalUnits > 0)) { Utils.toast(`اكتب الكمية للصنف: ${r.name}`, 'error'); Utils.beep('error'); return; }
     }
 
+    /* نفس الصنف مكتوب في أكتر من سطر بسعرين بيع مختلفين.
+
+       الصنف الواحد ليه سعر بيع واحد — مينفعش نفس الباركود يبقى
+       بسعرين. لو فعلاً حاجتين مختلفين (مقاس تاني مثلاً) لازم اسم
+       مختلف عشان يتسجلوا صنفين. */
+    const byName = {};
+    for (const r of valid) {
+      const nm = r.name.trim();
+      const sale = Number(r.salePrice || 0);
+      if (!nm || !(sale > 0)) continue;
+      (byName[nm] = byName[nm] || []).push(sale);
+    }
+    const clash = Object.keys(byName)
+      .map(nm => ({ nm, prices: [...new Set(byName[nm])] }))
+      .filter(x => x.prices.length > 1);
+    if (clash.length) {
+      Utils.beep('error');
+      const ok = await Utils.confirmDialog(
+        `فيه صنف مكتوب في أكتر من سطر بسعر بيع مختلف:\n\n` +
+        clash.map(x => `• ${x.nm} — ${x.prices.map(p => Utils.formatMoney(p)).join(' و ')}`).join('\n') +
+        `\n\nالصنف الواحد ليه سعر بيع واحد. لو دول فعلاً حاجتين مختلفين ` +
+        `(مقاس أو نوع تاني) غيّر الاسم عشان يتسجلوا صنفين.\n` +
+        `لو نفس الصنف، وحّد سعر البيع.\n\n` +
+        `تكمّل كده؟ (هياخد آخر سعر كتبته)`);
+      if (!ok) return;
+    }
+
     /* الأسعار الناقصة بتتحفظ — بس بنفكّره، عشان الصنف اللي تكلفته
        صفر لو اتباع هيطلع ربحه غلط لحد ما يكمّل السعر. */
     const short = incompleteRows();
@@ -1034,10 +1061,20 @@ Modules.purchases = (() => {
       const packSale = c.pack ? Number(r.packSalePrice || 0) : 0;
       let itemId = r.itemId;
 
+      const nameKey = 'اسم|' + r.name.trim();
+
       // لو الاسم مطابق لصنف موجود بس المستخدم مادوسش برّه الخانة، نلاقيه هنا
       if (!itemId) {
         const byName = AppState.items.find(i => (i.name || '').trim() === r.name.trim());
         if (byName && !(r.barcode || '').trim()) itemId = byName.id;
+      }
+
+      /* ومهم: لو الصنف ده اتعمل في سطر قبل كده في نفس الفاتورة.
+         AppState.items بتتحمّل مرة واحدة في أول الشاشة، فالصنف اللي
+         اتعمل دلوقتي مش موجود فيها — وده اللي كان بيخلي سطرين بنفس
+         الاسم يعملوا صنفين بباركودين مختلفين. */
+      if (!itemId && createdInThisInvoice.has(nameKey)) {
+        itemId = createdInThisInvoice.get(nameKey);
       }
 
       if (!itemId) {
@@ -1062,6 +1099,7 @@ Modules.purchases = (() => {
           createdInThisInvoice.set(barcode, itemId);
           newItemIds.push(itemId);
           createdInThisInvoice.set(key, itemId);
+          createdInThisInvoice.set(nameKey, itemId);   // عشان باقي سطور نفس الفاتورة
         }
       }
       if (itemId) {

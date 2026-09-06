@@ -44,6 +44,7 @@ Modules.items = (() => {
           <input type="text" id="itemSearch" placeholder="ابحث بالاسم أو الباركود...">
         </div>
         <div class="tag-row">
+          <button class="btn btn-ghost" id="dupBtn">🔗 أصناف مكررة <span class="nav-badge" id="dupBadge" hidden></span></button>
           <button class="btn btn-ghost" id="bulkLabelBtn">🏷️ طباعة ملصقات</button>
           ${Auth.isSeller() ? '' : '<button class="btn btn-amber" id="addItemBtn">+ إضافة صنف جديد</button>'}
         </div>
@@ -82,6 +83,21 @@ Modules.items = (() => {
     const addBtn = container.querySelector('#addItemBtn');
     if (addBtn) addBtn.addEventListener('click', () => openItemForm());
     container.querySelector('#bulkLabelBtn').addEventListener('click', () => openBulkLabels());
+
+    // الأصناف المكررة — بنعدّها ونحطها على الزرار
+    async function refreshDupBadge() {
+      try {
+        const d = await Services.duplicateItems();
+        const n = d.groups.length + d.codeDups.length;
+        const b = container.querySelector('#dupBadge');
+        if (!b) return;
+        if (n > 0) { b.textContent = n; b.hidden = false; b.classList.add('badge-neg'); }
+        else b.hidden = true;
+      } catch (e) { }
+    }
+    refreshDupBadge();
+    container.querySelector('#dupBtn').addEventListener('click', () =>
+      openDuplicates(() => { render(container); }));
 
     tbody.addEventListener('click', async (e) => {
       const tr = e.target.closest('tr');
@@ -343,6 +359,106 @@ Modules.items = (() => {
       }
     });
     return { close };
+  }
+
+  /* ---------- الأصناف المكررة ----------
+     بيحصل لما يكتب نفس الصنف في سطرين في نفس الفاتورة. النتيجة
+     صنفين بباركودين والرصيد متقسّم بينهم. هنا بيشوفهم وبيدمجهم. */
+  async function openDuplicates(onDone) {
+    const d = await Services.duplicateItems();
+    const rows = [];
+
+    for (const g of d.codeDups) {
+      rows.push({ key: 'c' + g.barcode, title: `باركود مكرر: ${g.barcode}`,
+                  bad: true, items: g.items, why: 'نفس الباركود لصنفين — ده مينفعش خالص' });
+    }
+    for (const g of d.groups) {
+      rows.push({
+        key: 'n' + g.name, title: g.name, bad: !g.samePrice, items: g.items,
+        why: g.samePrice
+          ? 'نفس الاسم ونفس سعر البيع — غالبًا هما نفس الصنف'
+          : `نفس الاسم بس سعر البيع مختلف (${g.prices.map(p => Utils.formatMoney(p)).join(' و ')}) — ` +
+            'لو دول فعلاً حاجتين مختلفين غيّر الاسم، ولو نفس الصنف وحّد السعر وادمجهم'
+      });
+    }
+
+    const { close } = Utils.openModal({
+      title: 'أصناف اتسجلت أكتر من مرة',
+      wide: true,
+      bodyHtml: rows.length ? `
+        <div class="notice notice-ok" style="margin-bottom:14px;line-height:1.9;">
+          الدمج بينقل كل حاجة للصنف اللي هتختاره: الرصيد وحركات المخزن
+          وسطور فواتير البيع والشرا والمرتجعات. والتكلفة بتتحسب من الأول
+          من الحركات كلها. <strong>مفيش حاجة بتضيع.</strong>
+        </div>
+        <div id="dupList">
+          ${rows.map((g, gi) => `
+            <div class="card ${g.bad ? 'card-missing' : ''}" style="padding:14px;margin-bottom:12px;" data-g="${gi}">
+              <div style="font-weight:800;font-size:15px;margin-bottom:2px;">${Utils.escapeHtml(g.title)}</div>
+              <div class="hint" style="margin-bottom:10px;">${Utils.escapeHtml(g.why)}</div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th style="width:120px;">يفضل ده</th><th>الاسم</th><th>الباركود</th>
+                    <th>سعر البيع</th><th>سعر الشرا</th><th>الرصيد</th></tr></thead>
+                  <tbody>
+                    ${g.items.map((i, ii) => `
+                      <tr>
+                        <td><label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                          <input type="radio" name="keep${gi}" value="${i.id}" ${ii === 0 ? 'checked' : ''}>
+                          <span>${ii === 0 ? 'الأساسي' : ''}</span></label></td>
+                        <td style="font-weight:700;">${Utils.escapeHtml(i.name)}</td>
+                        <td style="font-family:monospace;">${Utils.escapeHtml(i.barcode || '—')}</td>
+                        <td>${Utils.formatMoney(i.salePrice)}</td>
+                        <td>${Utils.formatMoney(i.costPrice)}</td>
+                        <td>${Units.fmtQty(i.stock, i.unit)}</td>
+                      </tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>
+              <div class="form-actions" style="margin-top:10px;">
+                <button type="button" class="btn btn-amber merge-btn" data-g="${gi}">🔗 ادمجهم في المختار</button>
+              </div>
+            </div>`).join('')}
+        </div>`
+        : `<div class="empty-state" style="padding:28px;">
+             <div class="ic">✅</div>مفيش أصناف مكررة — كل صنف متسجل مرة واحدة.
+           </div>`,
+      onMount: (body, closeFn) => {
+        body.querySelectorAll('.merge-btn').forEach(btn => btn.addEventListener('click', async () => {
+          const gi = Number(btn.dataset.g);
+          const g = rows[gi];
+          const picked = Number(body.querySelector(`input[name="keep${gi}"]:checked`).value);
+          const others = g.items.filter(i => Number(i.id) !== picked);
+          const keep = g.items.find(i => Number(i.id) === picked);
+
+          const ok = await Utils.confirmDialog(
+            `هندمج ${others.length + 1} صنف في:\n\n` +
+            `• ${keep.name} — باركود ${keep.barcode}\n\n` +
+            `واللي هيتشال:\n` + others.map(o => `• ${o.name} — باركود ${o.barcode} — رصيد ${o.stock}`).join('\n') +
+            `\n\nكل الرصيد والحركات والفواتير هتتنقل للصنف الأساسي. نكمّل؟`);
+          if (!ok) return;
+
+          btn.disabled = true; btn.textContent = 'بيدمج...';
+          try {
+            let moved = 0, docs = 0, res = null;
+            for (const o of others) {
+              res = await Services.mergeItems(picked, o.id);
+              moved += res.moved; docs += res.docs;
+            }
+            await AppState.reloadItems();
+            Utils.beep('ok');
+            Utils.toast(`اتدمجوا — اتنقل ${moved} حركة و${docs} فاتورة. ` +
+                        `الرصيد بقى ${res.stock} والتكلفة ${Utils.formatMoney(res.cost)}`, 'success');
+            closeFn();
+            if (onDone) onDone();
+          } catch (e) {
+            btn.disabled = false; btn.textContent = '🔗 ادمجهم في المختار';
+            Utils.beep('error');
+            await Utils.confirmDialog('الدمج مانجحش: ' + (e.message || e));
+          }
+        }));
+      }
+    });
   }
 
   function openLabelDialog(item) {

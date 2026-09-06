@@ -1542,6 +1542,149 @@ const Services = (() => {
     };
   }
 
+  /* ---------- دمج صنفين اتسجلوا بالغلط مرتين ----------
+
+     بيحصل لما يكتب نفس الصنف في سطرين في نفس الفاتورة (البرنامج
+     كان بيعمله صنفين بباركودين). النتيجة: الرصيد متقسّم على اتنين،
+     والتكلفة المتوسطة غلط، ومنه ملصقين بباركودين.
+
+     الدمج بينقل كل حاجة من الصنف الزيادة للصنف اللي هيفضل: حركات
+     المخزن، وسطور فواتير البيع والشرا والمرتجعات. وبعدين بنحسب
+     الرصيد والتكلفة من الحركات كلها من الأول عشان يطلعوا صح. */
+  async function mergeItems(keepId, dropId) {
+    keepId = Number(keepId); dropId = Number(dropId);
+    if (!keepId || !dropId || keepId === dropId) throw new Error('اختار صنفين مختلفين');
+
+    return DB.tx(['items', 'stockMovements', 'sales', 'purchases', 'returns'], 'readwrite', async (t) => {
+      const itemsStore = t.objectStore('items');
+      const keep = await DB.reqToPromise(itemsStore.get(keepId));
+      const drop = await DB.reqToPromise(itemsStore.get(dropId));
+      if (!keep || !drop) throw new Error('صنف مش موجود');
+
+      let moved = 0, docs = 0;
+
+      // ١) حركات المخزن
+      const movStore = t.objectStore('stockMovements');
+      const movs = await DB.reqToPromise(movStore.getAll());
+      for (const m of movs) {
+        if (Number(m.itemId) !== dropId) continue;
+        m.itemId = keepId;
+        m.updatedAt = Utils.nowISO();
+        await DB.reqToPromise(movStore.put(m));
+        moved++;
+      }
+
+      // ٢) سطور الفواتير والمرتجعات
+      for (const store of ['sales', 'purchases', 'returns']) {
+        const s = t.objectStore(store);
+        for (const doc of await DB.reqToPromise(s.getAll())) {
+          let touched = false;
+          for (const l of (doc.lines || [])) {
+            if (Number(l.itemId) !== dropId) continue;
+            l.itemId = keepId;
+            touched = true;
+          }
+          if (touched) {
+            doc.updatedAt = Utils.nowISO();
+            await DB.reqToPromise(s.put(doc));
+            docs++;
+          }
+        }
+      }
+
+      /* ٣) نعيد حساب الرصيد والتكلفة من الحركات كلها بالترتيب —
+            زي ما كان هيحصل لو الصنف كان واحد من الأول. */
+      const mine = (await DB.reqToPromise(movStore.getAll()))
+        .filter(m => Number(m.itemId) === keepId)
+        .sort((a, b) => {
+          const d = new Date(a.date) - new Date(b.date);
+          return d !== 0 ? d : (Number(a.id) - Number(b.id));
+        });
+      /* لازم نمشي بنفس قواعد البرنامج بالظبط:
+           • الشرا              ← بيغيّر المتوسط (_avgIn)
+           • إلغاء/تعديل شرا    ← بيرجّع المتوسط (_avgOut)
+           • البيع والمرتجع والجرد ← بيغيّروا الكمية بس، المتوسط زي ما هو
+         لو حسبنا البيع بـ _avgOut كانت التكلفة هتطلع غلط. */
+      let qty = 0, cost = 0;
+      for (const m of mine) {
+        const q = Number(m.qty || 0);
+        const c = Number(m.unitCost || 0);
+        const rt = String(m.refType || '');
+        if (q > 0 && rt === 'purchase') {
+          const av = _avgIn(qty, cost, q, c);
+          qty = av.qty; if (c > 0) cost = av.cost;
+        } else if (q < 0 && (rt === 'purchase-edit' || rt === 'purchase-void')) {
+          const av = _avgOut(qty, cost, -q, c);
+          qty = av.qty; cost = av.cost;
+        } else {
+          qty = Math.round((qty + q) * 1000) / 1000;
+        }
+      }
+      /* الرصيد = رصيد الاتنين مجموعين. ده أأمن من الحساب من الحركات:
+         لو صنف رصيده متسجل من غير حركة (استيراد قديم مثلاً) الحساب
+         من الحركات كان هيصفّره. والاتنين بيطلعوا نفس الرقم في
+         الحالة العادية لأن كل تغيير في الرصيد بيتكتب معاه حركة. */
+      const sumStock = Math.round(((Number(keep.stock || 0)) + (Number(drop.stock || 0))) * 1000) / 1000;
+      keep.stock = sumStock;
+      if (cost > 0) keep.costPrice = Math.round(cost * 10000) / 10000;
+      else {
+        // مفيش حركات شرا — بناخد متوسط التكلفتين بالرصيد
+        const kq = Math.max(0, Number(keep.stock || 0) - Number(drop.stock || 0));
+        const dq = Math.max(0, Number(drop.stock || 0));
+        const kc = Number(keep.costPrice || 0), dc = Number(drop.costPrice || 0);
+        if (kq + dq > 0 && (kc > 0 || dc > 0)) {
+          keep.costPrice = Math.round(((kq * kc + dq * dc) / (kq + dq)) * 10000) / 10000;
+        } else if (!(kc > 0) && dc > 0) keep.costPrice = dc;
+      }
+      keep.damagedQty = Math.round(((Number(keep.damagedQty || 0)) + (Number(drop.damagedQty || 0))) * 1000) / 1000;
+      // بناخد اللي مكتوب في الصنف الزيادة لو الأساسي فاضي
+      if (!(Number(keep.salePrice || 0) > 0) && Number(drop.salePrice || 0) > 0) keep.salePrice = drop.salePrice;
+      if (!(keep.category || '').trim() && (drop.category || '').trim()) keep.category = drop.category;
+      if (!(Number(keep.minStock || 0) > 0) && Number(drop.minStock || 0) > 0) keep.minStock = drop.minStock;
+      keep.updatedAt = Utils.nowISO();
+      await DB.reqToPromise(itemsStore.put(keep));
+
+      await DB.reqToPromise(itemsStore.delete(dropId));
+      return { moved, docs, stock: keep.stock, cost: keep.costPrice };
+    });
+  }
+
+  /* بيدوّر على الأصناف اللي اتسجلت مرتين — بنفس الاسم أو بنفس
+     الباركود. الاسم بيتقارن بعد ما نشيل المسافات الزيادة. */
+  async function duplicateItems() {
+    const items = await DB.getAll('items');
+    const norm = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const groups = [];
+    const seen = new Map();
+    for (const it of items) {
+      const k = 'n:' + norm(it.name);
+      if (!norm(it.name)) continue;
+      (seen.get(k) || seen.set(k, []).get(k)).push(it);
+    }
+    for (const [, list] of seen) {
+      if (list.length < 2) continue;
+      const prices = [...new Set(list.map(i => Number(i.salePrice || 0)))];
+      groups.push({
+        name: list[0].name,
+        items: list.sort((a, b) => Number(b.stock || 0) - Number(a.stock || 0)),
+        samePrice: prices.length === 1,
+        prices
+      });
+    }
+    // الباركود المتكرر (المفروض مستحيل، بس بنتأكد)
+    const byCode = new Map();
+    for (const it of items) {
+      const c = String(it.barcode || '').trim();
+      if (!c) continue;
+      (byCode.get(c) || byCode.set(c, []).get(c)).push(it);
+    }
+    const codeDups = [];
+    for (const [code, list] of byCode) {
+      if (list.length > 1) codeDups.push({ barcode: code, items: list });
+    }
+    return { groups, codeDups };
+  }
+
   // ---------- تسوية مخزون يدوية ----------
   async function adjustStock(itemId, newQty, note) {
     return DB.tx(['items', 'stockMovements'], 'readwrite', async (t) => {
@@ -1719,6 +1862,7 @@ const Services = (() => {
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
     closeDay, daySummary,
     isManualMove, isReversalMove, reversedMoveIds,
+    mergeItems, duplicateItems,
     updateTreasuryMove, deleteTreasuryMove,
     employeeAdvance, payEmployee, employeeAdjust, employeeSales,
     closePayrollMonth, voidPayrollClosing, voidEmployeeMove, monthRange,
