@@ -425,7 +425,7 @@ Modules.sales = (() => {
           </div>
         </td>
         <td data-label="الصنف">
-          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" list="itemNameList" placeholder="اسم الصنف" autocomplete="off">
+          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" placeholder="ابحث بالاسم أو الباركود" autocomplete="off">
           ${over ? `<div class="line-derived warn">المتاح ${Units.fmtQty(r.stock, r.unit)} بس</div>` : ''}
         </td>
         <td data-label="الكمية">

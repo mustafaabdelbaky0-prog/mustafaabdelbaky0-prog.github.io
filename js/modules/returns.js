@@ -247,7 +247,7 @@ Modules.returns = (() => {
           </div>
         </td>
         <td data-label="الصنف">
-          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" list="retItemList" placeholder="اسم الصنف" autocomplete="off">
+          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" placeholder="ابحث بالاسم أو الباركود" autocomplete="off">
           ${item ? `<div class="inv-sub">بالمخزن ${Units.fmtQty(stock, r.unit)}${damaged > 0 ? ` · تالف ${Units.fmtQty(damaged, r.unit)}` : ''}</div>` : ''}
         </td>
         <td data-label="العدد">

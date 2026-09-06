@@ -601,10 +601,10 @@ Modules.purchases = (() => {
           </div>
         </td>
         <td data-label="الصنف">
-          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" list="itemNameList" placeholder="اسم الصنف" autocomplete="off">
+          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" placeholder="ابحث بالاسم أو الباركود" autocomplete="off">
         </td>
         <td data-label="التصنيف">
-          <input type="text" class="cell f-category" value="${Utils.escapeHtml(r.category)}" list="catList" placeholder="كهرباء..." autocomplete="off">
+          <input type="text" class="cell f-category" value="${Utils.escapeHtml(r.category)}" placeholder="كهرباء..." autocomplete="off">
         </td>
         <td data-label="الكمية">
           <input type="number" class="cell f-qty num" value="${r.qty}" min="0"
@@ -612,7 +612,7 @@ Modules.purchases = (() => {
         </td>
         <td data-label="النوع">
           <input type="text" class="cell f-packtype" value="${Utils.escapeHtml(r.packType)}"
-                 list="typeList" placeholder="قطعة / كرتونة..." autocomplete="off">
+                 placeholder="قطعة / كرتونة..." autocomplete="off">
         </td>
         <td data-label="فيها كام">
           <div class="pack-cell">
