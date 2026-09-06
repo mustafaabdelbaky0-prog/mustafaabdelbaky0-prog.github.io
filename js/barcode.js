@@ -264,14 +264,33 @@ const Barcode = (() => {
   }
   function clearPageSize() { if (styleTag) styleTag.textContent = ''; }
 
+  // كام ملصق هيخرج فعلاً من الطابعة
+  function totalLabels(items) {
+    return (items || []).reduce((n, it) => n + Math.max(1, Number(it.count) || 1), 0);
+  }
+
   async function printLabels(items) {
     const area = document.getElementById('printArea');
     if (!area) return;
+
+    /* عدد كبير؟ نتأكد الأول. الطباعة صامتة فالورق بيخرج على طول،
+       ودوسة غلط ممكن تضيّع نص الرول. */
+    const n = totalLabels(items);
+    if (n > 30 && typeof Utils !== 'undefined' && Utils.confirmDialog) {
+      const ok = await Utils.confirmDialog(
+        `هتطبع ${n} ملصق.\n\nمتأكد؟ الطباعة بتبدأ على طول من غير نافذة.`);
+      if (!ok) return;
+    }
+
     const s = await labelSize();
     const shop = await labelShop();
     applyPageSize(s);
     area.innerHTML = labelSheet(items, s, shop);
-    setTimeout(() => window.print(), 200);
+    setTimeout(() => {
+      window.print();
+      // شريط "وقف الطباعة" — الطباعة صامتة فمفيش نافذة يلغي منها
+      if (typeof PrintStop !== 'undefined') PrintStop.watch(n, 'ملصق');
+    }, 200);
     /* مبنشيلش قاعدة المقاس بعد وقت معيّن.
 
        مع الطباعة الصامتة (kiosk-printing) الأمر بيرجع فورًا والطباعة

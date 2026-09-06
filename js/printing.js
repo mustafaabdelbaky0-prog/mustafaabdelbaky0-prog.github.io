@@ -24,7 +24,11 @@ const Printing = (() => {
     // الفاتورة بتطبع على ورق عادي — نشيل مقاس ملصق الباركود لو كان متحطوط
     if (typeof Barcode !== 'undefined' && Barcode.clearPageSize) Barcode.clearPageSize();
     area.innerHTML = `<div class="receipt">${html}</div>`;
-    setTimeout(() => window.print(), 150);
+    setTimeout(() => {
+      window.print();
+      // شريط "وقف الطباعة" — الطباعة صامتة فمفيش نافذة يلغي منها
+      if (typeof PrintStop !== 'undefined') PrintStop.watch(0, 'فاتورة');
+    }, 150);
   }
 
   /* فاتورة بيع أو شرا — بتشتغل على فاتورة متسجلة، فينفع تطبعها

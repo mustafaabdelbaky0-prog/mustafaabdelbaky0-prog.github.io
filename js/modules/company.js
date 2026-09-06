@@ -88,6 +88,16 @@ Modules.company = (() => {
             </div>
           </form>
 
+          <!-- زرار وقف الطباعة الدايم: لو الشريط اتقفل أو فات وقته -->
+          <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:16px;">
+            <div class="section-head" style="margin-bottom:8px;"><h3 style="font-size:15px;">الطابعة</h3></div>
+            <div class="hint" id="prnStatus" style="line-height:1.9;">بيشوف الطابعة...</div>
+            <div class="form-actions" style="margin-top:10px;">
+              <button type="button" class="btn btn-danger" id="prnCancel">🛑 وقف كل الطباعة</button>
+              <button type="button" class="btn btn-ghost" id="prnRefresh">تحديث</button>
+            </div>
+          </div>
+
           <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:16px;">
             <label class="ws-toggle" style="gap:10px;">
               <input type="checkbox" id="autoPrintInv" ${autoPrintInv ? 'checked' : ''}>
@@ -522,6 +532,41 @@ Modules.company = (() => {
         await Barcode.saveLabelShop(container.querySelector('#lblShop').value);
         Barcode.printLabels([{ name: 'ملصق تجربة', barcode: '10001', count: 1, price: 25 }]);
       });
+
+      /* حالة الطابعة وزرار الوقف — بيشتغل في أي وقت، مش بس بعد
+         الطباعة على طول زي الشريط اللي بيظهر تحت */
+      const prnBox = container.querySelector('#prnStatus');
+      async function showPrinter() {
+        if (!prnBox) return;
+        const list = await PrintStop.jobs();
+        if (list === null) { prnBox.textContent = 'مش عارف أوصل للطابعة من هنا.'; return; }
+        if (!list.length) { prnBox.innerHTML = '✅ مفيش ورق منتظر في الطابعة.'; return; }
+        const pages = list.reduce((s, j) => s + (Number(j.pages) || 0), 0);
+        const done = list.reduce((s, j) => s + (Number(j.printed) || 0), 0);
+        const bad = list.filter(j => ['Error', 'Offline'].includes(String(j.printerStatus || '')) ||
+                                     String(j.status || '').indexOf('Deleting') >= 0);
+        prnBox.innerHTML =
+          `⏳ في الطابعة <strong>${list.length}</strong> أمر طباعة · ` +
+          `<strong>${Math.max(0, pages - done)}</strong> ورقة لسه ما اتطبعتش من ${pages}.<br>` +
+          `<span class="muted">${list.map(j => Utils.escapeHtml(j.printer)).filter((v, i, a) => a.indexOf(v) === i).join('، ')}</span>` +
+          (bad.length
+            ? `<div style="color:var(--danger);font-weight:700;margin-top:6px;">
+                 ⚠️ فيه أمر عالق لأن الطابعة واقفة (مطفية أو الورق خلص).
+                 شغّل الطابعة وحط ورق — والأمر هيتلغي لوحده.
+               </div>` : '');
+      }
+      const prnCancel = container.querySelector('#prnCancel');
+      if (prnCancel) prnCancel.addEventListener('click', async () => {
+        const ok = await Utils.confirmDialog(
+          'هيوقف كل الورق المنتظر في الطابعة.\n\n' +
+          'اللي داخل الطابعة خلاص هيخرج (فيها ذاكرة صغيرة)، والباقي هيقف.\n\nنوقف؟');
+        if (!ok) return;
+        await PrintStop.stopNow();
+        setTimeout(showPrinter, 800);
+      });
+      const prnRefresh = container.querySelector('#prnRefresh');
+      if (prnRefresh) prnRefresh.addEventListener('click', showPrinter);
+      showPrinter();
 
       const apChk = container.querySelector('#autoPrintInv');
       if (apChk) apChk.addEventListener('change', async () => {
