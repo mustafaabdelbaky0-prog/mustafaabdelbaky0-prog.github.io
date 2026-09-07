@@ -749,6 +749,8 @@ tr.row-missing select.cell{border-color:#E9A8A8;}
   flex:0 0 auto;font-size:12px;font-weight:800;color:var(--ink-soft);
   font-variant-numeric:tabular-nums;
 }
+/* الأزرار اللي بتظهر لما البحث ملقاش سطر — بتوديه للي هو عايزه */
+.rf-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:8px;}
 
 /* ===== شريط "وقف الطباعة" ===== */
 .print-stop{

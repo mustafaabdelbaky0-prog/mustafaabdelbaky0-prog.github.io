@@ -177,7 +177,7 @@ Modules.sales = (() => {
         <!-- بحث جوه سطور الفاتورة نفسها -->
         <div class="row-find">
           <span class="rf-ic">🔍</span>
-          <input type="text" id="rowFind" placeholder="دوّر في سطور الفاتورة دي — بالاسم أو الباركود" autocomplete="off">
+          <input type="text" id="rowFind" placeholder="دوّر جوه سطور الفاتورة المفتوحة دي" autocomplete="off">
           <button type="button" class="btn btn-ghost btn-sm" id="rowFindClear" hidden>امسح البحث</button>
           <span class="rf-count" id="rowFindCount"></span>
         </div>
@@ -531,9 +531,29 @@ Modules.sales = (() => {
         msg.innerHTML = '<td colspan="12"></td>';
         body.appendChild(msg);
       }
-      msg.querySelector('td').textContent =
-        'مفيش سطر فيه "' + rowFilter.trim() + '" في الفاتورة دي — السطور الـ' + rows.length + ' كلها زي ما هي';
+      /* المستخدم بيكتب هنا اسم صنف وهو متوقع إنها تدوّرله عليه.
+         بدل ما نسيبه في طريق مسدود بنوريه الصنف ونخليه يضيفه. */
+      const term = rowFilter.trim();
+      const hit = Picker.searchItems(term)[0];
+      msg.querySelector('td').innerHTML =
+        '<div style="line-height:2;">مفيش سطر فيه "<strong>' + Utils.escapeHtml(term) +
+        '</strong>" في الفاتورة المفتوحة دي — السطور الـ' + rows.length + ' كلها زي ما هي.' +
+        (hit ? '<div class="rf-actions"><button type="button" class="btn btn-amber btn-sm" id="rfAdd" data-id="' +
+               hit.id + '">+ ضيف "' + Utils.escapeHtml(hit.name) + '" للفاتورة</button></div>' : '') +
+        '</div>';
       msg.style.display = '';
+      const addBtn = msg.querySelector('#rfAdd');
+      if (addBtn) addBtn.addEventListener('click', () => {
+        const it = AppState.items.find(i => Number(i.id) === Number(addBtn.dataset.id));
+        if (!it) return;
+        const blank = rows.find(r => !r.itemId && !(r.name || '').trim() && !(r.barcode || '').trim());
+        const target = blank || (rows.push(blankRow()), rows[rows.length - 1]);
+        applyItem(target, it);
+        rowFilter = '';
+        const fe = container.querySelector('#rowFind');
+        if (fe) fe.value = '';
+        drawRows(container, target._id, 'qty');
+      });
     } else if (msg) { msg.remove(); }
   }
   let findBound = null;

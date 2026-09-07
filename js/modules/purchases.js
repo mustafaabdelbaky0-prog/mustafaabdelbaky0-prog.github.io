@@ -114,6 +114,29 @@ Modules.purchases = (() => {
                           Number(r.qty || 0) > 0 || Number(r.price || 0) > 0);
   }
 
+  /* المسودة تستاهل نحفظها ونسأله عليها؟
+
+     حرف واحد كتبه بالغلط مش فاتورة. لو حفظناه هيلاقي البرنامج
+     بيسأله "تكمّلها ولا تمسحها؟" كل شوية على لا حاجة.
+
+     الفاتورة تستاهل لو فيها سطر باسم حقيقي ومعاه كمية أو سعر،
+     أو باركود متمسوح بالليزر. */
+  function worthKeeping() {
+    return rows.some(r => {
+      const nm = (r.name || '').trim();
+      const bc = (r.barcode || '').trim();
+      const real = Number(r.qty || 0) > 0 || Number(r.price || 0) > 0;
+      return (nm.length >= 2 && real) || bc.length >= 4;
+    });
+  }
+
+  // المسودة اللي عدى عليها كذا يوم اتنسيت خلاص — مش هنفكّره بيها
+  const DRAFT_MAX_DAYS = 3;
+  function tooOld(d) {
+    if (!d || !d.at) return false;
+    return (Date.now() - new Date(d.at).getTime()) > DRAFT_MAX_DAYS * 86400000;
+  }
+
   /* ---------- البحث جوه سطور الفاتورة ----------
      الفاتورة ممكن تبقى ٤٠ سطر. لما يدوّر على صنف عشان يعدّله،
      بنخبّي السطور اللي مش مطابقة بدل ما يفضل يدوّر بعينه.
@@ -154,18 +177,72 @@ Modules.purchases = (() => {
         msg.innerHTML = `<td colspan="12"></td>`;
         body.appendChild(msg);
       }
-      msg.querySelector('td').textContent =
-        `مفيش سطر فيه "${rowFilter.trim()}" في الفاتورة دي — السطور الـ${rows.length} كلها زي ما هي`;
+      /* الخانة دي بتدوّر في سطور الفاتورة المفتوحة بس. بس المستخدم
+         بيكتب فيها اسم صنف أو اسم مورد وهو متوقع إنها تدوّرله في كل
+         حاجة. فبدل ما نسيبه في طريق مسدود، بنوريه اللي هو غالبًا
+         عايزه: يضيف الصنف للفاتورة، أو يدوّر في الفواتير المحفوظة. */
+      const term = rowFilter.trim();
+      const hit = Picker.searchItems(term)[0];
+      const invHits = (recentCache || []).filter(p =>
+        (p.number || '').toLowerCase().includes(q) ||
+        supplierNameOf(p.supplierId).toLowerCase().includes(q) ||
+        (p.lines || []).some(l => (l.name || '').toLowerCase().includes(q))).length;
+
+      msg.querySelector('td').innerHTML =
+        `<div style="line-height:2;">
+           مفيش سطر فيه "<strong>${Utils.escapeHtml(term)}</strong>" في الفاتورة المفتوحة دي —
+           السطور الـ${rows.length} كلها زي ما هي.
+           <div class="rf-actions">
+             ${hit ? `<button type="button" class="btn btn-amber btn-sm" id="rfAdd"
+                        data-id="${hit.id}">+ ضيف "${Utils.escapeHtml(hit.name)}" للفاتورة</button>` : ''}
+             ${invHits ? `<button type="button" class="btn btn-ghost btn-sm" id="rfGo">
+                        دوّر عنه في الفواتير المحفوظة (${invHits})</button>` : ''}
+           </div>
+         </div>`;
       msg.style.display = '';
+
+      const addBtn = msg.querySelector('#rfAdd');
+      if (addBtn) addBtn.addEventListener('click', () => {
+        const it = AppState.items.find(i => Number(i.id) === Number(addBtn.dataset.id));
+        if (!it) return;
+        const blank = rows.find(r => !r.itemId && !(r.name || '').trim() && !(r.barcode || '').trim());
+        const target = blank || (rows.push(blankRow()), rows[rows.length - 1]);
+        applyItem(target, it);
+        rowFilter = '';
+        const fe = container.querySelector('#rowFind');
+        if (fe) fe.value = '';
+        drawRows(container, target._id, 'qty');
+      });
+
+      const goBtn = msg.querySelector('#rfGo');
+      if (goBtn) goBtn.addEventListener('click', () => {
+        const qn = container.querySelector('#qName');
+        if (!qn) return;
+        qn.value = term;
+        qn.dispatchEvent(new Event('input', { bubbles: true }));
+        rowFilter = '';
+        const fe = container.querySelector('#rowFind');
+        if (fe) fe.value = '';
+        applyRowFilter(container);
+        qn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        qn.focus();
+      });
     } else if (msg) {
       msg.remove();
     }
   }
 
+  // اسم المورد — بنستعملها في البحث وفي قايمة الفواتير
+  let recentCache = [];
+  function supplierNameOf(id) {
+    const s = AppState.suppliers.find(x => x.id === id);
+    return s ? s.name : 'كاش';
+  }
+
   function saveDraft(container) {
     if (editing) return;                 // تعديل فاتورة متسجلة — مش مسودة
     try {
-      if (!hasContent()) { localStorage.removeItem(DRAFT_KEY); return; }
+      if (!worthKeeping()) { localStorage.removeItem(DRAFT_KEY); return; }
       const g = (id) => { const el = container && container.querySelector(id); return el ? el.value : ''; };
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
         at: Utils.nowISO(), rows,
@@ -188,7 +265,9 @@ Modules.purchases = (() => {
   }
 
   function okDraft(d) {
-    return (d && Array.isArray(d.rows) && d.rows.length) ? d : null;
+    if (!d || !Array.isArray(d.rows) || !d.rows.length) return null;
+    if (tooOld(d)) return null;   // اتنسيت من كذا يوم — مش هنفكّره بيها
+    return d;
   }
 
   /* بندوّر في المتصفح الأول (ده الأحدث دايمًا لأنه بيتحفظ مع كل
@@ -341,7 +420,7 @@ Modules.purchases = (() => {
              وعايز توصل لسطر معيّن تعدّله من غير ما تفضل تدوّر بعينك -->
         <div class="row-find">
           <span class="rf-ic">🔍</span>
-          <input type="text" id="rowFind" placeholder="دوّر في سطور الفاتورة دي — بالاسم أو الباركود أو النوع" autocomplete="off">
+          <input type="text" id="rowFind" placeholder="دوّر جوه سطور الفاتورة المفتوحة دي (مش في الفواتير المحفوظة)" autocomplete="off">
           <button type="button" class="btn btn-ghost btn-sm" id="rowFindClear" hidden>امسح البحث</button>
           <span class="rf-count" id="rowFindCount"></span>
         </div>
@@ -412,8 +491,8 @@ Modules.purchases = (() => {
             <input type="date" id="qTo">
           </div>
           <div class="field" style="flex:2;">
-            <label>المورد أو رقم الفاتورة</label>
-            <input type="text" id="qName" placeholder="اكتب اسم المورد أو رقم الفاتورة" autocomplete="off">
+            <label>دوّر في الفواتير المحفوظة</label>
+            <input type="text" id="qName" placeholder="اسم المورد أو رقم الفاتورة أو اسم صنف جوّاها" autocomplete="off">
           </div>
           <button type="button" class="btn btn-ghost btn-sm" id="qClear">امسح البحث</button>
         </div>
@@ -1180,10 +1259,11 @@ Modules.purchases = (() => {
     const q    = ((container.querySelector('#qName') || {}).value || '').trim().toLowerCase();
     const searching = !!(from || to || q);
 
-    const supName = id => { const s = AppState.suppliers.find(x => x.id === id); return s ? s.name : 'كاش'; };
+    const supName = supplierNameOf;
 
     let all = await DB.getAll('purchases');
     all.sort((a, b) => new Date(b.date) - new Date(a.date));
+    recentCache = all;   // عشان البحث في السطور يعرف يقوله فيه فواتير مطابقة
 
     if (from) all = all.filter(p => Utils.dateKey(p.date) >= from);
     if (to)   all = all.filter(p => Utils.dateKey(p.date) <= to);
