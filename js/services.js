@@ -108,9 +108,29 @@ const Services = (() => {
     await DB.reqToPromise(store.put(party));
   }
 
+  /* الكمية لازم تبقى رقم موجب.
+
+     كمية بالسالب في فاتورة بيع بتزوّد المخزن وتقلّل الفاتورة —
+     يعني بضاعة بتظهر من العدم وفلوس بتقل، والأسوأ إن رصيد الصنف
+     وحركاته بيختلفوا عن بعض. ده مش بيع، ده غلطة كتابة. المرتجع
+     ليه شاشته لوحده.
+
+     ملحوظة: البيع بالسالب (تبيع أكتر من اللي في المخزن) مسموح
+     عن قصد — ده حاجة تانية خالص، وبيتعلّم بالأحمر لحد ما تسجّل
+     فاتورة الشرا. */
+  function _requirePositiveQty(lines, what) {
+    for (const l of (lines || [])) {
+      const q = Number(l.qty);
+      if (!isFinite(q) || q <= 0) {
+        throw new Error(`الكمية لازم تكون رقم أكبر من صفر — ${what}: ${l.name || ''}`);
+      }
+    }
+  }
+
   // ---------- المبيعات ----------
   // sale: { date, lines:[{itemId,name,barcode,qty,price,cost}], discount, paymentMethod, customerId, paidNow }
   async function saveSale(sale) {
+    _requirePositiveQty(sale.lines, 'الصنف');
     return DB.tx(['items', 'stockMovements', 'sales', 'treasury', 'settings', 'customers'], 'readwrite', async (t) => {
       const itemsStore = t.objectStore('items');
       const movStore = t.objectStore('stockMovements');
@@ -492,6 +512,7 @@ const Services = (() => {
   // ---------- المشتريات ----------
   // purchase: { date, supplierId, lines:[{itemId,name,barcode,qty,cost}], paidNow }
   async function savePurchase(purchase) {
+    _requirePositiveQty(purchase.lines, 'الصنف');
     return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers', 'sales'], 'readwrite', async (t) => {
       const itemsStore = t.objectStore('items');
       const movStore = t.objectStore('stockMovements');
@@ -834,6 +855,7 @@ const Services = (() => {
   }
 
   async function saveReturn(doc) {
+    _requirePositiveQty(doc.lines, 'المرتجع');
     return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers', 'sales'], 'readwrite', async (t) => {
       const itemsStore = t.objectStore('items');
       const movStore = t.objectStore('stockMovements');

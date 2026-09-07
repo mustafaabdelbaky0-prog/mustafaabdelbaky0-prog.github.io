@@ -685,6 +685,14 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .draft-banner strong{color:#0F2438;font-size:15px;}
 .draft-banner .btn{flex:0 0 auto;}
 
+/* عرض هادي بفاتورة قديمة مش مكمّلة — سطر واحد صغير، مش شريط
+   يلفت النظر. الشاشة بتفضل نضيفة وهو حر يعدّي من غير ما يعمل حاجة. */
+.draft-offer{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  font-size:13px;color:var(--muted);margin-bottom:10px;
+}
+.draft-offer .btn{padding:3px 10px;font-size:12.5px;}
+
 /* السطر اللي لسه ناقص فيه سعر أو كمية — بيتنوّر أحمر عشان يشوفه */
 tr.row-missing > td{background:#FDF2F2;}
 tr.row-missing > td:first-child{box-shadow:inset 3px 0 0 var(--danger);}

@@ -71,12 +71,49 @@ Modules.purchases = (() => {
 
   /* ---------- المسودة ----------
      الفاتورة اللي لسه بيكتبها لازم تفضل مكانها لو ساب الشاشة —
-     زبون دخل فراح لنقطة البيع، أو البرنامج قفل على صاحب المحل.
+     زبون دخل فراح لنقطة البيع، أو النور قطع على البرنامج.
      بنحفظها في المتصفح مع كل حرف بيكتبه (بتأخير بسيط عشان
-     مانتقلش عليه)، وبنمسحها أول ما يحفظ الفاتورة فعلاً. */
+     مانتقلش عليه)، وبنمسحها أول ما يحفظ الفاتورة فعلاً.
+
+     بس فيه فرق مهم بين تلات حالات، وده اللي كان ناقص:
+
+     ١) ساب الشاشة ورجعلها وهو في نفس التشغيلة → الفاتورة مكانها
+        زي ما سابها، من غير أي رسالة. ده اللي هو طلبه أصلاً.
+     ٢) قفل البرنامج بنفسه وفتحه تاني        → الشاشة تفتح فاضية
+        ونضيفة. الفاتورة القديمة محفوظة في الضهر، وفيه سطر صغير
+        واحد بيقوله "فيه فاتورة مش مكمّلة · رجّعها"، وهو حر
+        يرجّعها أو يمسحها أو يعدّي.
+     ٣) النور قطع / الجهاز اتقفل غصب        → دي بس اللي بترجّع
+        الفاتورة لوحدها ومعاها الرسالة.
+
+     بنفرّق بينهم بعلامة بنحطها في المتصفح وإحنا شغالين وبنشيلها
+     بإيدينا وإحنا بنقفل. لو لقيناها لسه موجودة أول ما نفتح، يبقى
+     البرنامج اتقفل غصب عنه (نور / فصل مفاجئ). */
   const DRAFT_KEY = 'purchaseDraft';
+  const RUN_KEY   = 'purchaseDraftRun';   // علامة "شغال ومعايا فاتورة مش محفوظة"
   let draftTimer = null;
   let restored = false;      // بنوريه رسالة "رجّعنا اللي كنت بتكتبه" مرة واحدة
+  let pendingDraft = null;   // فاتورة قديمة مستنية إذنه يرجّعها
+  let sessionReady = false;  // خلاص قررنا في التشغيلة دي — مش هنسأل تاني
+  /* اسم المورد والتاريخ والمدفوع — دول مش في سطور الجدول، فلازم
+     نفتكرهم لوحدنا عشان لما يسيب الشاشة ويرجع يلاقيهم مكانهم */
+  let sessionHeader = null;
+
+  /* هل التشغيلة اللي فاتت اتقفلت غصب؟ لازم نقرا العلامة هنا
+     بالظبط، قبل ما إحنا نحط علامتنا إحنا. */
+  let prevRunDied = false;
+  try { prevRunDied = !!localStorage.getItem(RUN_KEY); } catch (e) { }
+
+  function markAlive() { try { localStorage.setItem(RUN_KEY, String(Date.now())); } catch (e) { } }
+  function markClean() { try { localStorage.removeItem(RUN_KEY); } catch (e) { } }
+
+  /* بيقفل بالسلامة → نشيل العلامة. بيرجع للصفحة تاني → نرجّعها،
+     عشان لو النور قطع بعد كده نبقى عارفين. */
+  window.addEventListener('pagehide', markClean);
+  window.addEventListener('beforeunload', markClean);
+  window.addEventListener('pageshow', () => {
+    try { if (localStorage.getItem(DRAFT_KEY)) markAlive(); } catch (e) { }
+  });
 
   /* كل ٥ دقايق بنحفظ نسخة من المسودة في بيانات البرنامج نفسها
      (data.json) مش في المتصفح بس.
@@ -242,16 +279,23 @@ Modules.purchases = (() => {
   function saveDraft(container) {
     if (editing) return;                 // تعديل فاتورة متسجلة — مش مسودة
     try {
-      if (!worthKeeping()) { localStorage.removeItem(DRAFT_KEY); return; }
+      if (!worthKeeping()) { localStorage.removeItem(DRAFT_KEY); markClean(); return; }
       const g = (id) => { const el = container && container.querySelector(id); return el ? el.value : ''; };
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({
-        at: Utils.nowISO(), rows,
-        supplier: g('#supplierName'), date: g('#invDate'), paid: g('#paidNow')
-      }));
+      sessionHeader = { supplier: g('#supplierName'), date: g('#invDate'), paid: g('#paidNow') };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(
+        Object.assign({ at: Utils.nowISO(), rows }, sessionHeader)));
+      markAlive();   // من دلوقتي لو النور قطع إحنا عارفين
     } catch (e) { /* المتصفح رافض يخزّن — مش هنوقف الشغل عشان كده */ }
   }
 
   function scheduleDraft(container) {
+    /* بدأ يكتب فاتورة جديدة → عرض الفاتورة القديمة ملوش لازمة،
+       ولو سبناه ودوس عليه بالغلط هيمسح اللي بيكتبه دلوقتي */
+    if (pendingDraft && worthKeeping()) {
+      pendingDraft = null;
+      const off = container && container.querySelector('#draftOffer');
+      if (off) off.remove();
+    }
     clearTimeout(draftTimer);
     draftTimer = setTimeout(() => saveDraft(container), 400);
   }
@@ -259,9 +303,30 @@ Modules.purchases = (() => {
   function clearDraft() {
     clearTimeout(draftTimer);
     try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    markClean();
     lastAuto = '';
     DB.put('settings', { key: DRAFT_STORE_KEY, value: null }).catch(() => {});
     restored = false;
+    pendingDraft = null;
+    sessionHeader = null;
+    /* مهم: الفاتورة اللي في الذاكرة لازم تتفضّى هي كمان. من غير
+       السطر ده الفاتورة اللي لسه اتحفظت بتفضل مكتوبة قدامه بعد
+       الحفظ، لأن الشاشة بترسم اللي في الذاكرة. */
+    rows = [blankRow()];
+  }
+
+  let forceDraft = null;   // طلب يرجّع الفاتورة القديمة بإيده
+  /* لسه خارج من وضع "تعديل فاتورة قديمة". السطور اللي في الذاكرة
+     دلوقتي بتاعة الفاتورة القديمة، فماينفعش نسيبها في فاتورة
+     جديدة — لازم نرجّع اللي كان بيكتبه قبل ما يفتحها. */
+  let leftEdit = false;
+
+  function takeDraft(d) {
+    rows = d.rows;
+    rowSeq = Math.max(rowSeq, ...d.rows.map(r => Number(r._id) || 0));
+    pendingDraft = null;
+    sessionHeader = { supplier: d.supplier, date: d.date, paid: d.paid };
+    markAlive();   // بقى فيه فاتورة مفتوحة مش محفوظة من دلوقتي
   }
 
   function okDraft(d) {
@@ -359,16 +424,40 @@ Modules.purchases = (() => {
     rowFilter = '';   // بحث السطور بيبدأ فاضي كل مرة تفتح الشاشة
     let draft = null;
     if (!keepEdit) {
+      const wasEditing = !!editing || leftEdit;
+      leftEdit = false;
       editing = null;
-      /* لو فيه فاتورة لسه ما اتحفظتش بنرجّعها بدل ما نبدأ من الأول */
-      draft = await readDraft();
-      if (draft) {
-        rows = draft.rows;
-        rowSeq = Math.max(rowSeq, ...draft.rows.map(r => Number(r._id) || 0));
-        restored = true;
-      } else {
-        rows = [blankRow()];
+      if (forceDraft) {
+        // دوس بإيده على "رجّعها"
+        draft = forceDraft; forceDraft = null;
+        takeDraft(draft); restored = true; sessionReady = true;
+      } else if (wasEditing) {
+        /* قفل الفاتورة القديمة — نرجّع الفاتورة الجديدة اللي كان
+           بيكتبها قبل ما يفتحها (لو كان فيه واحدة) */
+        const d = await readDraft();
+        if (d) { draft = d; takeDraft(d); }
+        else { rows = [blankRow()]; sessionHeader = null; }
+        restored = false; sessionReady = true;
+      } else if (sessionReady) {
+        /* نفس التشغيلة: الفاتورة اللي كان بيكتبها لسه مكانها في
+           الذاكرة — بنسيبها زي ما هي من غير أي رسالة ولا سؤال،
+           ومعاها اسم المورد والتاريخ والمدفوع */
+        draft = sessionHeader;
         restored = false;
+      } else {
+        sessionReady = true;
+        const d = await readDraft();
+        if (d && prevRunDied) {
+          /* البرنامج اتقفل غصب والفاتورة كانت مفتوحة — دي الحالة
+             الوحيدة اللي بنرجّع فيها من غير ما نستأذنه */
+          draft = d; takeDraft(d); restored = true;
+        } else {
+          /* قفل البرنامج بنفسه — الشاشة تفتح نضيفة، والفاتورة
+             القديمة مستنية في الضهر لو حبّ يرجّعها */
+          rows = [blankRow()];
+          restored = false;
+          pendingDraft = d || null;
+        }
       }
     }
     if (detachScanner) { detachScanner(); detachScanner = null; }
@@ -377,12 +466,19 @@ Modules.purchases = (() => {
       ${restored && !editing ? `
       <div class="draft-banner" id="draftBanner">
         <div>
-          <strong>رجّعنالك الفاتورة اللي كنت بتكتبها</strong>
+          <strong>البرنامج اتقفل غصب وانت بتكتب — رجّعنالك الفاتورة</strong>
           <div class="hint" style="margin-top:2px;">
-            آخر تعديل ${draft ? Utils.formatDateTime(draft.at) : ''} — كمّل عادي، ولا اتحفظت لسه
+            آخر حاجة كتبتها ${draft ? Utils.formatDateTime(draft.at) : ''} — كمّل عادي، ولا اتحفظت لسه
           </div>
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="dropDraft">امسحها وابدأ جديدة</button>
+      </div>` : ''}
+      ${pendingDraft && !editing ? `
+      <div class="draft-offer" id="draftOffer">
+        <span>فيه فاتورة مش مكمّلة من ${Utils.formatDateTime(pendingDraft.at)}
+              (${pendingDraft.rows.length} سطر)</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="takeDraft">رجّعها</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="dropOffer">امسحها</button>
       </div>` : ''}
       ${editing ? `
       <div class="edit-banner">
@@ -583,6 +679,18 @@ Modules.purchases = (() => {
     const dropBtn = container.querySelector('#dropDraft');
     if (dropBtn) dropBtn.addEventListener('click', async () => {
       if (!(await Utils.confirmDialog('هتمسح الفاتورة اللي كنت بتكتبها وتبدأ واحدة جديدة؟'))) return;
+      clearDraft();
+      render(container);
+    });
+
+    /* الفاتورة القديمة المستنية: يرجّعها أو يمسحها خالص */
+    const takeBtn = container.querySelector('#takeDraft');
+    if (takeBtn) takeBtn.addEventListener('click', () => {
+      forceDraft = pendingDraft;
+      render(container);
+    });
+    const dropOffer = container.querySelector('#dropOffer');
+    if (dropOffer) dropOffer.addEventListener('click', () => {
       clearDraft();
       render(container);
     });
@@ -1226,6 +1334,7 @@ Modules.purchases = (() => {
     const wasEditing = !!editing;
     editing = null;
     if (!wasEditing) clearDraft();
+    else leftEdit = true;         // عشان الرسم الجاي يرجّع مسودّته مش سطور الفاتورة القديمة
     render(container);            // بيرسم الشاشة من جديد بزرار جديد
 
     /* أحسن وقت يطبع فيه الملصقات هو دلوقتي — البضاعة الجديدة لسه
@@ -1347,5 +1456,14 @@ Modules.purchases = (() => {
   }
 
   // _autoSaveNow بيستعملها الاختبار عشان ما يستناش ٥ دقايق
-  return { render, _autoSaveNow: saveDraftToDB };
+  /* للاختبار بس: بيقلّد إن البرنامج اتقفل وفتح تاني.
+     died = النور قطع (العلامة فضلت مكانها)، ولا قفل بالسلامة. */
+  function _restartForTest(died) {
+    sessionReady = false; restored = false;
+    pendingDraft = null; forceDraft = null; sessionHeader = null;
+    prevRunDied = !!died;
+    rows = [blankRow()];
+  }
+
+  return { render, _autoSaveNow: saveDraftToDB, _restartForTest };
 })();
