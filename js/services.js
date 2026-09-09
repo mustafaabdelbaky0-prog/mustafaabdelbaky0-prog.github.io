@@ -1162,6 +1162,289 @@ const Services = (() => {
     });
   }
 
+  /* ================= التحكم الكامل في حساب العميل/المورد =================
+
+     الحاجات اللي كان مفيش منها أي حاجة قبل كده، وصاحب المحل كان
+     بيقف قدامها مش عارف يعمل إيه:
+
+       • دفعة اتسجلت غلط (أو اتسجلت كذا مرة) ← يلغيها
+       • دفعة المبلغ أو التاريخ فيها غلط     ← يعدّلها
+       • المورد رجّعله فلوس / رد لعميل فلوسه ← حركة عكسية
+       • دفعة اتدفعت من كام يوم ونسي يكتبها  ← يدخّلها بتاريخها
+
+     مبدأ محاسبي مهم: الدفتر المالي مبيتمسحش منه. الإلغاء بيتسجّل
+     كحركة عكسية بتلغي الأصلية، والاتنين بيفضلوا في الدفتر بس
+     الشاشة بتخبّيهم مع بعض (شوف reversedMoveIds فوق). كده الأرقام
+     مظبوطة وفي نفس الوقت مش هتلاقي ٣ سطور لعملية واحدة. */
+
+  const PARTY_OF_SOURCE = { collect: 'customers', pay: 'suppliers' };
+
+  function isPartyPayment(m) {
+    return !!m && !!PARTY_OF_SOURCE[m.source] && !isReversalMove(m);
+  }
+
+  async function _readPartyMove(t, moveId) {
+    const m = await DB.reqToPromise(t.objectStore('treasury').get(moveId));
+    if (!m) throw new Error('العملية دي مش موجودة');
+    const kind = PARTY_OF_SOURCE[m.source];
+    if (!kind) throw new Error('العملية دي مش دفعة عميل ولا مورد — عدّلها من مكانها');
+    if (m.voided) throw new Error('العملية دي ملغية بالفعل');
+    if (isReversalMove(m)) throw new Error('ده سطر إلغاء — مش بيتلغي لوحده');
+    return { m, kind };
+  }
+
+  /* بيلغي دفعة: بيرجّع الفلوس للخزنة وبيرجّع الرصيد على الطرف زي
+     ما كان، وبيسيب أثر في الدفتر إن دي اتلغت وإمتى وليه. */
+  async function voidPartyPayment(moveId, why) {
+    return DB.tx(['customers', 'suppliers', 'treasury', 'settings'], 'readwrite', async (t) => {
+      const { m, kind } = await _readPartyMove(t, moveId);
+      const amount = Number(m.amount || 0);
+
+      // الفلوس ترجع في الاتجاه المعاكس
+      await _writeTreasuryMove(t, {
+        direction: m.direction === 'in' ? 'out' : 'in',
+        amount, source: m.source, refId: m.refId, reversal: true,
+        note: 'إلغاء ' + (m.note || (kind === 'customers' ? 'تحصيل' : 'سداد'))
+      });
+
+      /* الرصيد يرجع زي ما كان: التحصيل كان بيقلّل مديونية العميل،
+         فالإلغاء بيزوّدها تاني. والسداد نفس الحكاية مع المورد. */
+      await _bumpPartyBalance(t, kind, m.refId, amount);
+
+      const store = t.objectStore('treasury');
+      const cur = await DB.reqToPromise(store.get(moveId));
+      cur.voided = true;
+      cur.voidedAt = Utils.nowISO();
+      if (why) cur.voidNote = String(why).trim();
+      await DB.reqToPromise(store.put(cur));
+      return true;
+    });
+  }
+
+  /* بيعدّل دفعة: بيلغي القديمة ويكتب واحدة جديدة بالمبلغ والتاريخ
+     الجداد. بنعمله كده مش بنغيّر السطر في مكانه عشان يفضل باين
+     في الدفتر إن فيه تعديل حصل — ده اللي أي محاسب هيعمله. */
+  async function editPartyPayment(moveId, { amount, date, note }) {
+    const amt = Math.round((Number(amount) || 0) * 100) / 100;
+    if (!(amt > 0)) throw new Error('اكتب مبلغ صحيح');
+    return DB.tx(['customers', 'suppliers', 'treasury', 'settings'], 'readwrite', async (t) => {
+      const { m, kind } = await _readPartyMove(t, moveId);
+      const old = Number(m.amount || 0);
+
+      // ١) نرجّع القديمة
+      await _writeTreasuryMove(t, {
+        direction: m.direction === 'in' ? 'out' : 'in',
+        amount: old, source: m.source, refId: m.refId, reversal: true,
+        note: 'تعديل ' + (m.note || '')
+      });
+      await _bumpPartyBalance(t, kind, m.refId, old);
+
+      const store = t.objectStore('treasury');
+      const cur = await DB.reqToPromise(store.get(moveId));
+      cur.voided = true;
+      cur.voidedAt = Utils.nowISO();
+      cur.replaced = true;
+      await DB.reqToPromise(store.put(cur));
+
+      // ٢) نكتب الجديدة بالمبلغ والتاريخ اللي هو عايزهم
+      const newId = await _writeTreasuryMove(t, {
+        direction: m.direction, amount: amt, source: m.source, refId: m.refId,
+        note: (note || m.note || '').trim(), date: date || m.date
+      });
+      await _bumpPartyBalance(t, kind, m.refId, -amt);
+      return newId;
+    });
+  }
+
+  /* رد فلوس: المورد رجّعلك فلوس دفعتها له، أو انت رجّعت لعميل
+     فلوس دفعها لك. عكس الدفعة العادية بالظبط.
+
+     ملحوظة: ده مش مرتجع بضاعة. المرتجع ليه شاشته لأنه بيرجّع
+     بضاعة للمخزن كمان. ده فلوس بس. */
+  async function refundParty(kind, partyId, amount, note, date) {
+    if (kind !== 'customers' && kind !== 'suppliers') throw new Error('نوع الحساب مش مظبوط');
+    const amt = Math.round((Number(amount) || 0) * 100) / 100;
+    if (!(amt > 0)) throw new Error('اكتب مبلغ صحيح');
+    return DB.tx([kind, 'treasury', 'settings'], 'readwrite', async (t) => {
+      const isCust = kind === 'customers';
+      /* عميل بترجّعله فلوسه   ← فلوس بتخرج، ومديونيته بتزيد ناحية الصفر
+         مورد بيرجّعلك فلوسك   ← فلوس بتدخل، واللي ليه عندك بيقل    */
+      await _bumpPartyBalance(t, kind, partyId, amt);
+      return _writeTreasuryMove(t, {
+        direction: isCust ? 'out' : 'in',
+        amount: amt, source: isCust ? 'collect' : 'pay', refId: partyId,
+        note: note || (isCust ? 'رد فلوس لعميل' : 'استرداد فلوس من مورد'),
+        date
+      });
+    });
+  }
+
+  /* الدفعات اللي اتسجلت لنفس الطرف بنفس المبلغ في وقت قريب.
+
+     ده اللي حصل مع محروس: دفعة واحدة اتسجلت ١١ مرة في دقيقتين
+     لأن الزرار كان بيعلّق. حتى بعد ما صلّحنا سبب التعليق، بنسأله
+     قبل ما نسجّل تانية بنفس المبلغ — أرخص كتير من إنه يكتشفها
+     بعدين ويحاول يفهم حصل إيه. */
+  const DUP_WINDOW_MIN = 10;
+
+  async function recentSamePayment(kind, partyId, amount) {
+    const source = kind === 'customers' ? 'collect' : 'pay';
+    const amt = Math.round((Number(amount) || 0) * 100) / 100;
+    const rows = await DB.getAll('treasury');
+    const cutoff = Date.now() - DUP_WINDOW_MIN * 60000;
+    return rows.filter(m =>
+      m.source === source &&
+      String(m.refId ?? '') === String(partyId ?? '') &&
+      !m.voided && !isReversalMove(m) &&
+      Math.abs(Number(m.amount || 0) - amt) < 0.005 &&
+      new Date(m.date).getTime() >= cutoff);
+  }
+
+  /* بيدوّر على عمليات اتسجلت أكتر من مرة بالغلط.
+
+     العلامة: نفس الطرف، نفس المبلغ بالمليم، نفس الاتجاه، وكلهم في
+     خلال دقايق قليلة من بعض. ده مش بيحصل في الطبيعي — التاجر
+     مبيدفعش نفس الرقم بالظبط ٣ مرات في دقيقتين. اللي بيحصل إن
+     البرنامج علّق وهو دايس حفظ فدوس كذا مرة.
+
+     بنرجّع المجموعات بس — مش بنلغي حاجة من نفسنا. هو اللي يقرر،
+     لأنه هو الوحيد اللي يعرف إذا كانت فعلاً دفعتين ولا واحدة. */
+  const DUP_GROUP_MIN = 5;
+
+  async function duplicatePayments(kind, partyId) {
+    const source = kind === 'customers' ? 'collect' : 'pay';
+    const rows = (await DB.getAll('treasury')).filter(m =>
+      m.source === source &&
+      String(m.refId ?? '') === String(partyId ?? '') &&
+      !m.voided && !isReversalMove(m));
+
+    rows.sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
+
+    const groups = [];
+    for (const m of rows) {
+      const g = groups.find(x =>
+        x.direction === m.direction &&
+        Math.abs(x.amount - Number(m.amount || 0)) < 0.005 &&
+        Math.abs(new Date(m.date) - new Date(x.last)) <= DUP_GROUP_MIN * 60000);
+      if (g) { g.moves.push(m); g.last = m.date; }
+      else groups.push({ amount: Number(m.amount || 0), direction: m.direction,
+                         last: m.date, moves: [m] });
+    }
+    return groups.filter(g => g.moves.length > 1);
+  }
+
+  /* نفس الفكرة بس لكل الحسابات مرة واحدة — عشان القايمة توري
+     علامة تحذير جنب اللي فيه مشكلة، فيعرف يروح لها من غير ما
+     يفتح كل حساب واحد واحد. */
+  async function duplicatePaymentsAll(kind) {
+    const source = kind === 'customers' ? 'collect' : 'pay';
+    const rows = (await DB.getAll('treasury')).filter(m =>
+      m.source === source && !m.voided && !isReversalMove(m));
+    rows.sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
+
+    const byParty = new Map();
+    for (const m of rows) {
+      const k = String(m.refId ?? '');
+      if (!byParty.has(k)) byParty.set(k, []);
+      byParty.get(k).push(m);
+    }
+
+    const out = new Map();
+    for (const [pid, list] of byParty) {
+      const groups = [];
+      for (const m of list) {
+        const g = groups.find(x =>
+          x.direction === m.direction &&
+          Math.abs(x.amount - Number(m.amount || 0)) < 0.005 &&
+          Math.abs(new Date(m.date) - new Date(x.last)) <= DUP_GROUP_MIN * 60000);
+        if (g) { g.n++; g.last = m.date; }
+        else groups.push({ amount: Number(m.amount || 0), direction: m.direction, last: m.date, n: 1 });
+      }
+      const extra = groups.reduce((s, g) => s + g.n - 1, 0);
+      if (extra > 0) out.set(Number(pid), extra);
+    }
+    return out;
+  }
+
+  /* بيسيب أقدم عملية في المجموعة ويلغي الباقي — لأن الأولى هي
+     اللي هو قصدها، واللي بعدها دوسات مكررة. */
+  async function dropDuplicatePayments(kind, partyId) {
+    const groups = await duplicatePayments(kind, partyId);
+    let removed = 0, amount = 0;
+    for (const g of groups) {
+      for (const m of g.moves.slice(1)) {
+        await voidPartyPayment(m.id, 'اتسجلت أكتر من مرة بالغلط');
+        removed++; amount += Number(m.amount || 0);
+      }
+    }
+    return { removed, amount: Math.round(amount * 100) / 100 };
+  }
+
+  /* كل حركة على حساب الطرف ده في مكان واحد: فواتير + دفعات +
+     مرتجعات + الرصيد الافتتاحي، مرتبة بالتاريخ ومعاها الرصيد
+     الجاري بعد كل حركة. دي اللي شاشة الحساب بتترسم منها. */
+  async function partyLedger(kind, partyId) {
+    const isCust = kind === 'customers';
+    const [party, docs, treasury, returns] = await Promise.all([
+      DB.get(kind, partyId),
+      DB.getAll(isCust ? 'sales' : 'purchases'),
+      DB.getAll('treasury'),
+      DB.getAll('returns')
+    ]);
+    if (!party) throw new Error('الحساب ده مش موجود');
+
+    const source = isCust ? 'collect' : 'pay';
+    const idKey = isCust ? 'customerId' : 'supplierId';
+    const entries = [];
+
+    const opening = Number(party.openingBalance || 0);
+    if (opening !== 0) {
+      entries.push({ kind: 'opening', date: party.openingDate || '2000-01-01T00:00:00.000Z',
+                     debit: opening, label: 'رصيد افتتاحي', sub: 'دين قديم من قبل البرنامج' });
+    }
+
+    docs.filter(d => d[idKey] === partyId).forEach(d => {
+      entries.push({ kind: 'doc', date: d.date, docId: d.id, number: d.number,
+                     total: Number(d.total || 0), paidNow: Number(d.paidNow || 0),
+                     voided: !!d.voided, debit: d.voided ? 0 : Number(d.dueAmount || 0) });
+    });
+
+    // المرتجعات اللي على الحساب بتقلّل المديونية
+    returns.filter(r => r.partyId === partyId && !r.voided && r.settle === 'account').forEach(r => {
+      entries.push({ kind: 'return', date: r.date, number: r.number, docId: r.id,
+                     credit: Number(r.total || 0), label: 'مرتجع على الحساب' });
+    });
+
+    treasury.filter(m => m.source === source && String(m.refId ?? '') === String(partyId))
+      .forEach(m => {
+        const rev = isReversalMove(m);
+        /* الاتجاه هو اللي بيقول دي دفعة ولا رد فلوس:
+           عميل: فلوس داخلة = تحصيل، خارجة = رد فلوس له
+           مورد: فلوس خارجة = سداد،  داخلة = استرداد منه   */
+        const isPay = isCust ? m.direction === 'in' : m.direction === 'out';
+        entries.push({
+          kind: rev ? 'reversal' : (isPay ? 'pay' : 'refund'),
+          date: m.date, moveId: m.id, amount: Number(m.amount || 0),
+          voided: !!m.voided, note: m.note || '',
+          debit: isPay ? 0 : Number(m.amount || 0),
+          credit: isPay ? Number(m.amount || 0) : 0
+        });
+      });
+
+    entries.sort((a, b) => {
+      const d = new Date(a.date) - new Date(b.date);
+      return d !== 0 ? d : (Number(a.moveId || a.docId || 0) - Number(b.moveId || b.docId || 0));
+    });
+
+    let running = 0;
+    entries.forEach(e => {
+      running = Math.round((running + Number(e.debit || 0) - Number(e.credit || 0)) * 100) / 100;
+      e.running = running;
+    });
+
+    return { party, entries, computed: running, stored: Number(party.balance || 0) };
+  }
+
   /* ================= الموظفين =================
 
      حساب الموظف زي دفتر: كل سطر إما "ليه" (credit) أو "عليه" (debit).
@@ -1882,6 +2165,9 @@ const Services = (() => {
     getCashBalance, saveSale, voidSale, updateSale, savePurchase, voidPurchase, updatePurchase,
     saveExpense, deleteExpense, manualTreasuryMove,
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
+    voidPartyPayment, editPartyPayment, refundParty, recentSamePayment,
+    partyLedger, isPartyPayment, duplicatePayments, dropDuplicatePayments,
+    duplicatePaymentsAll,
     closeDay, daySummary,
     isManualMove, isReversalMove, reversedMoveIds,
     mergeItems, duplicateItems,

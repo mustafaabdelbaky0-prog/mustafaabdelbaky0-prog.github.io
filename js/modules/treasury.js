@@ -411,7 +411,7 @@ Modules.treasury = (() => {
         syncKind();
         body.querySelector('#mCancel').addEventListener('click', close);
 
-        body.querySelector('#moveForm').addEventListener('submit', async (e) => {
+        Utils.guardSubmit(body.querySelector('#moveForm'), async (e) => {
           e.preventDefault();
           const amount = Number(body.querySelector('#mAmount').value || 0);
           if (amount <= 0) { Utils.toast('اكتب مبلغ صحيح', 'error'); return; }

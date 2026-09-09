@@ -208,7 +208,7 @@ Modules.employees = (() => {
         commEl.addEventListener('input', sync); sync();
 
         body.querySelector('#cancelEmp').addEventListener('click', close);
-        body.querySelector('#empForm').addEventListener('submit', async (ev) => {
+        Utils.guardSubmit(body.querySelector('#empForm'), async (ev) => {
           ev.preventDefault();
           const name = body.querySelector('#fName').value.trim();
           if (!name) { Utils.toast('اكتب اسم الموظف', 'error'); return; }
@@ -270,7 +270,7 @@ Modules.employees = (() => {
         </form>`,
       onMount: (body, close) => {
         body.querySelector('#cancelM').addEventListener('click', close);
-        body.querySelector('#mForm').addEventListener('submit', async (ev) => {
+        Utils.guardSubmit(body.querySelector('#mForm'), async (ev) => {
           ev.preventDefault();
           const amount = Number(body.querySelector('#mAmount').value || 0);
           if (amount <= 0) { Utils.toast('اكتب مبلغ صحيح', 'error'); return; }

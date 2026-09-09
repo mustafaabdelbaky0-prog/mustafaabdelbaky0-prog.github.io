@@ -121,7 +121,7 @@ Modules.inventory = (() => {
           </div>
         </form>`,
       onMount: (body, close) => {
-        body.querySelector('#adjForm').addEventListener('submit', async (e) => {
+        Utils.guardSubmit(body.querySelector('#adjForm'), async (e) => {
           e.preventDefault();
           const newQty = Number(body.querySelector('#adjQty').value);
           const note = body.querySelector('#adjNote').value.trim();

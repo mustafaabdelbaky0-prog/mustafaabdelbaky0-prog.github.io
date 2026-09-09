@@ -205,7 +205,7 @@ Modules.assets = (() => {
         sync();
 
         body.querySelector('#aCancel').addEventListener('click', close);
-        body.querySelector('#assetForm').addEventListener('submit', async (e) => {
+        Utils.guardSubmit(body.querySelector('#assetForm'), async (e) => {
           e.preventDefault();
           const name = body.querySelector('#aName').value.trim();
           const cost = Number(costEl.value || 0);

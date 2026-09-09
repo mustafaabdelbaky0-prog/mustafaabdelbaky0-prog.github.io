@@ -587,7 +587,7 @@ Modules.company = (() => {
 
     const openingForm = container.querySelector('#openingForm');
     if (openingForm) {
-      openingForm.addEventListener('submit', async (e) => {
+      Utils.guardSubmit(openingForm, async (e) => {
         e.preventDefault();
         const amount = Number(container.querySelector('#openingAmount').value || 0);
         if (amount < 0) { Utils.toast('قيمة غير صحيحة', 'error'); return; }

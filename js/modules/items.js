@@ -617,7 +617,7 @@ Modules.items = (() => {
           [packNameEl, packSizeEl, packPriceEl, priceEl].forEach(el =>
             el.addEventListener('input', syncPack));
           syncUnit();
-          body.querySelector('#itemForm').addEventListener('submit', async (e) => {
+          Utils.guardSubmit(body.querySelector('#itemForm'), async (e) => {
             e.preventDefault();
             const name = body.querySelector('#fName').value.trim();
             if (!name) { Utils.toast('اسم الصنف مطلوب', 'error'); return; }

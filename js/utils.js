@@ -170,6 +170,41 @@ const Utils = (() => {
     });
   }
 
+  /* ---------- منع تسجيل نفس العملية مرتين ----------
+
+     المشكلة اللي حصلت فعلاً في المحل: دفعة لمورد اتسجلت ١١ مرة.
+     السيرفر كان بيعلّق ثواني وهو بيعمل ملف الإكسيل، فالمستخدم
+     دوس "حفظ" ومحصلش حاجة، فدوس تاني وتالت... وكل دوسة اتسجلت
+     عملية كاملة لوحدها.
+
+     السبب الأصلي اتصلّح في السيرفر، بس ده مايمنعش إن أي تأخير
+     تاني (شبكة، موبايل، جهاز بطيء) يعمل نفس الحكاية. فالحل إن
+     الزرار نفسه يقفل وهو شغال ويقول "بيسجل..." — كده المستخدم
+     شايف إن البرنامج بيشتغل، ولو دوس تاني مفيش حاجة بتحصل.
+
+     الاستعمال:  Utils.guardSubmit(form, async () => { ... })  */
+  function guardSubmit(form, handler) {
+    if (!form) return;
+    let busy = false;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (busy) return;                       // شغال بالفعل — الدوسة دي مالهاش لازمة
+      busy = true;
+      const btn = form.querySelector('button[type="submit"], .btn-primary, .btn-amber');
+      const was = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = 'بيسجل...'; }
+      try {
+        await handler(e);
+      } catch (err) {
+        toast(err && err.message ? err.message : 'حصلت مشكلة', 'error');
+      } finally {
+        busy = false;
+        // لو الشاشة اتقفلت خلاص مفيش حاجة نرجّعها
+        if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = was; }
+      }
+    });
+  }
+
   /* اسم الخانة من الكلاس بتاعها: "cell f-qty num" ← "qty".
      بنستعملها عشان Enter ينزّل على نفس العمود في السطر اللي تحت
      زي الإكسيل — في فواتير الشرا والبيع والمرتجعات. */
@@ -181,6 +216,6 @@ const Utils = (() => {
   return {
     formatMoney, formatDate, formatDateTime, todayISO, nowISO, dateKey,
     genInternalBarcode, debounce, el, escapeHtml, fieldOf,
-    beep, toast, openModal, confirmDialog
+    beep, toast, openModal, confirmDialog, guardSubmit
   };
 })();
