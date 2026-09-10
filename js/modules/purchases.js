@@ -276,12 +276,21 @@ Modules.purchases = (() => {
     return s ? s.name : 'كاش';
   }
 
+  function readHeader(container) {
+    const g = (id) => { const el = container && container.querySelector(id); return el ? el.value : ''; };
+    return { supplier: g('#supplierName'), date: g('#invDate'), paid: g('#paidNow') };
+  }
+
+  function rememberHeader(container) {
+    if (editing) return;
+    sessionHeader = readHeader(container);
+  }
+
   function saveDraft(container) {
     if (editing) return;                 // تعديل فاتورة متسجلة — مش مسودة
     try {
+      sessionHeader = readHeader(container);
       if (!worthKeeping()) { localStorage.removeItem(DRAFT_KEY); markClean(); return; }
-      const g = (id) => { const el = container && container.querySelector(id); return el ? el.value : ''; };
-      sessionHeader = { supplier: g('#supplierName'), date: g('#invDate'), paid: g('#paidNow') };
       localStorage.setItem(DRAFT_KEY, JSON.stringify(
         Object.assign({ at: Utils.nowISO(), rows }, sessionHeader)));
       markAlive();   // من دلوقتي لو النور قطع إحنا عارفين
@@ -779,15 +788,28 @@ Modules.purchases = (() => {
       }
     });
 
-    if (draft) {
+    /* رجوع خانات الفاتورة الفوقانية (المورد، التاريخ، المدفوع).
+
+       بتيجي من المسودة لو البرنامج قفل وفتح، أو من الذاكرة لو هو
+       ساب الشاشة ورجعلها في نفس التشغيلة — وده اللي بيحصل كل يوم
+       في المحل: بيكون بيكتب فاتورة شرا، يدخل عليه زبون، يروح
+       يبيعله، ويرجع يكمّل. المفروض يلاقي كل حاجة زي ما سابها. */
+    const head = draft || sessionHeader;
+    if (head) {
       const sup = container.querySelector('#supplierName');
-      if (sup && draft.supplier) sup.value = draft.supplier;
+      if (sup && head.supplier) sup.value = head.supplier;
       const dt = container.querySelector('#invDate');
-      if (dt && draft.date) dt.value = draft.date;
+      if (dt && head.date) dt.value = head.date;
       const pd = container.querySelector('#paidNow');
-      if (pd && draft.paid) pd.value = draft.paid;
+      if (pd && head.paid) pd.value = head.paid;
       updateTotals(container);
     }
+
+    // من دلوقتي أي تغيير في الخانات دي بيتحفظ في الذاكرة كمان
+    ['#supplierName', '#invDate', '#paidNow'].forEach(sel => {
+      const el = container.querySelector(sel);
+      if (el) el.addEventListener('input', () => rememberHeader(container));
+    });
     container.querySelector('#saveInv').addEventListener('click', () => doSave(container));
 
     /* ملصقات بنود الفاتورة.

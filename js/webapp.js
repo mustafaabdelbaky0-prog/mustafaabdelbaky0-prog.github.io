@@ -24,8 +24,11 @@ async function navigate(route) {
   currentRoute = route;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.route === route));
   document.getElementById('pageTitle').textContent = ROUTES[route].title;
-  const container = document.getElementById('pageContent');
-  container.innerHTML = '';
+  // حاوية جديدة كل مرة — عشان سماعات الشاشة القديمة ما تفضلش
+  // شغالة على الشاشة الجديدة (الشرح كامل في js/app.js)
+  const oldBox = document.getElementById('pageContent');
+  const container = oldBox.cloneNode(false);
+  oldBox.replaceWith(container);
   document.getElementById('sidebar').classList.remove('open');
   const mod = Modules[ROUTES[route].mod];
   if (mod && mod.render) await mod.render(container);
