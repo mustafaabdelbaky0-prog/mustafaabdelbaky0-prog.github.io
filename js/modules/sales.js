@@ -10,6 +10,14 @@ Modules.sales = (() => {
   let saving = false;   // بيمنع إن دوستين سريعتين على "حفظ" يعملوا فاتورتين
   let editing = null;   // الفاتورة اللي بنعدّل فيها دلوقتي (null = فاتورة جديدة)
   let wholesale = false; // بيع بسعر الجملة (للأسطوات)
+
+  /* آخر فاتورة اتحفظت في التشغيلة دي.
+
+     الموقف اللي بيحصل كل يوم: بيبيع للزبون ويحفظ، والزبون يرجع بعد
+     دقيقة يسأل على حاجة في فاتورته. فبنسيب الفاتورة اللي لسه
+     متحفظة قدامه فوق بزرارين: افتحها / اطبعها — من غير ما يدوّر. */
+  let lastSaved = null;   // { id, number, total, customer }
+  let justSaved = false;  // الرسم الجاي جاي بعد حفظ — يوري الشريط
   let autoPrint = false; // يطبع الفاتورة لوحده بعد الحفظ؟ (بيتقرا من الإعدادات)
 
   function blankRow() {
@@ -117,6 +125,10 @@ Modules.sales = (() => {
     await AppState.reloadParties();
     if (!keepEdit) { editing = null; rows = [blankRow()]; paidTouched = false; }
     if (detachScanner) { detachScanner(); detachScanner = null; }
+    /* شريط "اتحفظت الفاتورة" بيظهر بعد الحفظ على طول، وبيفضل لحد ما
+       يبدأ فاتورة جديدة بإيده أو يسيب الشاشة. */
+    if (!justSaved) lastSaved = null;
+    justSaved = false;
 
     /* خانة البائع بتظهر بس لو فيه موظفين مسجلين — الحل ده بيخلي
        الشاشة زي ما هي بالظبط لحد ما يسجّل أول موظف. */
@@ -135,6 +147,17 @@ Modules.sales = (() => {
           <div class="hint" style="margin-top:2px;">أي تغيير هيتظبط لوحده في المخزن وحساب العميل</div>
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="cancelEdit">سيبها زي ما هي</button>
+      </div>` : ''}
+      ${!editing && lastSaved ? `
+      <div class="last-saved" id="lastSaved">
+        <div>
+          <strong>✅ اتحفظت فاتورة ${Utils.escapeHtml(lastSaved.number)}</strong>
+          <span class="hint">${Utils.escapeHtml(lastSaved.customer)} · ${Utils.formatMoney(lastSaved.total)}</span>
+        </div>
+        <div class="last-saved-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="lsOpen">🧾 افتحها</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="lsPrint">🖨️ اطبعها</button>
+        </div>
       </div>` : ''}
       <div class="card invoice-card">
         <div class="invoice-head">
@@ -232,8 +255,11 @@ Modules.sales = (() => {
         </div>
       </div>
 
-      <div class="card" style="margin-top:18px;">
-        <div class="section-head"><h3>فواتير المبيعات</h3></div>
+      <div class="card" style="margin-top:18px;" id="recentCard">
+        <div class="section-head">
+          <h3>آخر الفواتير</h3>
+          <span class="hint">دوس على أي فاتورة تفتحها وتطبعها تاني</span>
+        </div>
         <div class="inv-search">
           <div class="field">
             <label>من تاريخ</label>
@@ -244,8 +270,8 @@ Modules.sales = (() => {
             <input type="date" id="qTo">
           </div>
           <div class="field" style="flex:2;">
-            <label>العميل أو رقم الفاتورة</label>
-            <input type="text" id="qName" placeholder="اكتب اسم العميل أو رقم الفاتورة" autocomplete="off">
+            <label>دوّر</label>
+            <input type="text" id="qName" placeholder="اسم العميل أو رقم الفاتورة أو صنف جوّاها" autocomplete="off">
           </div>
           <button type="button" class="btn btn-ghost btn-sm" id="qClear">امسح البحث</button>
         </div>
@@ -351,6 +377,16 @@ Modules.sales = (() => {
     // ---------- أزرار وضع التعديل ----------
     const cancelBtn = container.querySelector('#cancelEdit');
     if (cancelBtn) cancelBtn.addEventListener('click', () => render(container));
+
+    // ---------- شريط آخر فاتورة اتحفظت ----------
+    const lsOpen = container.querySelector('#lsOpen');
+    if (lsOpen) lsOpen.addEventListener('click', () => Views.showInvoice('sales', lastSaved.id));
+    const lsPrint = container.querySelector('#lsPrint');
+    if (lsPrint) lsPrint.addEventListener('click', async () => {
+      const doc = await DB.get('sales', lastSaved.id);
+      if (!doc) { Utils.toast('الفاتورة مش موجودة', 'error'); return; }
+      Printing.invoice('sales', doc, lastSaved.customer);
+    });
 
     const delBtn = container.querySelector('#deleteInv');
     if (delBtn) delBtn.addEventListener('click', async () => {
@@ -852,6 +888,9 @@ Modules.sales = (() => {
          كل بيعة كانت هتطلع إيصال على رول الملصقات وتضيّعه. */
       if (!wasEditing && autoPrint) printReceipt(sale, res, customerName);
       editing = null;
+      lastSaved = { id: res.id, number: res.number, total: res.total ?? total,
+                    customer: customerName || 'كاش' };
+      justSaved = true;
       render(container);            // بيرسم الشاشة من جديد بزرار جديد
     } catch (e) {
       Utils.beep('error');
@@ -874,7 +913,10 @@ Modules.sales = (() => {
     const custName = id => { const x = AppState.customers.find(c => c.id === id); return x ? x.name : 'كاش'; };
 
     let all = await DB.getAll('sales');
-    all.sort((a, b) => new Date(b.date) - new Date(a.date));
+    /* الأحدث الأول. فواتير نفس اليوم كلها بنفس الساعة (٩ الصبح)،
+       فلازم نفرّق بينهم برقم التسجيل — الأعلى يعني اتسجل بعدين.
+       من غير كده فواتير اليوم كانت بتطلع بالمقلوب: الأقدم فوق. */
+    all.sort((a, b) => (new Date(b.date) - new Date(a.date)) || (Number(b.id) - Number(a.id)));
 
     if (from) all = all.filter(s => Utils.dateKey(s.date) >= from);
     if (to)   all = all.filter(s => Utils.dateKey(s.date) <= to);
@@ -905,6 +947,7 @@ Modules.sales = (() => {
         </div>
         <div class="line-side">
           <div class="line-total">${Utils.formatMoney(s.total)}</div>
+          <button class="btn btn-ghost btn-sm open-doc" title="افتح الفاتورة">🧾 افتح</button>
           ${!s.voided ? '<button class="icon-btn edit-btn" title="تعديل الفاتورة">✏️</button>' : ''}
           ${!s.voided ? '<button class="icon-btn void-btn" title="مسح الفاتورة">🗑️</button>' : ''}
         </div>

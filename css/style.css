@@ -487,6 +487,17 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .num-cell{text-align:center;white-space:nowrap;}
 .num-cell.debit{color:var(--danger);font-weight:700;}
 .num-cell.credit{color:var(--success);font-weight:700;}
+/* شريط "اتحفظت الفاتورة" — بيفضل فوق بعد الحفظ عشان لو الزبون
+   رجع يسأل تلاقي فاتورته قدامك بزرار */
+.last-saved{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  background:var(--success-bg);border:1px solid #9FD3A8;border-right:5px solid var(--success);
+  border-radius:12px;padding:11px 16px;margin-bottom:14px;
+}
+.last-saved strong{color:#14532D;font-size:14.5px;margin-inline-end:10px;}
+.last-saved .hint{display:inline;}
+.last-saved-actions{display:flex;gap:6px;}
+
 /* ===== شاشة حساب العميل/المورد ===== */
 .acct-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
 .acct-head{

@@ -294,11 +294,24 @@ const Scanner = (() => {
     }
 
     document.addEventListener('keydown', handler, true);
-    activeDetach = () => {
+
+    /* مهم جدًا: الفصل بيفصل نفسه هو بس.
+
+       الغلطة اللي كانت هنا: كل شاشة بتحتفظ بدالة الفصل بتاعتها وبتنديها
+       أول ما ترسم نفسها. الدالة القديمة كانت بتصفّر activeDetach من غير
+       ما تتأكد إنه بتاعها هي. فلما شاشة المشتريات ترجع وتندي الفصل
+       القديم بتاعها، كانت بتصفّر مؤشر الفصل بتاع شاشة البيع — من غير
+       ما تفصله فعلاً — وبعدين تربط مستقبِلها هي. النتيجة: مستقبِلين
+       شغالين مع بعض، وأي باركود يتمسح في البيع كان بيتضاف كمان في
+       فاتورة المشتريات في الخفا. وده اللي كان مخلّي الصنف اللي باعه
+       يظهرله في المشتريات. */
+    let mine = null;
+    mine = () => {
       document.removeEventListener('keydown', handler, true);
-      if (activeDetach) activeDetach = null;
+      if (activeDetach === mine) activeDetach = null;
     };
-    return activeDetach;
+    activeDetach = mine;
+    return mine;
   }
 
   return { scan, buttonHtml, canUseLiveCamera, attachHardwareScanner };

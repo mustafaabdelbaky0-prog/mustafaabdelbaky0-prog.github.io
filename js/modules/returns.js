@@ -594,7 +594,10 @@ Modules.returns = (() => {
 
   async function loadHistory(container) {
     const all = await DB.getAll('returns');
-    all.sort((a, b) => new Date(b.date) - new Date(a.date));
+    /* الأحدث الأول. فواتير نفس اليوم كلها بنفس الساعة (٩ الصبح)،
+       فلازم نفرّق بينهم برقم التسجيل — الأعلى يعني اتسجل بعدين.
+       من غير كده فواتير اليوم كانت بتطلع بالمقلوب: الأقدم فوق. */
+    all.sort((a, b) => (new Date(b.date) - new Date(a.date)) || (Number(b.id) - Number(a.id)));
     const box = container.querySelector('#retHistory');
     if (!box) return;
     if (!all.length) {
