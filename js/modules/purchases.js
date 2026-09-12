@@ -184,8 +184,7 @@ Modules.purchases = (() => {
 
   function rowMatches(r, q) {
     if (!q) return true;
-    return [r.name, r.barcode, r.category, r.packType, r.unit]
-      .map(v => String(v || '').toLowerCase()).join(' ').includes(q);
+    return Search.matchesAny([r.name, r.barcode, r.category, r.packType, r.unit], q);
   }
 
   function applyRowFilter(container) {
@@ -221,9 +220,8 @@ Modules.purchases = (() => {
       const term = rowFilter.trim();
       const hit = Picker.searchItems(term)[0];
       const invHits = (recentCache || []).filter(p =>
-        (p.number || '').toLowerCase().includes(q) ||
-        supplierNameOf(p.supplierId).toLowerCase().includes(q) ||
-        (p.lines || []).some(l => (l.name || '').toLowerCase().includes(q))).length;
+        Search.matches(p.number, q) || Search.matches(supplierNameOf(p.supplierId), q) ||
+        (p.lines || []).some(l => Search.matches(l.name, q))).length;
 
       msg.querySelector('td').innerHTML =
         `<div style="line-height:2;">
@@ -1403,9 +1401,8 @@ Modules.purchases = (() => {
     if (to)   all = all.filter(p => Utils.dateKey(p.date) <= to);
     if (q) {
       all = all.filter(p =>
-        (p.number || '').toLowerCase().includes(q) ||
-        supName(p.supplierId).toLowerCase().includes(q) ||
-        (p.lines || []).some(l => (l.name || '').toLowerCase().includes(q)));
+        Search.matches(p.number, q) || Search.matches(supName(p.supplierId), q) ||
+        (p.lines || []).some(l => Search.matches(l.name, q)));
     }
 
     const list = searching ? all : all.slice(0, 12);

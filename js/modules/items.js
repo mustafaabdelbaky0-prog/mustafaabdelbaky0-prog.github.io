@@ -73,11 +73,9 @@ Modules.items = (() => {
     draw(AppState.items);
 
     container.querySelector('#itemSearch').addEventListener('input', Utils.debounce((e) => {
-      const q = e.target.value.trim().toLowerCase();
-      const list = !q ? AppState.items : AppState.items.filter(i =>
-        (i.name || '').toLowerCase().includes(q) || (i.barcode || '').toLowerCase().includes(q)
-      );
-      draw(list);
+      // البحث اللي بيفهم العربي — والأقرب للي كتبه بييجي الأول
+      const q = e.target.value.trim();
+      draw(!q ? AppState.items : Search.items(q, AppState.items));
     }, 150));
 
     const addBtn = container.querySelector('#addItemBtn');
@@ -316,10 +314,9 @@ Modules.items = (() => {
         });
 
         body.querySelector('#blSearch').addEventListener('input', (e) => {
-          const q = e.target.value.trim().toLowerCase();
+          const q = e.target.value.trim();
           bodyEl.querySelectorAll('tr[data-id]').forEach(tr => {
-            const txt = tr.textContent.toLowerCase();
-            tr.style.display = !q || txt.includes(q) ? '' : 'none';
+            tr.style.display = Search.matches(tr.textContent, q) ? '' : 'none';
           });
         });
         body.querySelector('#blPick').addEventListener('click', () => {

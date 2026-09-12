@@ -1,7 +1,7 @@
 /* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-09-12 · السكانر اتظبط + آخر فاتورة قدامك';
+const APP_VERSION = '2026-09-12 · بحث بيفهم العربي + رتّب بالاسم';
 
 const Modules = {};
 
@@ -81,14 +81,12 @@ const AppState = {
   },
 
   findItemsLive(query) {
-    const q = (query || '').trim().toLowerCase();
-    if (!q) return [];
-    const exactBarcode = this.items.filter(i => i.barcode && i.barcode.toLowerCase() === q);
-    if (exactBarcode.length) return exactBarcode;
-    return this.items.filter(i =>
-      (i.name && i.name.toLowerCase().includes(q)) ||
-      (i.barcode && i.barcode.toLowerCase().includes(q))
-    ).slice(0, 20);
+    if (!String(query || '').trim()) return [];
+    // البحث اللي بيفهم العربي — الباركود المطابق بالظبط بييجي لوحده الأول
+    const q = Search.norm(query);
+    const exact = this.items.filter(i => i.barcode && Search.norm(i.barcode) === q);
+    if (exact.length) return exact;
+    return Search.items(query, this.items).slice(0, 20);
   }
 };
 

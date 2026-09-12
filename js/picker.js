@@ -142,19 +142,11 @@ const Picker = (() => {
   }
 
   /* البحث القياسي في الأصناف: بالاسم أو الباركود.
-     اللي بيبدأ باللي كتبه بييجي الأول — أقرب للي في دماغه. */
+     بيستعمل البحث اللي بيفهم العربي (Search في utils.js): ة=ه،
+     الرقم اللازق في الحرف، والكلمات بأي ترتيب — والأقرب بييجي الأول. */
   function searchItems(q, list) {
-    const all = list || (typeof AppState !== 'undefined' ? AppState.items : []) || [];
-    const n = String(q || '').trim().toLowerCase();
-    if (!n) return all.slice(0, 40);
-    const starts = [], has = [];
-    for (const it of all) {
-      const name = String(it.name || '').toLowerCase();
-      const code = String(it.barcode || '').toLowerCase();
-      if (name.startsWith(n) || code.startsWith(n)) starts.push(it);
-      else if (name.includes(n) || code.includes(n)) has.push(it);
-    }
-    return starts.concat(has);
+    const r = Search.items(q, list);
+    return String(q || '').trim() ? r : r.slice(0, 40);
   }
 
   /* شكل سطر الصنف في القايمة: الاسم، والباركود، والرصيد، وآخر تكلفة */

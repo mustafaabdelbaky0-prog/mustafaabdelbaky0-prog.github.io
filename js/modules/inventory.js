@@ -82,9 +82,8 @@ Modules.inventory = (() => {
     container.querySelector('#invLabelBtn').addEventListener('click', () => Modules.items.openBulkLabels());
 
     container.querySelector('#invSearch').addEventListener('input', Utils.debounce((e) => {
-      const q = e.target.value.trim().toLowerCase();
-      draw(!q ? AppState.items : AppState.items.filter(i =>
-        (i.name || '').toLowerCase().includes(q) || (i.barcode || '').toLowerCase().includes(q)));
+      const q = e.target.value.trim();
+      draw(!q ? AppState.items : Search.items(q, AppState.items));
     }, 150));
 
     tbody.addEventListener('click', async (e) => {

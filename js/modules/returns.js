@@ -344,8 +344,7 @@ Modules.returns = (() => {
   let rowFilter = '';
   function rowMatches(r, q) {
     if (!q) return true;
-    return [r.name, r.barcode, r.unit, r.packName]
-      .map(v => String(v || '').toLowerCase()).join(' ').includes(q);
+    return Search.matchesAny([r.name, r.barcode, r.unit, r.packName], q);
   }
   function applyRowFilter(container) {
     const body = container.querySelector('#retBody');

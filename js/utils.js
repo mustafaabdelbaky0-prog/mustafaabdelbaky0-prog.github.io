@@ -219,3 +219,117 @@ const Utils = (() => {
     beep, toast, openModal, confirmDialog, guardSubmit
   };
 })();
+
+/* ======================= البحث اللي بيفهم العربي =======================
+
+   البحث القديم كان بيدوّر على الحروف بالظبط زي ما اتكتبت. وده مع
+   أسماء أصناف المحل مبيشتغلش: عندنا ٥٧٨ صنف، ٢٩٠ منهم الرقم لازق
+   في الحرف ("لمبه 9وات")، و٢٦٠ فيهم ة وه مختلطين ("لمبة" / "لمبه").
+   فلو كتب "لمبة 9 وات" كان بيلاقي صفر — مع إن عنده ٦ لمبات ٩ وات.
+
+   البحث ده بيعمل ٣ حاجات:
+
+   ١) تطبيع: بيخلي الكلمتين يتقارنوا بعد ما نسوّي الاختلافات اللي
+      ملهاش معنى: ة=ه، ى=ي، أإآ=ا، الأرقام العربي=إنجليزي، وبيفصل
+      الرقم عن الحرف ("9وات" ← "9 وات")، وبيشيل التشكيل.
+
+   ٢) كلمات مش جملة: "9 وات لمبه" بتلاقي "لمبه 9وات". كل كلمة
+      كتبها لازم تتلقي في مكان ما — بأي ترتيب.
+
+   ٣) ترتيب النتايج: الباركود المطابق الأول، وبعدين اللي اسمه
+      بيبدأ باللي كتبه، وبعدين الباقي — عشان اللي في دماغه يطلع فوق. */
+const Search = (() => {
+
+  const AR_DIGITS = { '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9',
+                      '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9' };
+
+  function norm(s) {
+    let t = String(s == null ? '' : s).toLowerCase();
+    t = t.replace(/[٠-٩۰-۹]/g, ch => AR_DIGITS[ch] || ch);        // ٩ ← 9
+    t = t.replace(/[ً-ْـ]/g, '');                   // تشكيل وتطويل
+    t = t.replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي')
+         .replace(/ؤ/g, 'و').replace(/ئ/g, 'ي');
+    // علامات ملهاش معنى في البحث تبقى مسافات — بس النقطة اللي بين رقمين
+    // (1.5 ملي) بتفضل
+    t = t.replace(/\.(?!\d)|(?<!\d)\./g, ' ');
+    t = t.replace(/[-_/\\×*+,،؛;:()\[\]{}"'«»<>!?؟@#%^&=|~`]/g, ' ');
+    // الرقم اللازق في الحرف يتفصل: "9وات" ← "9 وات"، "اصلي1.5ملي" ← "اصلي 1.5 ملي"
+    t = t.replace(/(\d)(?=[^\d\s.])/g, '$1 ').replace(/([^\d\s.])(?=\d)/g, '$1 ');
+    return t.replace(/\s+/g, ' ').trim();
+  }
+
+  function tokens(s) {
+    return norm(s).split(' ').filter(Boolean);
+  }
+
+  /* درجة مطابقة نص لاستعلام. صفر = مش مطابق.
+     بنقيس على كلمات الاستعلام: كل كلمة لازم تتلقي (بداية كلمة =
+     أقوى، جوه كلمة = أضعف). */
+  function scoreText(text, qTokens, nText) {
+    const t = nText != null ? nText : norm(text);
+    if (!t) return 0;
+    const words = t.split(' ');
+    let total = 0;
+    for (const q of qTokens) {
+      let best = 0;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (w === q)                 { best = Math.max(best, 30 - Math.min(i, 9)); }
+        else if (w.startsWith(q))    { best = Math.max(best, 20 - Math.min(i, 9)); }
+        else if (w.includes(q))      { best = Math.max(best, 8); }
+      }
+      if (!best) return 0;           // كلمة مش موجودة = الصنف مش هو
+      total += best;
+    }
+    const q = qTokens.join(' ');
+    if (t === q) total += 100;             // الاسم هو هو بالظبط — الأول دايمًا
+    else if (t.startsWith(q)) total += 40; // بيبدأ بالجملة كلها زي ما كتبها
+    /* الاسم الأقصر أقرب للي في دماغه — بس بدرجات واسعة، عشان الأصناف
+       المتقاربة تفضل بترتيبها الطبيعي (ترتيب التسجيل) مش تتقلب على
+       فرق حرفين */
+    return total + Math.max(0, 10 - Math.floor(t.length / 8));
+  }
+
+  /* البحث في الأصناف: بالاسم أو الباركود أو التصنيف.
+     بيرجّع قايمة مرتبة من الأحسن للأقل. */
+  function items(query, list) {
+    const all = list || (typeof AppState !== 'undefined' ? AppState.items : []) || [];
+    const q = norm(query);
+    if (!q) return all.slice();
+    const qt = q.split(' ');
+    const out = [];
+    for (const it of all) {
+      const bc = norm(it.barcode);
+      let s = 0;
+      if (bc && bc === q) s = 1000;
+      else if (bc && bc.startsWith(q)) s = 500;
+      else {
+        s = scoreText(it.name, qt);
+        if (!s && bc && bc.includes(q)) s = 60;
+        if (!s && it.category) s = scoreText(it.category, qt) ? 5 : 0;
+      }
+      if (s) out.push({ it, s });
+    }
+    out.sort((a, b) => b.s - a.s);
+    return out.map(o => o.it);
+  }
+
+  // هل النص ده مطابق للاستعلام؟ (للفلترة البسيطة: سطور فاتورة، قوايم)
+  function matches(text, query) {
+    const q = norm(query);
+    if (!q) return true;
+    return scoreText(text, q.split(' ')) > 0;
+  }
+
+  // مطابقة أي واحد من كذا نص (اسم + باركود + تصنيف مثلاً)
+  function matchesAny(texts, query) {
+    const q = norm(query);
+    if (!q) return true;
+    const qt = q.split(' ');
+    // الكلمات ممكن تتوزع على النصوص: "سلك 10167" ← الاسم والباركود
+    const joined = texts.map(norm).filter(Boolean).join(' ');
+    return scoreText(null, qt, joined) > 0;
+  }
+
+  return { norm, tokens, items, matches, matchesAny, scoreText };
+})();

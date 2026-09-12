@@ -539,8 +539,7 @@ Modules.sales = (() => {
   let rowFilter = '';
   function rowMatches(r, q) {
     if (!q) return true;
-    return [r.name, r.barcode, r.unit, r.packName]
-      .map(v => String(v || '').toLowerCase()).join(' ').includes(q);
+    return Search.matchesAny([r.name, r.barcode, r.unit, r.packName], q);
   }
   function applyRowFilter(container) {
     const body = container.querySelector('#invBody');
@@ -922,9 +921,8 @@ Modules.sales = (() => {
     if (to)   all = all.filter(s => Utils.dateKey(s.date) <= to);
     if (q) {
       all = all.filter(s =>
-        (s.number || '').toLowerCase().includes(q) ||
-        custName(s.customerId).toLowerCase().includes(q) ||
-        (s.lines || []).some(l => (l.name || '').toLowerCase().includes(q)));
+        Search.matches(s.number, q) || Search.matches(custName(s.customerId), q) ||
+        (s.lines || []).some(l => Search.matches(l.name, q)));
     }
 
     const list = searching ? all : all.slice(0, 12);

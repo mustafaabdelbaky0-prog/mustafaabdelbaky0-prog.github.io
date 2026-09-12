@@ -29,7 +29,10 @@ const Views = (() => {
     const partyName = party ? party.name : 'كاش';
 
     const lines = doc.lines || [];
-    const rowsHtml = lines.map((l, i) => {
+
+    /* رسم السطور. رقم السطر (#) هو رقمه في الفاتورة الأصلية دايمًا —
+       حتى لو رتّبناها بالاسم — عشان يفضل يقدر يطابقها مع ورقة المورد. */
+    const lineRow = (l, i) => {
       const price = isSale ? l.price : l.cost;
       // في الشراء بنعرض تكلفة العبوة، وفي البيع سعر بيعها
       const packOne = l.packCost != null ? l.packCost : l.packPrice;
@@ -46,7 +49,16 @@ const Views = (() => {
           <td>${Utils.formatMoney(price)}</td>
           <td class="strong">${Utils.formatMoney(l.qty * price)}</td>
         </tr>`;
-    }).join('');
+    };
+    const rowsHtml = lines.map(lineRow).join('');
+
+    /* "رتّب بالاسم": عرض بس — الفاتورة المخزّنة بتفضل بترتيب ورقة
+       المورد زي ما هي. بنرتّب بالاسم بعد التطبيع (ة=ه...) وبالأرقام
+       كأرقام (فرشه 2 قبل فرشه 10). */
+    const sortedHtml = lines
+      .map((l, i) => ({ l, i, k: Search.norm(l.name) }))
+      .sort((a, b) => a.k.localeCompare(b.k, 'ar', { numeric: true }))
+      .map(x => lineRow(x.l, x.i)).join('');
 
     const retHistory = (doc.returns || []).length
       ? `<div class="notice" style="margin-top:12px;">
@@ -66,10 +78,15 @@ const Views = (() => {
             : (doc.dueAmount > 0 ? '<span class="badge badge-warn">فيها آجل</span>' : '<span class="badge badge-ok">مدفوعة</span>')}</div>
         </div>
 
+        ${lines.length > 1 ? `
+        <div class="section-head" style="margin:12px 0 0;">
+          <span class="hint" id="sortHint">بترتيب الفاتورة الأصلية</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnSortLines">🔤 رتّب بالاسم</button>
+        </div>` : ''}
         <div class="table-wrap" style="border:none;margin-top:12px;">
           <table>
             <thead><tr><th style="width:34px;">#</th><th>الصنف</th><th>الكمية</th><th>${isSale ? 'سعر البيع' : 'سعر الوحدة'}</th><th>الإجمالي</th></tr></thead>
-            <tbody>${rowsHtml || '<tr class="empty-row"><td colspan="5">مفيش بنود</td></tr>'}</tbody>
+            <tbody id="invLines">${rowsHtml || '<tr class="empty-row"><td colspan="5">مفيش بنود</td></tr>'}</tbody>
           </table>
         </div>
 
@@ -93,6 +110,20 @@ const Views = (() => {
         if (rb) rb.addEventListener('click', () => { close(); openReturnDialog(doc); });
         const pb = body.querySelector('#btnPrintInv');
         if (pb) pb.addEventListener('click', () => Printing.invoice(kind, doc, partyName));
+
+        // رتّب بالاسم / رجّع ترتيب الفاتورة — على الشاشة بس
+        const sb = body.querySelector('#btnSortLines');
+        if (sb) {
+          let sorted = false;
+          sb.addEventListener('click', () => {
+            sorted = !sorted;
+            body.querySelector('#invLines').innerHTML = sorted ? sortedHtml : rowsHtml;
+            sb.textContent = sorted ? '↩︎ ترتيب الفاتورة' : '🔤 رتّب بالاسم';
+            body.querySelector('#sortHint').textContent = sorted
+              ? 'مرتّبة بالاسم للعرض بس — رقم # هو مكان السطر في الفاتورة الأصلية'
+              : 'بترتيب الفاتورة الأصلية';
+          });
+        }
       }
     });
   }

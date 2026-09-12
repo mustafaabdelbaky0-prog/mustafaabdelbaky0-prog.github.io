@@ -77,9 +77,8 @@ Modules.pricecompare = (() => {
     // كام جنيه ممكن يوفّرهم لو اشترى دايمًا من الأرخص
     const saveable = Math.round(multi.reduce((s, r) => s + r.gap, 0) * 100) / 100;
 
-    const needle = q.trim().toLowerCase();
     let list = onlyMulti ? multi : all;
-    if (needle) list = list.filter(r => (r.name || '').toLowerCase().includes(needle));
+    if (q.trim()) list = list.filter(r => Search.matches(r.name, q));
 
     container.innerHTML = `
       <div class="grid grid-3" style="margin-bottom:18px;">
