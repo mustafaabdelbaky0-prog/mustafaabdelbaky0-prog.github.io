@@ -498,6 +498,26 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .last-saved .hint{display:inline;}
 .last-saved-actions{display:flex;gap:6px;}
 
+/* ===== دمج صنفين ===== */
+.mg-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:start;}
+.mg-swap{display:flex;align-items:center;justify-content:center;padding-top:34px;}
+.mg-swap .btn{font-size:20px;padding:6px 12px;}
+.mg-card{
+  margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+  background:#FAFAF7;min-height:64px;
+}
+.mg-card.empty{color:var(--muted);font-size:13px;display:flex;align-items:center;justify-content:center;}
+.mg-card.keep{border-color:#9FD3A8;background:var(--success-bg);}
+.mg-card.drop{border-color:#E9A8A8;background:#FDF2F2;}
+.mg-name{font-weight:800;font-size:14.5px;margin-bottom:6px;}
+.mg-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--ink-soft);}
+.mg-meta strong{color:var(--ink);}
+.mg-meta strong.neg{color:var(--danger);}
+@media (max-width:760px){
+  .mg-grid{grid-template-columns:1fr;}
+  .mg-swap{padding-top:0;}
+}
+
 /* ===== شاشة حساب العميل/المورد ===== */
 .acct-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
 .acct-head{

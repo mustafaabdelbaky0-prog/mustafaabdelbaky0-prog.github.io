@@ -31,6 +31,7 @@ Modules.items = (() => {
           <button class="icon-btn label-item" title="اطبع ملصق باركود">🏷️</button>
           ${Auth.isSeller() ? '' : `
             <button class="icon-btn edit-item" title="تعديل">✏️</button>
+            <button class="icon-btn merge-item" title="ادمج صنف تاني جوه ده">🔗</button>
             <button class="icon-btn del-item" title="حذف">🗑️</button>`}
         </td>
       </tr>`;
@@ -44,7 +45,8 @@ Modules.items = (() => {
           <input type="text" id="itemSearch" placeholder="ابحث بالاسم أو الباركود...">
         </div>
         <div class="tag-row">
-          <button class="btn btn-ghost" id="dupBtn">🔗 أصناف مكررة <span class="nav-badge" id="dupBadge" hidden></span></button>
+          <button class="btn btn-ghost" id="dupBtn">🔍 أصناف مكررة <span class="nav-badge" id="dupBadge" hidden></span></button>
+          ${Auth.isSeller() ? '' : '<button class="btn btn-ghost" id="mergeBtn" title="نفس الحاجة اتسجلت باسمين؟ ادمجهم تحت كود واحد">🔗 دمج صنفين</button>'}
           <button class="btn btn-ghost" id="bulkLabelBtn">🏷️ طباعة ملصقات</button>
           ${Auth.isSeller() ? '' : '<button class="btn btn-amber" id="addItemBtn">+ إضافة صنف جديد</button>'}
         </div>
@@ -96,6 +98,8 @@ Modules.items = (() => {
     refreshDupBadge();
     container.querySelector('#dupBtn').addEventListener('click', () =>
       openDuplicates(() => { render(container); }));
+    const mb = container.querySelector('#mergeBtn');
+    if (mb) mb.addEventListener('click', () => openMergeDialog(null, () => render(container)));
 
     tbody.addEventListener('click', async (e) => {
       const tr = e.target.closest('tr');
@@ -106,6 +110,9 @@ Modules.items = (() => {
         openLabelDialog(item);
       } else if (e.target.classList.contains('edit-item')) {
         openItemForm(item);
+      } else if (e.target.classList.contains('merge-item')) {
+        // الصنف ده هو اللي هيفضل — يختار اللي هيتدمج فيه
+        openMergeDialog(item, () => render(container));
       } else if (e.target.classList.contains('del-item')) {
         /* صنف عليه بيع أو شرا مينفعش يتمسح — لأن حركاته وفواتيره
            هتفضل موجودة وتبقى بتشاور على صنف مش موجود، والتقارير
@@ -356,6 +363,141 @@ Modules.items = (() => {
       }
     });
     return { close };
+  }
+
+  /* ---------- دمج صنفين بإيده ----------
+     نفس الحاجة اتسجلت باسمين مختلفين ("لمبه 9وات" و"لمبة ٩ وات
+     ليد") وعايزهم تحت كود واحد. البرنامج مش هيلاقيهم لوحده لأن
+     الأسامي مختلفة — فهو بيختارهم بنفسه من هنا.
+
+     اللي بيحصل بالظبط: كل حركات وفواتير الصنف التاني بتتحوّل على
+     الأول، الرصيد بيتجمع، التكلفة بتتحسب من جديد بالمتوسط، والتاني
+     بيتمسح. مفيش فاتورة قديمة بتتغير — بس بقت بتشاور على الكود
+     الجديد. */
+  function itemCard(it, role) {
+    if (!it) return `<div class="mg-card empty">${role === 'keep' ? 'اختار الصنف اللي هيفضل' : 'اختار الصنف اللي هيتدمج فيه'}</div>`;
+    const stock = Number(it.stock || 0);
+    return `
+      <div class="mg-card ${role}">
+        <div class="mg-name">${Utils.escapeHtml(it.name)}</div>
+        <div class="mg-meta">
+          <span>كود <strong>${Utils.escapeHtml(it.barcode || '—')}</strong></span>
+          <span>رصيد <strong class="${stock < 0 ? 'neg' : ''}">${Units.fmtQty(stock, it.unit)}</strong></span>
+          <span>تكلفة <strong>${Utils.formatMoney(it.costPrice)}</strong></span>
+          <span>بيع <strong>${Utils.formatMoney(it.salePrice)}</strong></span>
+        </div>
+      </div>`;
+  }
+
+  function openMergeDialog(preKeep, onDone) {
+    let keep = preKeep || null;
+    let drop = null;
+
+    Utils.openModal({
+      title: '🔗 دمج صنفين تحت كود واحد',
+      wide: true,
+      bodyHtml: `
+        <div class="hint" style="margin-bottom:12px;">
+          لو نفس الحاجة اتسجلت باسمين، اختار الاتنين. كل حركات وفواتير
+          التاني هتتحوّل على الأول، والرصيد هيتجمع، والتاني هيختفي.
+        </div>
+        <div class="mg-grid">
+          <div class="field">
+            <label>الصنف اللي <strong>هيفضل</strong> (بكوده واسمه)</label>
+            <input type="text" class="mg-pick" data-role="keep" placeholder="اكتب الاسم أو الكود..." autocomplete="off"
+                   value="${keep ? Utils.escapeHtml(keep.name) : ''}">
+            <div id="mgKeep">${itemCard(keep, 'keep')}</div>
+          </div>
+          <div class="mg-swap">
+            <button type="button" class="btn btn-ghost btn-sm" id="mgSwap" title="اقلب: خلي التاني هو اللي يفضل">⇄</button>
+          </div>
+          <div class="field">
+            <label>الصنف اللي <strong>هيتدمج ويختفي</strong></label>
+            <input type="text" class="mg-pick" data-role="drop" placeholder="اكتب الاسم أو الكود..." autocomplete="off">
+            <div id="mgDrop">${itemCard(null, 'drop')}</div>
+          </div>
+        </div>
+        <div id="mgPreview"></div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="mgCancel">إلغاء</button>
+          <button type="button" class="btn btn-amber" id="mgGo" disabled>🔗 ادمج</button>
+        </div>`,
+      onMount: (body, close) => {
+        const preview = () => {
+          body.querySelector('#mgKeep').innerHTML = itemCard(keep, 'keep');
+          body.querySelector('#mgDrop').innerHTML = itemCard(drop, 'drop');
+          const go = body.querySelector('#mgGo');
+          const pv = body.querySelector('#mgPreview');
+          if (!keep || !drop) { pv.innerHTML = ''; go.disabled = true; return; }
+          if (keep.id === drop.id) {
+            pv.innerHTML = '<div class="notice notice-warn">ده نفس الصنف — اختار صنف تاني</div>';
+            go.disabled = true; return;
+          }
+          const stock = Number(keep.stock || 0) + Number(drop.stock || 0);
+          const kp = Number(keep.salePrice || 0), dp = Number(drop.salePrice || 0);
+          const priceDiff = kp > 0 && dp > 0 && Math.abs(kp - dp) > 0.005;
+          pv.innerHTML = `
+            <div class="notice" style="margin-top:4px;">
+              <strong>بعد الدمج:</strong> صنف واحد باسم «${Utils.escapeHtml(keep.name)}» وكود
+              <strong>${Utils.escapeHtml(keep.barcode || '—')}</strong> · الرصيد
+              <strong>${Units.fmtQty(stock, keep.unit)}</strong> · سعر البيع
+              <strong>${Utils.formatMoney(kp || dp)}</strong>
+              ${priceDiff ? `<div class="hint" style="color:var(--danger);margin-top:6px;">
+                ⚠️ سعر البيع مختلف (${Utils.formatMoney(kp)} / ${Utils.formatMoney(dp)}) — هيفضل سعر
+                «${Utils.escapeHtml(keep.name)}». لو ده مش صح اقلبهم بزرار ⇄ أو عدّل السعر بعدين.</div>` : ''}
+              ${keep.unit !== drop.unit ? `<div class="hint" style="color:var(--danger);margin-top:6px;">
+                ⚠️ الوحدة مختلفة (${Utils.escapeHtml(keep.unit)} / ${Utils.escapeHtml(drop.unit)}) —
+                الرصيد هيتجمع بوحدة «${Utils.escapeHtml(keep.unit)}». اتأكد إن ده نفس الصنف فعلاً.</div>` : ''}
+            </div>`;
+          go.disabled = false;
+        };
+
+        // بحث بيفهم العربي في الخانتين
+        Picker.bind(body, {
+          '.mg-pick': {
+            search: (q) => Picker.searchItems(q),
+            render: Picker.itemRow,
+            onPick: (it, input) => {
+              if (input.dataset.role === 'keep') keep = it; else drop = it;
+              input.value = it.name;
+              preview();
+            }
+          }
+        });
+
+        body.querySelector('#mgSwap').addEventListener('click', () => {
+          [keep, drop] = [drop, keep];
+          const ins = body.querySelectorAll('.mg-pick');
+          ins[0].value = keep ? keep.name : '';
+          ins[1].value = drop ? drop.name : '';
+          preview();
+        });
+        body.querySelector('#mgCancel').addEventListener('click', close);
+        body.querySelector('#mgGo').addEventListener('click', async () => {
+          if (!keep || !drop || keep.id === drop.id) return;
+          const ok = await Utils.confirmDialog(
+            `هتدمج «${drop.name}» جوه «${keep.name}».\n\n` +
+            `كل فواتيره وحركاته هتتحوّل على «${keep.name}» بكود ${keep.barcode || '—'}، وهو هيختفي.\n` +
+            `الفواتير القديمة مش هتتغير — بس هتبقى بتشاور على الكود الجديد.\n\nمتأكد؟`);
+          if (!ok) return;
+          const btn = body.querySelector('#mgGo');
+          btn.disabled = true; btn.textContent = 'بيدمج...';
+          try {
+            const r = await Services.mergeItems(keep.id, drop.id);
+            await AppState.reloadItems();
+            Utils.toast(`اتدمجوا — اتحوّل ${r.moved} حركة و${r.docs} فاتورة، الرصيد بقى ${Units.fmtQty(r.stock, keep.unit)}`, 'success');
+            close();
+            if (onDone) onDone();
+          } catch (err) {
+            Utils.toast(err.message || 'الدمج مانجحش', 'error');
+            btn.disabled = false; btn.textContent = '🔗 ادمج';
+          }
+        });
+        preview();
+        // لو جاي من سطر معيّن، الفوكس يروح للخانة التانية على طول
+        (keep ? body.querySelectorAll('.mg-pick')[1] : body.querySelector('.mg-pick')).focus();
+      }
+    });
   }
 
   /* ---------- الأصناف المكررة ----------
