@@ -940,3 +940,13 @@ tr.row-missing select.cell{border-color:#E9A8A8;}
 }
 .ws-toggle input{width:15px;height:15px;accent-color:var(--amber-deep);cursor:pointer;}
 .ws-toggle:has(input:checked){background:var(--amber-soft,#FFF7EA);border-color:var(--amber);}
+
+/* ===== فواتير المبيعات + المرتجع السريع ===== */
+.sl-quick{display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 12px;}
+.qr-foot{
+  display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  margin-top:14px;padding-top:12px;border-top:1px solid var(--line);
+}
+.qr-total{font-size:15px;}
+.qr-total strong{font-size:19px;color:var(--danger);}
+tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}

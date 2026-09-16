@@ -1,7 +1,7 @@
 /* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-09-12 · دمج صنفين تحت كود واحد';
+const APP_VERSION = '2026-09-16 · مرتجع من الفاتورة + فواتير المبيعات';
 
 const Modules = {};
 
@@ -93,6 +93,7 @@ const AppState = {
 const ROUTES = {
   reports: { title: 'الرئيسية', mod: 'reports' },
   sales: { title: 'نقطة البيع', mod: 'sales' },
+  saleslist: { title: 'فواتير المبيعات', mod: 'saleslist' },
   purchases: { title: 'المشتريات', mod: 'purchases' },
   returns: { title: 'المرتجعات', mod: 'returns' },
   items: { title: 'الأصناف', mod: 'items' },

@@ -196,7 +196,8 @@ const Utils = (() => {
       try {
         await handler(e);
       } catch (err) {
-        toast(err && err.message ? err.message : 'حصلت مشكلة', 'error');
+        // بنندي Utils.toast مش toast المحلية — عشان لو الشاشة بدّلتها (أو الاختبار) يشتغل التبديل
+        (typeof Utils !== 'undefined' && Utils.toast ? Utils.toast : toast)(err && err.message ? err.message : 'حصلت مشكلة', 'error');
       } finally {
         busy = false;
         // لو الشاشة اتقفلت خلاص مفيش حاجة نرجّعها

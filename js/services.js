@@ -854,6 +854,25 @@ const Services = (() => {
     return { saleId: best.id, saleNumber: best.number, lineIndex: bestLine, sellerId: best.sellerId || null };
   }
 
+  /* مرتجع من فاتورة معيّنة (زرار "مرتجع" اللي جنب الفاتورة في نقطة
+     البيع). هنا مش بندوّر — الفاتورة والسطر معروفين، بس بنتأكد إن
+     الكمية اللي بيرجّعها مش أكتر من اللي اتباع ولسه ما اترجّعش. */
+  async function _linkReturnToSaleExact(t, saleId, lineIndex, itemId, qty) {
+    const store = t.objectStore('sales');
+    const s = await DB.reqToPromise(store.get(saleId));
+    if (!s) throw new Error('الفاتورة دي مش موجودة');
+    if (s.voided) throw new Error('الفاتورة دي ملغية — مفيش مرتجع منها');
+    const line = (s.lines || [])[lineIndex];
+    if (!line || Number(line.itemId) !== Number(itemId)) throw new Error('السطر ده مش في الفاتورة');
+    const left = Math.round((Number(line.qty || 0) - Number(line.returnedQty || 0)) * 1000) / 1000;
+    if (qty > left + 0.0001) {
+      throw new Error(`"${line.name}": اتباع ${Number(line.qty)} واترجّع منه ${Number(line.returnedQty || 0)} — الباقي ${left} بس`);
+    }
+    line.returnedQty = Math.round((Number(line.returnedQty || 0) + qty) * 1000) / 1000;
+    await DB.reqToPromise(store.put(s));
+    return { saleId: s.id, saleNumber: s.number, lineIndex, sellerId: s.sellerId || null };
+  }
+
   async function saveReturn(doc) {
     _requirePositiveQty(doc.lines, 'المرتجع');
     return DB.tx(['items', 'stockMovements', 'returns', 'treasury', 'settings', 'customers', 'suppliers', 'sales'], 'readwrite', async (t) => {
@@ -940,7 +959,9 @@ const Services = (() => {
         // بنحاول نربطه بالفاتورة (للعملاء بس — المورد ملوش فاتورة بيع)
         let link = null;
         if (isCustomer && !swap) {
-          link = await _linkReturnToSale(t, item.id, qty, doc.partyId, doc.date);
+          link = (l.saleId != null && l.saleLineIndex != null)
+            ? await _linkReturnToSaleExact(t, Number(l.saleId), Number(l.saleLineIndex), item.id, qty)
+            : await _linkReturnToSale(t, item.id, qty, doc.partyId, doc.date);
         }
 
         lines.push({
