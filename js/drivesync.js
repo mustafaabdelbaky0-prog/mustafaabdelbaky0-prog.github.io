@@ -70,13 +70,8 @@ const DriveSync = (() => {
   async function runOnce(silent) {
     if (running) return 0;
 
-    /* إذن جوجل بيخلص بعد ساعة. لو الجهاز كان مربوط قبل كده،
-       بنجدد الإذن في الخلفية من غير ما نطلب منه يسجل دخول تاني.
-       من غير ده كان لازم يربط الجهاز من أول وجديد كل شوية. */
-    if (!Drive.isSignedIn() && Drive.wasConnected()) {
-      try { await Drive.renewQuietly(); } catch (e) { }
-    }
-
+    /* الإذن خلص؟ التجديد بيحصل مع أول دوسة من المستخدم (شوف onGesture
+       تحت) — مش من هنا، لأن المتصفح بيمنع نافذة جوجل من غير دوسة. */
     if (!Drive.isSignedIn()) { status.signedIn = false; return 0; }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       status.error = 'مفيش نت';
@@ -116,15 +111,52 @@ const DriveSync = (() => {
     } finally { running = false; }
   }
 
+  /* ---------- تجديد الإذن مع أول دوسة ----------
+
+     إذن جوجل بيخلص كل ساعة. التجديد بيفتح نافذة صغيرة بتقفل لوحدها
+     (المستخدم مسجّل في كروم بحسابه فجوجل بتوافق فورًا). بس المتصفح
+     بيمنع أي نافذة ماتفتحتش بدوسة من المستخدم — فالتجديد من التايمر
+     كان بيفشل بصمت، والبرنامج يقول "مش مربوط" مع إنه مربوط.
+
+     الحل: بنستنى أول دوسة من المستخدم في أي مكان في البرنامج ونجدد
+     جواها. هو بيدوس طول الوقت، فالتجديد بيحصل من غير ما يحس. */
+  let lastRenewTry = 0;
+  let gestureHooked = false;
+
+  function onGesture() {
+    if (!Drive.wasConnected() || Drive.isSignedIn()) return;
+    if (Date.now() - lastRenewTry < 60000) return;   // مش هنزنّ كل دوسة
+    lastRenewTry = Date.now();
+    Drive.renewQuietly().then(ok => {
+      if (!ok) return;
+      status.signedIn = true;
+      try { window.dispatchEvent(new Event('drive-renewed')); } catch (e) { }
+      runOnce(true);
+    }).catch(() => { });
+  }
+
+  function hookGesture() {
+    if (gestureHooked || typeof document === 'undefined') return;
+    gestureHooked = true;
+    if (Drive.wasConnected()) Drive.preload();
+    document.addEventListener('click', onGesture, true);
+    document.addEventListener('keydown', onGesture, true);
+  }
+
   function start() {
     stop();
+    hookGesture();
     setTimeout(() => runOnce(true), 5000);
     timer = setInterval(() => runOnce(true), EVERY_MS);
     if (typeof window !== 'undefined') {
+      // أول ما النت يرجع بنرفع على طول
       window.addEventListener('online', () => runOnce(true));
     }
   }
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+  // الجهاز مربوط بس الإذن محتاج تجديد (هيتجدد مع أول دوسة)
+  function needsRenew() { return Drive.wasConnected() && !Drive.isSignedIn(); }
 
   function getStatus() { return Object.assign({}, status, { pending: dirty }); }
 
@@ -133,6 +165,7 @@ const DriveSync = (() => {
      أصلاً مرفعش حاجة — فيفضل يدوس زرار المزامنة ومش فاهم إيه الناقص. */
   function explain(added) {
     if (!Drive.isSignedIn()) {
+      if (Drive.wasConnected()) return { text: 'إذن جوجل بيتجدد — ثواني وجرّب تاني', kind: 'info' };
       return { text: 'الجهاز ده مش مربوط بجوجل — اربطه الأول', kind: 'error' };
     }
     if (status.error) return { text: status.error, kind: 'error' };
@@ -143,5 +176,5 @@ const DriveSync = (() => {
     return { text: 'كل حاجة متزامنة', kind: 'info' };
   }
 
-  return { start, stop, runOnce, push, pull, markDirty, getStatus, explain };
+  return { start, stop, runOnce, push, pull, markDirty, getStatus, explain, needsRenew };
 })();

@@ -44,16 +44,34 @@ const Drive = (() => {
     return null;
   }
 
+  /* "الجهاز ده اتربط بجوجل قبل كده" — علامة منفصلة عن الإذن نفسه.
+
+     الإذن بيخلص كل ساعة، ولما كان بيخلص البرنامج كان بيفتكر إنه
+     عمره ما اتربط ويقول "اربط بحساب جوجل" من الأول. العلامة دي
+     بتفضل موجودة لحد ما المستخدم يدوس "افصل الربط" بإيده — وطول
+     ما هي موجودة، البرنامج بيجدد الإذن لوحده بدل ما يطلب ربط جديد. */
+  const LINKED_KEY = 'mostafaDriveLinked';
+
   function saveToken(t) {
     token = t;
-    try { localStorage.setItem(TOKEN_KEY, JSON.stringify(t)); } catch (e) { }
+    try {
+      localStorage.setItem(TOKEN_KEY, JSON.stringify(t));
+      localStorage.setItem(LINKED_KEY, '1');
+    } catch (e) { }
   }
 
   function isSignedIn() { return !!(token || loadSavedToken()); }
 
-  function forget() {
+  // الإذن خلص (أو جوجل رفضته) — بس الجهاز لسه مربوط وهنجدد لوحدنا
+  function expire() {
     token = null; folderId = null;
     try { localStorage.removeItem(TOKEN_KEY); } catch (e) { }
+  }
+
+  // فصل الربط بإيد المستخدم — بننسى كل حاجة
+  function forget() {
+    expire();
+    try { localStorage.removeItem(LINKED_KEY); } catch (e) { }
   }
 
   /* بيطلب إذن الدخول. لازم يتنده من ضغطة زرار حقيقية
@@ -131,9 +149,13 @@ const Drive = (() => {
     });
   }
 
+  // بنحمّل مكتبة جوجل بدري — عشان لما ييجي وقت التجديد مع الدوسة
+  // تكون جاهزة، والمتصفح مايعتبرش الدوسة قديمة
+  function preload() { loadGsi().catch(() => { }); }
+
   // فيه إذن متخزن قبل كده؟ (حتى لو خلص وقته)
   function wasConnected() {
-    try { return !!localStorage.getItem(TOKEN_KEY); } catch (e) { return false; }
+    try { return !!(localStorage.getItem(LINKED_KEY) || localStorage.getItem(TOKEN_KEY)); } catch (e) { return false; }
   }
 
   async function auth() {
@@ -148,7 +170,8 @@ const Drive = (() => {
     const opts = Object.assign({}, options || {});
     opts.headers = Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + access });
     const res = await fetch(url, opts);
-    if (res.status === 401) { forget(); throw new Error('انتهى الاتصال بجوجل — سجّل دخول تاني'); }
+    // الإذن خلص أو اترفض — بننساه بس مش بننسى إن الجهاز مربوط، عشان نجدد لوحدنا
+    if (res.status === 401) { expire(); throw new Error('إذن جوجل خلص — بيتجدد لوحده مع أول دوسة'); }
     if (!res.ok) throw new Error('جوجل ردت بخطأ ' + res.status);
     return res;
   }
@@ -215,5 +238,5 @@ const Drive = (() => {
     return true;
   }
 
-  return { signIn, renewQuietly, wasConnected, isSignedIn, forget, list, readFile, writeFile, ensureFolder, FOLDER_NAME };
+  return { signIn, renewQuietly, preload, wasConnected, isSignedIn, expire, forget, list, readFile, writeFile, ensureFolder, FOLDER_NAME };
 })();

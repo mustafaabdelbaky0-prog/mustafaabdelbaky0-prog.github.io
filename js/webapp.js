@@ -73,7 +73,7 @@ function updateSyncFoot() {
   const el = document.getElementById('syncFoot');
   if (!el) return;
   const s = DriveSync.getStatus();
-  if (!s.signedIn) { el.textContent = 'مش متصل بالدرايف'; return; }
+  if (!s.signedIn) { el.textContent = Drive.wasConnected() ? 'بيجدد إذن جوجل مع أول دوسة…' : 'مش متصل بالدرايف'; return; }
   if (s.error) { el.textContent = 'المزامنة: ' + s.error; return; }
   if (s.pending) { el.textContent = 'فيه شغل لسه مترفعش'; return; }
   el.textContent = s.lastSync ? ('آخر مزامنة ' + Utils.formatDateTime(s.lastSync)) : 'بيزامن...';

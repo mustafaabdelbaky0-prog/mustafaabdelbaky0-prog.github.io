@@ -232,6 +232,34 @@ Modules.company = (() => {
       if (!box) return;
       const s = DriveSync.getStatus();
 
+      /* مربوط بس الإذن خلص (بيخلص كل ساعة) — ده مش "مش مربوط".
+         بنقوله الحقيقة وبنديله زرار يجدد على طول لو مستعجل؛ وإلا
+         هيتجدد لوحده مع أول دوسة في أي مكان. */
+      if (!Drive.isSignedIn() && Drive.wasConnected()) {
+        box.innerHTML = `
+          <div class="notice notice-ok" style="line-height:1.95;">
+            ✅ <strong>مربوط بجوجل درايف.</strong><br>
+            <span style="font-size:12.5px;">إذن جوجل بيخلص كل ساعة وبيتجدد لوحده مع أول دوسة منك —
+            مش محتاج تربط تاني.</span>
+            ${s.lastSync ? `<br><span style="font-size:12px;">آخر مزامنة: ${Utils.escapeHtml(Utils.formatDateTime(s.lastSync))}</span>` : ''}
+          </div>
+          <button class="btn btn-ghost btn-block" id="driveRenew" style="margin-top:12px;">🔄 جدّد وزامن دلوقتي</button>
+          <button class="btn btn-ghost btn-block" id="driveOff" style="margin-top:8px;">افصل الربط</button>`;
+        box.querySelector('#driveRenew').addEventListener('click', async () => {
+          const b = box.querySelector('#driveRenew');
+          b.disabled = true; b.textContent = 'بيجدد...';
+          const ok = await Drive.renewQuietly();
+          if (ok) { await DriveSync.runOnce(false); Utils.toast('اتجدد واتزامن', 'success'); }
+          else Utils.toast('جوجل ما ردتش — اتأكد إن فيه نت وجرّب تاني', 'error');
+          loadSyncStatus();
+        });
+        box.querySelector('#driveOff').addEventListener('click', async () => {
+          if (!(await Utils.confirmDialog('هتفصل الربط بجوجل؟ الموبايل مش هيشوف الشغل الجديد لحد ما تربط تاني.'))) return;
+          Drive.forget(); DriveSync.stop(); loadSyncStatus();
+        });
+        return;
+      }
+
       if (!Drive.isSignedIn()) {
         box.innerHTML = `
           <div class="notice notice-warn" style="line-height:1.95;">
@@ -281,6 +309,9 @@ Modules.company = (() => {
     }
     if (!onWeb) {
       loadSyncStatus();
+      // لما الإذن يتجدد في الخلفية، الكارت يتحدّث لوحده
+      const onRenewed = () => { if (container.isConnected) loadSyncStatus(); else window.removeEventListener('drive-renewed', onRenewed); };
+      window.addEventListener('drive-renewed', onRenewed);
       const sn = container.querySelector('#syncNow');
       if (sn) sn.addEventListener('click', async () => {
         sn.disabled = true;
