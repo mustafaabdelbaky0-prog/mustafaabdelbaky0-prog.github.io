@@ -231,6 +231,48 @@ Modules.company = (() => {
       const box = container.querySelector('#syncStatus');
       if (!box) return;
       const s = DriveSync.getStatus();
+      const L = s.local || {};
+
+      /* الحالة الأساسية على الكمبيوتر: جوجل درايف المسطّب هو اللي
+         بيرفع وينزّل — من غير أي إذن ولا دوسة. أول ما يلقط نت يرفع. */
+      if (L.ready && L.mine) {
+        const others = (L.files || []).length;
+        box.innerHTML = `
+          <div class="notice notice-ok" style="line-height:1.95;">
+            ✅ <strong>بيرفع لوحده على جوجل درايف.</strong><br>
+            <span style="font-size:12.5px;">أي شغل هنا بيتكتب في فولدر جوجل درايف على الجهاز، وبرنامج جوجل بيرفعه
+            أول ما يلاقي نت — من غير ما تعمل حاجة. ${L.pending ? '<br>⏳ فيه شغل مستني يترفع (ثواني)' : ''}</span>
+            ${L.lastPush ? `<br><span style="font-size:12px;">آخر رفع: ${Utils.escapeHtml(L.lastPush)}</span>` : ''}
+            ${L.lastPull ? `<br><span style="font-size:12px;">آخر حاجة وصلت من الموبايل: ${Utils.escapeHtml(L.lastPull)}</span>` : ''}
+            ${L.error ? `<br><span style="color:var(--danger);font-size:12px;">⚠️ ${Utils.escapeHtml(L.error)}</span>` : ''}
+          </div>
+          <div class="hint" style="line-height:1.95;margin-top:8px;">
+            الجهاز ده رقمه <strong>${Device.current()}</strong> (${Utils.escapeHtml(Device.currentName())}).
+            ${others ? `أجهزة تانية بتزامن: <strong>${others}</strong>.` : 'لسه مفيش ملف من الموبايل — افتح البرنامج على الموبايل مرة.'}
+          </div>
+          <button class="btn btn-ghost btn-block" id="cloudPushNow" style="margin-top:12px;">⬆️ ارفع وزامن دلوقتي</button>`;
+        box.querySelector('#cloudPushNow').addEventListener('click', async () => {
+          const b = box.querySelector('#cloudPushNow');
+          b.disabled = true; b.textContent = 'بيرفع...';
+          try {
+            const r = await fetch('api/cloud/push', { method: 'POST' });
+            const j = await r.json();
+            const added = await DriveSync.pullLocal();
+            if (j.error) Utils.toast('مقدرناش نرفع: ' + j.error, 'error');
+            else Utils.toast(added > 0 ? 'اترفع ووصلك ' + added + ' سجل من الموبايل' : 'اترفع — جوجل درايف هتوصّله للموبايل', 'success');
+          } catch (e) { Utils.toast('السيرفر ما ردش', 'error'); }
+          loadSyncStatus();
+        });
+        return;
+      }
+
+      /* الفولدر موجود بس ملفنا لسه ما اتعملش عن طريق البرنامج —
+         محتاج ربط بجوجل مرة واحدة عشان الملف يتعمل باسم البرنامج
+         (وإلا الموبايل مش هيشوفه). بعدها السيرفر بيكمّل لوحده. */
+      const firstTimeNote = L.ready && !L.mine
+        ? `<div class="hint" style="margin-top:8px;line-height:1.9;">
+             بعد أول ربط، الكمبيوتر بيرفع لوحده عن طريق جوجل درايف المسطّب — ومش هيطلب منك ربط تاني.
+           </div>` : '';
 
       /* مربوط بس الإذن خلص (بيخلص كل ساعة) — ده مش "مش مربوط".
          بنقوله الحقيقة وبنديله زرار يجدد على طول لو مستعجل؛ وإلا
@@ -272,7 +314,7 @@ Modules.company = (() => {
           <div class="hint" style="margin-top:10px;line-height:1.9;">
             استعمل <strong>نفس الحساب</strong> اللي هتدخل بيه من الموبايل.
             البرنامج بيشوف الملفات اللي بيعملها هو بس في درايفك.
-          </div>`;
+          </div>${firstTimeNote}`;
         const btn = box.querySelector('#driveConnect');
         btn.addEventListener('click', async () => {
           btn.disabled = true; btn.textContent = 'بيفتح جوجل...';
