@@ -118,5 +118,27 @@ const Printing = (() => {
     `);
   }
 
-  return { invoice, statement };
+  /* ورقة جرد: قايمة الأصناف (تصنيف معيّن أو الكل) ومعاها رصيد
+     البرنامج وخانة فاضية يكتب فيها اللي عدّه على الرف بالقلم.
+     الفروق بيدخّلها بعدين من زرار "تسوية جرد" جنب كل صنف. */
+  function countSheet(items, title) {
+    const rows = (items || []).map((i, k) => `
+      <tr>
+        <td>${k + 1}</td>
+        <td>${Utils.escapeHtml(i.barcode || '')}</td>
+        <td>${Utils.escapeHtml(i.name)}</td>
+        <td>${Units.fmtQty(Number(i.stock || 0), i.unit || 'قطعة')}</td>
+        <td style="width:70px;border-bottom:1px solid #999;"></td>
+      </tr>`).join('');
+    go(`
+      ${head(`ورقة جرد — ${Utils.escapeHtml(title || 'كل الأصناف')} — ${Utils.formatDate(Utils.nowISO())}`)}
+      <div class="sub">${(items || []).length} صنف · اكتب اللي عدّيته في العمود الأخير</div>
+      <table>
+        <thead><tr><th>#</th><th>الكود</th><th>الصنف</th><th>في البرنامج</th><th>العدّ الفعلي</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5">مفيش أصناف</td></tr>'}</tbody>
+      </table>
+    `);
+  }
+
+  return { invoice, statement, countSheet };
 })();

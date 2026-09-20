@@ -7,6 +7,7 @@ Modules.company = (() => {
     const labelShopName = await Barcode.labelShop();
     const apRec = await DB.get('settings', 'autoPrintInvoice');
     const autoPrintInv = apRec ? !!apRec.value : false;
+    const markupPct = await Services.getDefaultMarkup();
 
     container.innerHTML = `
       <div class="grid grid-2">
@@ -58,6 +59,26 @@ Modules.company = (() => {
               </div>
             </form>
           `}
+        </div>
+
+        <div class="card">
+          <div class="section-head"><h3>نسبة الربح للتسعير</h3></div>
+          <p class="muted" style="font-size:13px;line-height:1.9;margin-bottom:12px;">
+            وانت بتدخل فاتورة شرا، أول ما تكتب سعر الشرا البرنامج بيحطلك
+            <strong>سعر بيع مقترح</strong> = التكلفة + النسبة دي. تقدر تعدّله في أي سطر براحتك —
+            ده اقتراح مش إلزام. سيبها صفر لو مش عايز اقتراح.
+          </p>
+          <form id="markupForm" class="field-row" style="align-items:flex-end;">
+            <div class="field" style="max-width:180px;">
+              <label>النسبة فوق التكلفة (٪)</label>
+              <input type="number" id="markupPct" min="0" max="500" step="0.5" inputmode="decimal"
+                     value="${markupPct || ''}" placeholder="مثلاً 25">
+            </div>
+            <div class="field" style="flex:1;">
+              <div class="hint" id="markupExample" style="margin:0 0 10px;line-height:1.9;"></div>
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-bottom:14px;">حفظ النسبة</button>
+          </form>
         </div>
 
         <div class="card">
@@ -582,6 +603,25 @@ Modules.company = (() => {
     });
 
     // ---------- مقاس ملصق الباركود ----------
+    // ---------- نسبة الربح ----------
+    const mkForm = container.querySelector('#markupForm');
+    if (mkForm) {
+      const pctEl = mkForm.querySelector('#markupPct');
+      const exEl = mkForm.querySelector('#markupExample');
+      const showExample = () => {
+        const p = Number(pctEl.value || 0);
+        if (!(p > 0)) { exEl.textContent = 'الاقتراح متقفّل — سعر البيع هتكتبه انت في كل سطر.'; return; }
+        exEl.innerHTML = 'مثال: اشتريت بـ <strong>100</strong> → يقترح بيع بـ <strong>' + Services.suggestSalePrice(100, p) + '</strong> · ' +
+                         'اشتريت بـ <strong>7.5</strong> → <strong>' + Services.suggestSalePrice(7.5, p) + '</strong>';
+      };
+      pctEl.addEventListener('input', showExample);
+      showExample();
+      Utils.guardSubmit(mkForm, async () => {
+        const v = await Services.setDefaultMarkup(pctEl.value);
+        Utils.toast(v > 0 ? 'اتحفظت — سعر البيع هيتقترح بـ ' + v + '٪ فوق التكلفة' : 'الاقتراح اتقفل', 'success');
+      });
+    }
+
     const labelForm = container.querySelector('#labelForm');
     if (labelForm) {
       const wEl = container.querySelector('#lblW');

@@ -2,6 +2,13 @@ Modules.parties = (() => {
   let activeTab = 'customers';
   let viewing = null;      // { kind, id } — فاتح حساب طرف معيّن
   let showVoided = false;  // يوري الحركات الملغية ولا يخبّيها
+  let catFilter = '';      // فلتر تصنيف الموردين (كهرباء / حدايد …)
+
+  // التصنيفات المتاحة: بتوع الأصناف + اللي الموردين متصنفين بيه
+  function categoryChoices() {
+    const fromSup = AppState.suppliers.map(s => s.category);
+    return [...new Set(AppState.categorySuggestions().concat(fromSup).map(v => String(v || '').trim()).filter(Boolean))];
+  }
 
   /* الرصيد ممكن يبقى بالسالب — يعني الطرف ده دفع أكتر من اللي عليه
      (بيحصل مثلاً لما تلغي فاتورة بعد ما يكون دفعها). لازم يبان بوضوح
@@ -29,13 +36,14 @@ Modules.parties = (() => {
         <button data-tab="customers" class="${activeTab === 'customers' ? 'active' : ''}">العملاء (آجل)</button>
         ${Auth.isSeller() ? '' : `<button data-tab="suppliers" class="${activeTab === 'suppliers' ? 'active' : ''}">الموردين (آجل)</button>`}
       </div>
+      <div id="catBar"></div>
       <div class="section-head">
         <div></div>
         <button class="btn btn-amber" id="addPartyBtn"></button>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>الاسم</th><th>التليفون</th><th id="balHead"></th><th></th></tr></thead>
+          <thead><tr><th>الاسم</th><th id="colTwo">التليفون</th><th id="balHead"></th><th></th></tr></thead>
           <tbody id="partyBody"></tbody>
         </table>
       </div>
@@ -48,14 +56,50 @@ Modules.parties = (() => {
     let dupMap = new Map();
     try { dupMap = await Services.duplicatePaymentsAll(activeTab); } catch (e) { }
 
+    /* شريط التصنيفات للموردين: كام مورد كهرباء وعليك لهم كام، وكام
+       مورد حدايد… ودوسة على تصنيف بتفلتر القايمة عليه. */
+    function drawCatBar() {
+      const bar = container.querySelector('#catBar');
+      if (activeTab !== 'suppliers') { bar.innerHTML = ''; return; }
+      const sups = AppState.suppliers;
+      const groups = {};
+      sups.forEach(s => {
+        const c = String(s.category || '').trim() || 'من غير تصنيف';
+        const g = groups[c] || (groups[c] = { n: 0, owed: 0 });
+        g.n++; g.owed += Math.max(0, Number(s.balance || 0));
+      });
+      const names = Object.keys(groups).sort((a, b) => groups[b].owed - groups[a].owed);
+      const totalOwed = sups.reduce((s, x) => s + Math.max(0, Number(x.balance || 0)), 0);
+      bar.innerHTML = `
+        <div class="cat-bar">
+          <button type="button" class="cat-chip ${!catFilter ? 'on' : ''}" data-cat="">
+            <span class="cc-name">كل الموردين</span>
+            <span class="cc-sub">${sups.length} مورد · عليك ${Utils.formatMoney(totalOwed)}</span>
+          </button>
+          ${names.map(c => `
+          <button type="button" class="cat-chip ${catFilter === c ? 'on' : ''}" data-cat="${Utils.escapeHtml(c)}">
+            <span class="cc-name">${Utils.escapeHtml(c)}</span>
+            <span class="cc-sub">${groups[c].n} مورد · عليك ${Utils.formatMoney(groups[c].owed)}</span>
+          </button>`).join('')}
+        </div>`;
+      bar.querySelectorAll('.cat-chip').forEach(b => b.addEventListener('click', () => {
+        catFilter = b.dataset.cat || '';
+        drawCatBar(); draw();
+      }));
+    }
+
     function draw() {
-      const list = AppState[activeTab];
       const isCust = activeTab === 'customers';
+      let list = AppState[activeTab];
+      if (!isCust && catFilter) {
+        list = list.filter(s => (String(s.category || '').trim() || 'من غير تصنيف') === catFilter);
+      }
       container.querySelector('#balHead').textContent = isCust ? 'المديونية (له علينا)' : 'المستحق له (علينا له)';
+      container.querySelector('#colTwo').textContent = isCust ? 'التليفون' : 'بتاع إيه';
       container.querySelector('#addPartyBtn').textContent = isCust ? '+ عميل جديد' : '+ مورد جديد';
       const tbody = container.querySelector('#partyBody');
       if (!list.length) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="4">${isCust ? 'مفيش عملاء مسجلين لسه' : 'مفيش موردين مسجلين لسه'}</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="4">${isCust ? 'مفيش عملاء مسجلين لسه' : (catFilter ? 'مفيش موردين في التصنيف ده' : 'مفيش موردين مسجلين لسه')}</td></tr>`;
         return;
       }
       tbody.innerHTML = list.map(p => `
@@ -63,7 +107,12 @@ Modules.parties = (() => {
           <td><button type="button" class="name-link open-stmt">${Utils.escapeHtml(p.name)}</button>
             ${dupMap.get(p.id) ? `<span class="badge badge-danger dup-flag"
               title="فيه عمليات اتسجلت أكتر من مرة — افتح الحساب وشوفها">⚠️ ${dupMap.get(p.id)} مكرر</span>` : ''}</td>
-          <td>${Utils.escapeHtml(p.phone || '—')}</td>
+          <td>${isCust
+            ? Utils.escapeHtml(p.phone || '—')
+            : (p.category
+                ? `<span class="badge badge-muted">${Utils.escapeHtml(p.category)}</span>${p.categoryAuto ? ' <span class="muted" title="اتحدد لوحده من فواتيره" style="font-size:11px;">تلقائي</span>' : ''}`
+                : '<span class="muted">— (هيتحدد من أول فاتورة)</span>')
+              + (p.phone ? `<div class="hint" style="margin:2px 0 0;">${Utils.escapeHtml(p.phone)}</div>` : '')}</td>
           <td>${balanceBadge(p.balance, isCust)}</td>
           <td>
             ${(p.balance || 0) > 0 ? `<button class="icon-btn settle-btn" title="${isCust ? 'تحصيل' : 'سداد'}">💰</button>` : ''}
@@ -72,6 +121,7 @@ Modules.parties = (() => {
           </td>
         </tr>`).join('');
     }
+    drawCatBar();
     draw();
 
     container.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
@@ -402,6 +452,14 @@ Modules.parties = (() => {
           <form id="partyForm">
             <div class="field"><label>الاسم</label><input type="text" id="pName" value="${Utils.escapeHtml(party?.name || '')}" required autofocus></div>
             <div class="field"><label>التليفون</label><input type="text" id="pPhone" value="${Utils.escapeHtml(party?.phone || '')}"></div>
+            ${isCust ? '' : `
+            <div class="field">
+              <label>المورد ده بتاع إيه؟ <span class="muted">(كهرباء / حدايد / مفاتيح…)</span></label>
+              <input type="text" id="pCategory" list="supCatList" value="${Utils.escapeHtml(party?.category || '')}"
+                     placeholder="اختار أو اكتب" autocomplete="off">
+              <datalist id="supCatList">${categoryChoices().map(c => `<option value="${Utils.escapeHtml(c)}">`).join('')}</datalist>
+              <div class="hint">${party?.categoryAuto ? 'اتحط لوحده من أول فاتورة شرا — غيّره لو مش مظبوط.' : 'لو سيبته فاضي، البرنامج بيحدده لوحده من أول فاتورة شرا.'}</div>
+            </div>`}
             ${party ? '' : `
             <div class="field">
               <label>رصيد افتتاحي <span class="muted">(دين قديم من قبل البرنامج)</span></label>
@@ -426,12 +484,21 @@ Modules.parties = (() => {
               payload.id = party.id;
               payload.balance = party.balance || 0;
               payload.openingBalance = party.openingBalance || 0;
+              if (party.openingDate) payload.openingDate = party.openingDate;
             } else {
               // الرصيد الافتتاحي دين قديم — بيتسجل على الطرف من غير ما يمس الخزنة
               const opening = Number(body.querySelector('#pOpening').value || 0);
               payload.balance = opening;
               payload.openingBalance = opening;
               payload.openingDate = Utils.nowISO();
+            }
+            /* تصنيف المورد: لو كتبه بإيده يبقى هو المعتمد (مش تلقائي).
+               لو سابه فاضي بنخلّي البرنامج يحدده من أول فاتورة. */
+            const catEl = body.querySelector('#pCategory');
+            if (catEl) {
+              const cat = catEl.value.trim();
+              payload.category = cat;
+              payload.categoryAuto = cat ? (party && party.categoryAuto && cat === (party.category || '') ? true : false) : false;
             }
             const id = await DB.put(store, payload);
             await AppState.reloadParties();

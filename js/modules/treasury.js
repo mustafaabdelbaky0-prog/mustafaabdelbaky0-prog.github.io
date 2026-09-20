@@ -101,8 +101,16 @@ Modules.treasury = (() => {
       </div>
 
       <div class="card daycard" id="dayCard" style="margin-bottom:18px;">
-        <div class="section-head"><h3>تقفيل اليومية</h3></div>
+        <div class="section-head">
+          <h3>يومية النهاردة</h3>
+          <span class="hint">بتتقفل لوحدها بعد نص الليل بالرقم اللي في البرنامج — ولو حبيت تعدّ الدرج بنفسك اقفلها من هنا</span>
+        </div>
         <div id="dayBody"><div class="empty-state" style="padding:16px;">بيجمّع حركة اليوم...</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <div class="section-head"><h3>اليوميات اللي فاتت</h3><span class="hint" id="dayHistHint"></span></div>
+        <div id="dayHist"><div class="empty-state" style="padding:12px;">…</div></div>
       </div>
 
       <div class="section-head">
@@ -176,7 +184,10 @@ Modules.treasury = (() => {
       </div>
     `;
 
+    // الأيام اللي فاتت ولسه ما اتقفلتش بتتقفل هنا لوحدها قبل ما نعرض
+    try { await Services.autoCloseDays(); } catch (e) { }
     await drawDayClose(container);
+    await drawDayHistory(container);
 
     container.querySelector('#depositBtn').addEventListener('click', () => openMoveModal('in', container));
     container.querySelector('#withdrawBtn').addEventListener('click', () => openMoveModal('out', container));
@@ -231,6 +242,41 @@ Modules.treasury = (() => {
         } catch (err) { Utils.toast(err.message || 'المسح مانجحش', 'error'); }
       }
     });
+  }
+
+  /* اليوميات اللي فاتت: كل يوم باع كام وصرف كام وقفل على كام —
+     سواء قفلها بإيده (عدّ الدرج) أو البرنامج قفلها لوحده. */
+  async function drawDayHistory(container) {
+    const box = container.querySelector('#dayHist');
+    if (!box) return;
+    const rows = await Services.dayHistory(30);
+    const hint = container.querySelector('#dayHistHint');
+    if (hint) hint.textContent = rows.length ? 'آخر ' + rows.length + ' يوم' : '';
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty-state" style="padding:14px;"><div class="ic">📅</div>أول يومية هتتقفل لوحدها بعد نص الليل</div>';
+      return;
+    }
+    box.innerHTML = `
+      <div class="table-wrap" style="border:none;">
+        <table>
+          <thead><tr><th>اليوم</th><th>فواتير</th><th>مبيعات</th><th>مصاريف</th><th>الخزنة آخر اليوم</th><th>التقفيل</th></tr></thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td style="font-weight:700;">${Utils.formatDate(r.day + 'T12:00:00')}</td>
+                <td>${r.invoices}</td>
+                <td style="color:var(--success);font-weight:700;">${Utils.formatMoney(r.salesTotal)}</td>
+                <td style="color:var(--danger);">${r.expenses ? Utils.formatMoney(r.expenses) : '—'}</td>
+                <td style="font-weight:700;">${Utils.formatMoney(r.counted)}</td>
+                <td>${r.auto
+                  ? '<span class="badge badge-muted" title="اتقفل لوحده بالرقم اللي في البرنامج">تلقائي</span>'
+                  : (Math.abs(r.difference) < 0.005
+                      ? '<span class="badge badge-ok" title="عدّ الدرج وطلع مظبوط">عدّ الدرج ✓</span>'
+                      : `<span class="badge badge-warn" title="فرق بين الدرج والبرنامج">عدّ الدرج · فرق ${Utils.formatMoney(Math.abs(r.difference))} ${r.difference > 0 ? 'زيادة' : 'ناقص'}</span>`)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
   }
 
   /* تقفيل اليومية: بيوريك حركة اليوم، وبتكتب اللي عديته في الدرج فعلاً،

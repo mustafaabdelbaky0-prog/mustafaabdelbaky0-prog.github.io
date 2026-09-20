@@ -558,8 +558,144 @@ const Services = (() => {
       if (dueAmount > 0 && purchase.supplierId) {
         await _bumpPartyBalance(t, 'suppliers', purchase.supplierId, dueAmount);
       }
+      /* المورد بيتصنّف لوحده من أول فاتورة: لو الفاتورة أغلبها كهرباء
+         يبقى مورد كهرباء. بس لو صاحب المحل كاتبله تصنيف بإيده بنسيبه. */
+      if (purchase.supplierId) await _autoCategorizeSupplier(t, purchase.supplierId, purchase.lines);
       return { id: purchaseId, number, total, dueAmount };
     });
+  }
+
+  /* التصنيف الغالب على سطور الفاتورة (بقيمة الشرا مش بالعدد —
+     عشان ٥٠ مسمار بجنيه ما يغلبوش لفة سلك بألفين) */
+  function _dominantCategory(lines) {
+    const totals = {};
+    for (const l of lines || []) {
+      const c = String(l.category || '').trim();
+      if (!c) continue;
+      totals[c] = (totals[c] || 0) + Number(l.qty || 0) * Number(l.cost || 0);
+    }
+    let best = '', bestV = 0;
+    for (const c in totals) if (totals[c] > bestV) { best = c; bestV = totals[c]; }
+    return best;
+  }
+
+  async function _autoCategorizeSupplier(t, supplierId, lines) {
+    const store = t.objectStore('suppliers');
+    const s = await DB.reqToPromise(store.get(supplierId));
+    if (!s || String(s.category || '').trim()) return;   // عنده تصنيف خلاص
+    const cat = _dominantCategory(lines);
+    if (!cat) return;
+    s.category = cat;
+    s.categoryAuto = true;   // اتحط لوحده — لو غيّره بإيده بتتشال
+    await DB.reqToPromise(store.put(s));
+  }
+
+  /* ---------- نسبة الربح الافتراضية ----------
+     بتتحط مرة في بيانات المؤسسة (مثلاً ٢٥٪)، وفي فاتورة الشرا سعر
+     البيع بيتقترح لوحده = التكلفة + النسبة. هو حر يعدّله. */
+  const MARKUP_KEY = 'defaultMarkup';
+  async function getDefaultMarkup() {
+    const rec = await DB.get('settings', MARKUP_KEY);
+    const v = rec ? Number(rec.value) : 0;
+    return isFinite(v) && v > 0 ? v : 0;
+  }
+  async function setDefaultMarkup(pct) {
+    const v = Math.max(0, Math.round(Number(pct || 0) * 100) / 100);
+    await DB.put('settings', { key: MARKUP_KEY, value: v });
+    return v;
+  }
+  /* سعر بيع مقترح مقبول الشكل: مفيش ٣١.٢٥ — الرخيص بربع جنيه،
+     والمتوسط بنص جنيه، والغالي بجنيه. */
+  function suggestSalePrice(unitCost, markupPct) {
+    const c = Number(unitCost || 0), m = Number(markupPct || 0);
+    if (!(c > 0) || !(m > 0)) return 0;
+    const raw = c * (1 + m / 100);
+    const step = raw < 10 ? 0.25 : (raw < 100 ? 0.5 : 1);
+    return Math.round(raw / step) * step;
+  }
+
+  /* ---------- تقفيل اليومية لوحده ----------
+
+     صاحب المحل مش بيقفل اليومية بإيده (صفر تقفيلات لحد دلوقتي).
+     فالبرنامج بيقفل كل يوم فات لوحده: بيسجّل مبيعات اليوم ومصاريفه
+     والفلوس اللي كانت في الخزنة آخر اليوم — بالرقم اللي عنده، من غير
+     عدّ درج. ولو حبّ يعدّ الدرج بنفسه في يوم، تقفيله بإيده بيبقى هو
+     المعتمد (بيتعمل قبل نص الليل).
+
+     بيشتغل على الكمبيوتر بس (مش الموبايل) عشان مايتعملش مرتين. */
+  async function autoCloseDays() {
+    if (typeof window !== 'undefined' && window.DB_BACKEND) return [];   // الموبايل
+    const today = Utils.todayISO();
+    const [sales, expenses, treasury, returns, closings] = await Promise.all([
+      DB.getAll('sales'), DB.getAll('expenses'), DB.getAll('treasury'), DB.getAll('returns'), DB.getAll('dayClosings')
+    ]);
+    const closedDays = new Set(closings.map(c => c.day || Utils.dateKey(c.date)));
+
+    // الأيام اللي فيها أي حركة
+    const days = new Set();
+    sales.forEach(s => days.add(Utils.dateKey(s.date)));
+    expenses.forEach(e => days.add(Utils.dateKey(e.date)));
+    treasury.forEach(m => days.add(Utils.dateKey(m.date)));
+    const todo = [...days].filter(d => d < today && !closedDays.has(d)).sort();
+    if (!todo.length) return [];
+
+    // الخزنة آخر كل يوم = مجموع كل الحركات لحد اليوم ده
+    const sorted = treasury.slice().sort((a, b) => {
+      const d = new Date(a.date) - new Date(b.date);
+      return d !== 0 ? d : (Number(a.id) - Number(b.id));
+    });
+
+    const made = [];
+    for (const day of todo) {
+      let bal = 0, count = 0;
+      for (const m of sorted) {
+        if (Utils.dateKey(m.date) > day) break;
+        bal = Math.round((bal + (m.direction === 'in' ? Number(m.amount || 0) : -Number(m.amount || 0))) * 100) / 100;
+        count++;
+      }
+      const daySales = sales.filter(s => !s.voided && Utils.dateKey(s.date) === day);
+      const rec = {
+        date: new Date(day + 'T23:59:00').toISOString(), day,
+        expected: bal, counted: bal, difference: 0, moveId: null,
+        note: 'تقفيل تلقائي', auto: true, closedAt: Utils.nowISO(), treasuryCount: count,
+        invoices: daySales.length,
+        salesTotal: Math.round(daySales.reduce((a, s) => a + Number(s.total || 0), 0) * 100) / 100,
+        expenses: Math.round(expenses.filter(e => Utils.dateKey(e.date) === day).reduce((a, e) => a + Number(e.amount || 0), 0) * 100) / 100,
+        returns: Math.round(returns.filter(r => r.kind === 'customer' && !r.voided && Utils.dateKey(r.date) === day).reduce((a, r) => a + Number(r.total || 0), 0) * 100) / 100,
+        device: (typeof Device !== 'undefined') ? Device.current() : null
+      };
+      await DB.add('dayClosings', rec);
+      made.push(rec);
+    }
+    return made;
+  }
+
+  /* اليوميات المتقفلة (يدوي أو تلقائي) — الأحدث فوق، ومعاها أرقام
+     اليوم عشان يشوف كل يوم باع كام وصرف كام وقفل على كام */
+  async function dayHistory(limit) {
+    const [closings, sales, expenses] = await Promise.all([
+      DB.getAll('dayClosings'), DB.getAll('sales'), DB.getAll('expenses')
+    ]);
+    const byDay = {};
+    closings.forEach(c => {
+      const day = c.day || Utils.dateKey(c.date);
+      if (c.superseded) return;
+      const prev = byDay[day];
+      if (!prev || new Date(c.closedAt || c.date) > new Date(prev.closedAt || prev.date)) byDay[day] = c;
+    });
+    const rows = Object.values(byDay).map(c => {
+      const day = c.day || Utils.dateKey(c.date);
+      const ds = sales.filter(s => !s.voided && Utils.dateKey(s.date) === day);
+      return {
+        day, auto: !!c.auto, counted: Number(c.counted || 0), expected: Number(c.expected || 0),
+        difference: Number(c.difference || 0),
+        invoices: c.invoices != null ? c.invoices : ds.length,
+        salesTotal: c.salesTotal != null ? c.salesTotal : Math.round(ds.reduce((a, s) => a + Number(s.total || 0), 0) * 100) / 100,
+        expenses: c.expenses != null ? c.expenses : Math.round(expenses.filter(e => Utils.dateKey(e.date) === day).reduce((a, e) => a + Number(e.amount || 0), 0) * 100) / 100,
+        closedAt: c.closedAt, note: c.note || ''
+      };
+    }).sort((a, b) => (a.day < b.day ? 1 : -1));
+    return limit ? rows.slice(0, limit) : rows;
   }
 
   async function voidPurchase(purchaseId) {
@@ -2187,6 +2323,7 @@ const Services = (() => {
     saveExpense, deleteExpense, manualTreasuryMove,
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
     voidPartyPayment, editPartyPayment, refundParty, recentSamePayment,
+    getDefaultMarkup, setDefaultMarkup, suggestSalePrice, autoCloseDays, dayHistory,
     partyLedger, isPartyPayment, duplicatePayments, dropDuplicatePayments,
     duplicatePaymentsAll,
     closeDay, daySummary,

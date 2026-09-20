@@ -428,6 +428,7 @@ Modules.purchases = (() => {
   async function render(container, keepEdit) {
     await AppState.reloadItems();
     await AppState.reloadParties();
+    markup = await Services.getDefaultMarkup();
     rowFilter = '';   // بحث السطور بيبدأ فاضي كل مرة تفتح الشاشة
     let draft = null;
     if (!keepEdit) {
@@ -865,6 +866,43 @@ Modules.purchases = (() => {
       if (!row.price) row.price = item.costPrice || '';
     }
     if (!row.qty) row.qty = 1;
+    suggestSale(row);
+  }
+
+  /* ---------- سعر البيع المقترح ----------
+     لو صاحب المحل حاطط نسبة ربح في بيانات المؤسسة (مثلاً ٢٥٪)،
+     أول ما يكتب سعر الشرا سعر البيع بيتملى لوحده = التكلفة + النسبة.
+     الاقتراح بيتحدّث مع كل تغيير في التكلفة — لحد ما هو يكتب سعر بيع
+     بإيده، ساعتها بنسيبه في حاله ومنلمسوش تاني. */
+  let markup = 0;   // النسبة — بتتقرا مع كل رسم للشاشة
+
+  function suggestSale(r) {
+    if (!(markup > 0)) return false;
+    // كتبه بإيده؟ أو صنف موجود ليه سعر بيع أصلاً؟ نسيبه
+    if (r.salePrice !== '' && r.salePrice != null && !r._saleAuto) return false;
+    const c = calc(r);
+    const s = Services.suggestSalePrice(c.unitCost, markup);
+    if (!(s > 0)) {
+      if (r._saleAuto) { r.salePrice = ''; r._saleAuto = false; }
+      return false;
+    }
+    r.salePrice = s;
+    r._saleAuto = true;
+    return true;
+  }
+
+  // بيحدّث خانة سعر البيع في السطر بعد الاقتراح (من غير ما نعيد رسم الجدول)
+  function paintSuggested(tr, r) {
+    const el = tr && tr.querySelector('.f-sale');
+    if (!el) return;
+    if (r._saleAuto) {
+      el.value = r.salePrice;
+      el.classList.add('suggested');
+      el.title = 'سعر مقترح (' + markup + '٪ فوق التكلفة) — عدّله براحتك';
+    } else {
+      el.classList.remove('suggested');
+      el.title = '';
+    }
   }
 
   function drawRows(container, focusRowId, focusField) {
@@ -915,7 +953,7 @@ Modules.purchases = (() => {
             : `<div class="cell-muted">—</div>`}
         </td>
         <td data-label="سعر البيع">
-          <input type="number" class="cell f-sale num" value="${r.salePrice}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" title="سعر بيع ال${Utils.escapeHtml(u)} الواحد">
+          <input type="number" class="cell f-sale num${r._saleAuto ? ' suggested' : ''}" value="${r.salePrice}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" title="${r._saleAuto ? 'سعر مقترح (' + markup + '٪ فوق التكلفة) — عدّله براحتك' : 'سعر بيع ال' + Utils.escapeHtml(u) + ' الواحد'}">
           ${c.unitCost > 0 && Number(r.salePrice || 0) > 0 ? `
             <div class="profit-tag ${Number(r.salePrice) >= c.unitCost ? 'good' : 'bad'}">
               ${Number(r.salePrice) >= c.unitCost
@@ -1001,8 +1039,17 @@ Modules.purchases = (() => {
       $('.f-category').addEventListener('change', (e) => { r.category = e.target.value.trim(); });
 
       $('.f-qty').addEventListener('input', (e) => { r.qty = e.target.value; refreshLine(container, tr, r); });
-      $('.f-price').addEventListener('input', (e) => { r.price = e.target.value; refreshLine(container, tr, r); });
-      $('.f-sale').addEventListener('input', (e) => { r.salePrice = e.target.value; refreshLine(container, tr, r); });
+      $('.f-price').addEventListener('input', (e) => {
+        r.price = e.target.value;
+        if (suggestSale(r) || r._saleAuto === false) paintSuggested(tr, r);
+        refreshLine(container, tr, r);
+      });
+      $('.f-sale').addEventListener('input', (e) => {
+        r.salePrice = e.target.value;
+        r._saleAuto = false;      // كتبه بإيده — مبقاش اقتراح
+        paintSuggested(tr, r);
+        refreshLine(container, tr, r);
+      });
       if ($('.f-packsale')) {
         $('.f-packsale').addEventListener('input', (e) => { r.packSalePrice = e.target.value; refreshLine(container, tr, r); });
       }
@@ -1027,6 +1074,8 @@ Modules.purchases = (() => {
         r.packSize = e.target.value;
         const nowPack = Number(r.packSize || 0) > 0;
         if (wasPack !== nowPack) applyPackState(container, tr, r, id);
+        // "فيها كام" بيغيّر تكلفة الوحدة → الاقتراح يتحدّث
+        if (suggestSale(r)) paintSuggested(tr, r);
         refreshLine(container, tr, r);
       });
       const un = $('.f-unit');

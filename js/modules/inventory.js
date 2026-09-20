@@ -8,6 +8,13 @@ Modules.inventory = (() => {
     return_out: { txt: 'إلغاء شراء', cls: 'badge-warn' }
   };
 
+  let catFilter = '';   // التصنيف المختار (كهرباء / حدايد …) — بيفضل لما يرجع للشاشة
+
+  function printCountSheet(list, cat) {
+    if (!list.length) { Utils.toast('مفيش أصناف تتطبع', 'info'); return; }
+    Printing.countSheet(list, cat || 'كل الأصناف');
+  }
+
   async function render(container) {
     await AppState.reloadItems();
     const totalValue = AppState.items.reduce((s, i) => s + (i.stock * i.costPrice), 0);
@@ -34,15 +41,20 @@ Modules.inventory = (() => {
         </div>
       </div>` : ''}
 
+      <div id="invCats"></div>
+
       <div class="section-head">
         <div class="search-box" style="max-width:340px;">
           <input type="text" id="invSearch" placeholder="ابحث بالاسم أو الباركود...">
         </div>
-        <button class="btn btn-ghost" id="invLabelBtn">🏷️ طباعة ملصقات</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-ghost" id="invSheetBtn" title="ورقة تطبعها وتلف بيها على الرف تعدّ">🖨️ ورقة جرد</button>
+          <button class="btn btn-ghost" id="invLabelBtn">🏷️ طباعة ملصقات</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>الباركود</th><th>الصنف</th><th>الرصيد</th><th>تالف/ضمان</th><th>الحد الأدنى</th>
+          <thead><tr><th>الباركود</th><th>الصنف</th><th>التصنيف</th><th>الرصيد</th><th>تالف/ضمان</th><th>الحد الأدنى</th>
             ${Auth.isSeller() ? '' : '<th>قيمة الرصيد</th>'}<th></th></tr></thead>
           <tbody id="invBody"></tbody>
         </table>
@@ -50,9 +62,56 @@ Modules.inventory = (() => {
     `;
 
     const tbody = container.querySelector('#invBody');
+
+    /* ---------- المخزون حسب التصنيف ----------
+       كهرباء بكام، حدايد بكام، مفاتيح بكام — ودوسة على التصنيف بتفلتر
+       الجدول عليه عشان يجرد التصنيف ده لوحده. */
+    const catOf = i => String(i.category || '').trim() || 'من غير تصنيف';
+    function drawCats() {
+      const box = container.querySelector('#invCats');
+      const groups = {};
+      AppState.items.forEach(i => {
+        const c = catOf(i);
+        const g = groups[c] || (groups[c] = { n: 0, cost: 0, sale: 0, neg: 0 });
+        g.n++;
+        const st = Number(i.stock || 0);
+        if (st > 0) { g.cost += st * Number(i.costPrice || 0); g.sale += st * Number(i.salePrice || 0); }
+        if (st < -0.0001) g.neg++;
+      });
+      const names = Object.keys(groups).sort((a, b) => groups[b].cost - groups[a].cost);
+      const seller = Auth.isSeller();
+      box.innerHTML = `
+        <div class="cat-bar">
+          <button type="button" class="cat-chip ${!catFilter ? 'on' : ''}" data-cat="">
+            <span class="cc-name">كل الأصناف</span>
+            <span class="cc-sub">${AppState.items.length} صنف${seller ? '' : ' · ' + Utils.formatMoney(totalValue)}</span>
+          </button>
+          ${names.map(c => `
+          <button type="button" class="cat-chip ${catFilter === c ? 'on' : ''}" data-cat="${Utils.escapeHtml(c)}">
+            <span class="cc-name">${Utils.escapeHtml(c)}</span>
+            <span class="cc-sub">${groups[c].n} صنف${seller ? '' : ' · ' + Utils.formatMoney(groups[c].cost)}</span>
+            ${!seller && groups[c].sale > 0 ? `<span class="cc-sub2">بسعر البيع ${Utils.formatMoney(groups[c].sale)}</span>` : ''}
+          </button>`).join('')}
+        </div>`;
+      box.querySelectorAll('.cat-chip').forEach(b => b.addEventListener('click', () => {
+        catFilter = b.dataset.cat || '';
+        drawCats(); redraw();
+      }));
+    }
+
+    // اللي ظاهر دلوقتي = التصنيف المختار + كلمة البحث
+    function visible() {
+      let list = AppState.items;
+      if (catFilter) list = list.filter(i => catOf(i) === catFilter);
+      const q = (container.querySelector('#invSearch').value || '').trim();
+      if (q) list = Search.items(q, list);
+      return list;
+    }
+    function redraw() { draw(visible()); }
+
     function draw(list) {
       if (!list.length) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="${Auth.isSeller() ? 6 : 7}">مفيش أصناف</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="${Auth.isSeller() ? 7 : 8}">مفيش أصناف${catFilter ? ' في "' + Utils.escapeHtml(catFilter) + '"' : ''}</td></tr>`;
         return;
       }
       tbody.innerHTML = list.map(i => {
@@ -63,6 +122,7 @@ Modules.inventory = (() => {
         <tr data-id="${i.id}"${neg ? ' class="row-missing" title="اتباع ولسه ما اتسجلش — سجّل فاتورة الشراء والرقم هيتظبط لوحده"' : ''}>
           <td>${Utils.escapeHtml(i.barcode || '—')}</td>
           <td style="font-weight:700;">${Utils.escapeHtml(i.name)}</td>
+          <td>${i.category ? `<span class="badge badge-muted">${Utils.escapeHtml(i.category)}</span>` : '<span class="muted">—</span>'}</td>
           <td>${neg
                 ? `<span class="badge badge-danger">ناقص ${Units.fmtQty(-i.stock, i.unit)}</span>
                    <div class="unit-cost-sub">اتباع ولسه ما اتسجلش</div>`
@@ -77,14 +137,13 @@ Modules.inventory = (() => {
           </td>
         </tr>`; }).join('');
     }
-    draw(AppState.items);
+    drawCats();
+    redraw();
 
     container.querySelector('#invLabelBtn').addEventListener('click', () => Modules.items.openBulkLabels());
+    container.querySelector('#invSheetBtn').addEventListener('click', () => printCountSheet(visible(), catFilter));
 
-    container.querySelector('#invSearch').addEventListener('input', Utils.debounce((e) => {
-      const q = e.target.value.trim();
-      draw(!q ? AppState.items : Search.items(q, AppState.items));
-    }, 150));
+    container.querySelector('#invSearch').addEventListener('input', Utils.debounce(redraw, 150));
 
     tbody.addEventListener('click', async (e) => {
       const tr = e.target.closest('tr');
