@@ -1,231 +1,309 @@
+/* المصروفات — دوسة واحدة وخلاص.
+
+   الشكوى: الشاشة القديمة كانت فورم من ٦ خانات (تاريخ، نوع، مورد؟،
+   موظف؟، وصف، مبلغ) عشان يسجّل "شاي بعشرة". صاحب المحل بيصرف كل شوية
+   (شاي، قهوة، سكر، حاجة ساقعة، فطار) — فلازم التسجيل يبقى بسرعة
+   الصرف نفسه.
+
+   الحل: أزرار سريعة. كل زرار عليه اسم المصروف وسعره المعتاد، دوسة
+   واحدة تسجّله على طول بتاريخ النهارده، ومعاها "تراجع" لو دوس
+   بالغلط. الأزرار بتاعته هو: يضيف، يعدّل السعر، يمسح.
+
+   ولو مصروف مش على الأزرار: خانتين بس — إيه وبكام.
+
+   دفعات الموردين وسلف الموظفين مبقتش هنا — دي مش مصروفات وكانت
+   هي اللي بتلخبطه. ليها مكانها: حساب المورد، وشاشة الموظفين. */
 Modules.expenses = (() => {
-  let saving = false;
-  const CATEGORIES =['إيجار', 'كهرباء ومياه', 'مرتبات', 'مواصلات ونقل', 'صيانة', 'أدوات مكتبية', 'ضيافة', 'أخرى'];
+  const PRESETS_KEY = 'expensePresets';
+  const DEFAULT_PRESETS = [
+    { name: 'شاي', amount: 10, icon: '🍵' },
+    { name: 'قهوة', amount: 15, icon: '☕' },
+    { name: 'سكر', amount: 60, icon: '🍬' },
+    { name: 'حاجة ساقعة', amount: 15, icon: '🥤' },
+    { name: 'فطار', amount: 50, icon: '🥙' },
+    { name: 'غدا', amount: 80, icon: '🍽️' },
+    { name: 'مواصلات', amount: 0, icon: '🚕' },
+    { name: 'نضافة', amount: 0, icon: '🧹' }
+  ];
+
+  let editMode = false;
+  let lastUndo = null;      // { id, timer } — آخر مصروف اتسجل، عشان "تراجع"
+
+  async function loadPresets() {
+    const rec = await DB.get('settings', PRESETS_KEY);
+    const list = rec && Array.isArray(rec.value) ? rec.value : null;
+    return list && list.length ? list : DEFAULT_PRESETS.map(p => Object.assign({}, p));
+  }
+  async function savePresets(list) {
+    await DB.put('settings', { key: PRESETS_KEY, value: list });
+  }
+
+  // بنثبّت الوقت على نص اليوم عشان التاريخ ما يزحلقش يوم بفرق التوقيت
+  function dayToISO(dayStr) {
+    return dayStr ? new Date(dayStr + 'T12:00:00').toISOString() : Utils.nowISO();
+  }
+
+  function lockedWhy(e) {
+    if (e.source === 'payroll') return 'ده مرتب موظف من تقفيل الشهر — امسحه من كشف حساب الموظف';
+    if (e.source === 'depreciation') return 'ده إهلاك أصول ثابتة — امسحه من شاشة الأصول الثابتة';
+    return '';
+  }
+
+  function delBtn(e) {
+    const why = lockedWhy(e);
+    return why
+      ? `<button type="button" class="icon-btn locked-exp" data-why="${Utils.escapeHtml(why)}">🔒</button>`
+      : '<button type="button" class="icon-btn del-exp" title="امسح">🗑️</button>';
+  }
+
+  function nameCell(e) {
+    return Utils.escapeHtml(e.category) +
+      (e.description ? ' <span class="muted">· ' + Utils.escapeHtml(e.description) + '</span>' : '');
+  }
 
   async function render(container) {
-    await AppState.reloadParties();
-    const allEmployees = await DB.getAll('employees');
-    const employees = allEmployees
-      .filter(e => e.active !== false)
-      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+    const presets = await loadPresets();
     const all = await DB.getAll('expenses');
-    all.sort((a, b) => new Date(b.date) - new Date(a.date));
-    const monthTotal = all.filter(e => Utils.dateKey(e.date).slice(0, 7) === Utils.todayISO().slice(0, 7)).reduce((s, e) => s + e.amount, 0);
-
-    /* الدفعات للموردين وسلف الموظفين مش مصروفات، بس بنعرضها في نفس
-       السجل عشان ميحصلش لخبطة لما يسجل دفعة ومايلاقيهاش. */
-    const pays = (await DB.getAll('treasury'))
-      .filter(t => ['pay', 'advance', 'salary'].includes(t.source))
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 30)
-      .map(t => {
-        let who = 'مورد';
-        if (t.source === 'pay') {
-          const s = AppState.suppliers.find(x => x.id === t.refId);
-          who = s ? s.name : 'مورد';
-        } else {
-          const e = allEmployees.find(x => x.id === t.refId);
-          who = (e ? e.name : 'موظف') + (t.source === 'advance' ? ' (سلفة)' : ' (صرف)');
-        }
-        return { date: t.date, name: who, amount: t.amount, note: t.note || '' };
-      });
+    all.sort((a, b) => new Date(b.date) - new Date(a.date) || Number(b.id) - Number(a.id));
+    const today = Utils.todayISO();
+    const month = today.slice(0, 7);
+    const todayList = all.filter(e => Utils.dateKey(e.date) === today);
+    const older = all.filter(e => Utils.dateKey(e.date) !== today).slice(0, 60);
+    const todayTotal = todayList.reduce((s, e) => s + Number(e.amount || 0), 0);
+    const monthTotal = all.filter(e => Utils.dateKey(e.date).slice(0, 7) === month)
+                          .reduce((s, e) => s + Number(e.amount || 0), 0);
 
     container.innerHTML = `
-      <div class="grid form-layout">
-        <div class="card">
-          <div class="section-head"><h3>تسجيل مصروف</h3></div>
-          <form id="expForm">
+      <div id="expRoot">
+      <div class="card">
+        <div class="section-head">
+          <h3>مصروف سريع — دوسة واحدة</h3>
+          <button type="button" class="btn btn-ghost btn-sm" id="editPresets">${editMode ? '✅ خلصت التعديل' : '✏️ عدّل الأزرار'}</button>
+        </div>
+
+        <div class="qx-amount">
+          <label for="qxAmount">مبلغ مختلف المرة دي؟</label>
+          <input type="number" id="qxAmount" min="0.01" step="0.01" inputmode="decimal"
+                 placeholder="سيبه فاضي = السعر اللي على الزرار">
+        </div>
+
+        <div class="qx-grid" id="qxGrid">
+          ${presets.map((p, i) => `
+            <button type="button" class="qx-btn${editMode ? ' editing' : ''}" data-i="${i}">
+              <span class="qx-icon">${Utils.escapeHtml(p.icon || '💸')}</span>
+              <span class="qx-name">${Utils.escapeHtml(p.name)}</span>
+              <span class="qx-price">${Number(p.amount) > 0 ? Utils.formatMoney(p.amount) : 'بيسأل عن المبلغ'}</span>
+              ${editMode ? '<span class="qx-edit">✏️ دوس تعدّل أو تمسح</span>' : ''}
+            </button>`).join('')}
+          ${editMode ? '<button type="button" class="qx-btn qx-add" id="qxAdd"><span class="qx-icon">＋</span><span class="qx-name">زرار جديد</span></button>' : ''}
+        </div>
+
+        <div id="qxUndo" class="qx-undo" hidden></div>
+
+        <details class="qx-other">
+          <summary>مصروف تاني مش على الأزرار</summary>
+          <form id="expForm" class="qx-form" novalidate>
+            <div class="field" style="flex:2;">
+              <label>إيه</label>
+              <input type="text" id="eCategory" placeholder="مثلاً: لمبة للمحل، سباك، كرتونة مية" autocomplete="off">
+            </div>
+            <div class="field">
+              <label>بكام</label>
+              <input type="number" id="eAmount" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00">
+            </div>
             <div class="field">
               <label>التاريخ</label>
-              <input type="date" id="eDate" value="${Utils.todayISO()}">
-              <div class="hint">لو صرفت الفلوس امبارح وبتسجّلها النهاردة، غيّر التاريخ</div>
+              <input type="date" id="eDate" value="${today}">
             </div>
-            <div class="field">
-              <label>النوع / البيان</label>
-              <input type="text" id="eCategory" list="expCatList" placeholder="اختار أو اكتب اللي انت عايزه" autocomplete="off">
-              <datalist id="expCatList">${CATEGORIES.map(c => `<option value="${c}">`).join('')}</datalist>
-            </div>
-            <div class="field">
-              <label>دفعة لمورد؟ <span class="muted">(سيبها فاضية لو مصروف عادي)</span></label>
-              <input type="text" id="eSupplier" list="expSupList" placeholder="اسم المورد" autocomplete="off">
-              <datalist id="expSupList">
-                ${AppState.suppliers.map(s => `<option value="${Utils.escapeHtml(s.name)}">`).join('')}
-              </datalist>
-              <div class="hint" id="supHint"></div>
-            </div>
-            ${employees.length ? `
-            <div class="field">
-              <label>سلفة لموظف؟ <span class="muted">(سيبها فاضية لو مصروف عادي)</span></label>
-              <select id="eEmployee">
-                <option value="">—</option>
-                ${employees.map(e => `<option value="${e.id}">${Utils.escapeHtml(e.name)}</option>`).join('')}
-              </select>
-              <div class="hint" id="empHint"></div>
-            </div>` : ''}
-            <div class="field">
-              <label>الوصف (اختياري)</label>
-              <input type="text" id="eDesc" placeholder="تفاصيل إضافية">
-            </div>
-            <div class="field">
-              <label>المبلغ</label>
-              <input type="number" id="eAmount" min="0.01" step="0.01" required autofocus>
-            </div>
-            <div class="form-actions">
-              <button type="submit" class="btn btn-amber btn-block" id="expSave">تسجيل المصروف</button>
-            </div>
+            <button type="submit" class="btn btn-amber" id="expSave">سجّل</button>
           </form>
-          <div class="stat-tile negative" style="margin-top:16px;">
-            <div class="lbl">إجمالي مصروفات الشهر الحالي</div>
+        </details>
+
+        <div class="hint" style="margin-top:10px;line-height:1.9;">
+          دفعة لمورد؟ من <strong>العملاء والموردين</strong> ← اسم المورد ← سداد.
+          سلفة لموظف؟ من شاشة <strong>الموظفين</strong>. دول مش مصروفات.
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="margin-top:16px;">
+        <div class="card">
+          <div class="section-head">
+            <h3>مصاريف النهارده</h3>
+            <strong style="color:var(--danger);font-size:16px;">${Utils.formatMoney(todayTotal)}</strong>
+          </div>
+          ${todayList.length ? `
+          <div class="qx-today">
+            ${todayList.map(e => `
+              <div class="qx-row" data-id="${e.id}">
+                <span class="qx-row-time">${new Date(e.date).toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' })}</span>
+                <span class="qx-row-name">${nameCell(e)}</span>
+                <span class="qx-row-amt">${Utils.formatMoney(e.amount)}</span>
+                ${delBtn(e)}
+              </div>`).join('')}
+          </div>` : '<div class="empty-state" style="padding:16px;"><div class="ic">☕</div>لسه مفيش مصاريف النهارده</div>'}
+          <div class="stat-tile negative" style="margin-top:14px;">
+            <div class="lbl">إجمالي مصروفات الشهر</div>
             <div class="val">${Utils.formatMoney(monthTotal)}</div>
           </div>
         </div>
 
         <div class="card">
-          <div class="section-head"><h3>سجل المصروفات</h3></div>
-          ${pays.length ? `
-          <div class="notice notice-ok" style="margin-bottom:12px;line-height:1.9;">
-            <strong>آخر الدفعات للموردين والموظفين</strong>
-            <div class="muted" style="font-size:12px;margin:2px 0 8px;">
-              دي نزلت من الخزنة ومن حساب صاحبها — ومش محسوبة في المصروفات.
-            </div>
-            ${pays.slice(0, 5).map(p => `
-              <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;">
-                <span>${Utils.formatDate(p.date)} · ${Utils.escapeHtml(p.name)}</span>
-                <strong>${Utils.formatMoney(p.amount)}</strong>
-              </div>`).join('')}
-          </div>` : ''}
+          <div class="section-head"><h3>الأيام اللي فاتت</h3><span class="hint">آخر ٦٠ مصروف</span></div>
           <div class="table-wrap" style="border:none;">
             <table>
-              <thead><tr><th>التاريخ</th><th>النوع</th><th>الوصف</th><th>المبلغ</th><th></th></tr></thead>
+              <thead><tr><th>التاريخ</th><th>إيه</th><th>بكام</th><th></th></tr></thead>
               <tbody id="expBody">
-                ${all.length ? all.map(e => `
+                ${older.length ? older.map(e => `
                   <tr data-id="${e.id}">
-                    <td>${Utils.formatDateTime(e.date)}</td>
-                    <td><span class="badge badge-muted">${Utils.escapeHtml(e.category)}</span></td>
-                    <td>${Utils.escapeHtml(e.description || '—')}</td>
+                    <td>${Utils.formatDate(e.date)}</td>
+                    <td>${nameCell(e)}</td>
                     <td style="font-weight:700;color:var(--danger);">${Utils.formatMoney(e.amount)}</td>
-                    <td>${e.source === 'payroll'
-                      ? '<button class="icon-btn locked-exp" title="مرتب من تقفيل شهر — امسحه من كشف حساب الموظف" data-why="ده مرتب موظف من تقفيل الشهر — امسحه من كشف حساب الموظف">🔒</button>'
-                      : (e.source === 'depreciation'
-                        ? '<button class="icon-btn locked-exp" title="إهلاك أصول" data-why="ده إهلاك أصول ثابتة — امسحه من شاشة الأصول الثابتة">🔒</button>'
-                        : '<button class="icon-btn del-exp" title="حذف">🗑️</button>')}</td>
-                  </tr>`).join('') : `<tr class="empty-row"><td colspan="5">مفيش مصروفات مسجلة لسه</td></tr>`}
+                    <td>${delBtn(e)}</td>
+                  </tr>`).join('') : '<tr class="empty-row"><td colspan="4">مفيش مصاريف قديمة</td></tr>'}
               </tbody>
             </table>
           </div>
         </div>
       </div>
+      </div>
     `;
 
-    /* لما يكتب اسم مورد، بنوضحله إن دي دفعة مش مصروف —
-       وبنوريه رصيد المورد عشان يعرف باقي عليه كام. */
-    function findSupplier() {
-      const name = (container.querySelector('#eSupplier').value || '').trim();
-      if (!name || Services.isCashName(name)) return null;
-      return AppState.suppliers.find(s => (s.name || '').trim() === name) || { name, isNew: true };
-    }
-    function updateSupHint() {
-      const hint = container.querySelector('#supHint');
-      const btn = container.querySelector('#expSave');
-      const sup = findSupplier();
-      if (!sup) {
-        hint.innerHTML = '';
-        btn.textContent = 'تسجيل المصروف';
-        return;
-      }
-      const bal = sup.isNew ? 0 : Number(sup.balance || 0);
-      hint.innerHTML =
-        `دي <strong>دفعة لحساب ${Utils.escapeHtml(sup.name)}</strong> — هتنزل من الخزنة ومن حسابه.` +
-        (sup.isNew ? '<br>مورد جديد — هيتعمل لوحده.'
-                   : `<br>الباقي له دلوقتي: <strong>${Utils.formatMoney(bal)}</strong>`) +
-        '<br><span class="muted">مش هتتحسب مصروف، لأن البضاعة اتحسبت عليك يوم ما اشتريتها.</span>';
-      btn.textContent = 'تسجيل الدفعة';
-    }
-    container.querySelector('#eSupplier').addEventListener('input', updateSupHint);
-    container.querySelector('#eSupplier').addEventListener('change', updateSupHint);
-
-    /* السلفة للموظف زي الدفعة للمورد بالظبط: فلوس بتخرج من الخزنة
-       وتتخصم من حسابه، ومش بتتحسب مصروف — المصروف بيتسجل يوم
-       تقفيل الشهر بمرتبه كامل. */
-    const empSel = container.querySelector('#eEmployee');
-    function findEmployee() {
-      if (!empSel || !empSel.value) return null;
-      return employees.find(x => String(x.id) === empSel.value) || null;
-    }
-    function updateEmpHint() {
-      if (!empSel) return;
-      const hint = container.querySelector('#empHint');
-      const btn = container.querySelector('#expSave');
-      const emp = findEmployee();
-      const supEl = container.querySelector('#eSupplier');
-      if (!emp) { hint.innerHTML = ''; updateSupHint(); return; }
-      if (supEl.value.trim()) supEl.value = '';   // واحد بس في المرة
-      const due = Math.max(0, Number(emp.balance || 0));
-      hint.innerHTML =
-        `دي <strong>سلفة لـ ${Utils.escapeHtml(emp.name)}</strong> — هتنزل من الخزنة ومن مستحقه.` +
-        `<br>المستحق له دلوقتي: <strong>${Utils.formatMoney(due)}</strong>` +
-        '<br><span class="muted">مش هتتحسب مصروف — دي فلوس من مرتبه، والمرتب بيتسجل مصروف يوم تقفيل الشهر.</span>';
-      btn.textContent = 'تسجيل السلفة';
-    }
-    if (empSel) empSel.addEventListener('change', updateEmpHint);
-
-    container.querySelector('#expForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (saving) return;   // منع التسجيل مرتين بدوستين سريعتين
-      const amount = Number(container.querySelector('#eAmount').value || 0);
-      const category = container.querySelector('#eCategory').value.trim();
-      const desc = container.querySelector('#eDesc').value.trim();
-      const sup = findSupplier();
-      const dateVal = container.querySelector('#eDate').value;
-      // بنثبّت الوقت على نص اليوم عشان التاريخ ما يزحلقش يوم بفرق التوقيت
-      const date = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : Utils.nowISO();
-
-      const emp = findEmployee();
-      if (!sup && !emp && !category) { Utils.toast('اكتب نوع المصروف', 'error'); return; }
-      if (amount <= 0) { Utils.toast('اكتب مبلغ صحيح', 'error'); return; }
-
-      saving = true;
-      const btn = container.querySelector('#expSave');
-      const oldTxt = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.textContent = 'بيسجل...'; }
-      try {
-        if (emp) {
-          const note = [category, desc].filter(Boolean).join(' — ') || 'سلفة';
-          await Services.employeeAdvance(emp.id, amount, note, date);
-          Utils.toast('اتسجلت السلفة ونزلت من مستحق ' + emp.name, 'success');
-        } else if (sup) {
-          const supplierId = await Services.resolveParty('suppliers', sup.name);
-          const note = [category, desc].filter(Boolean).join(' — ') || ('دفعة لـ ' + sup.name);
-          await Services.payToSupplier(supplierId, amount, note, date);
-          await AppState.reloadParties();
-          Utils.toast('اتسجلت الدفعة ونزلت من حساب ' + sup.name, 'success');
-        } else {
-          await Services.saveExpense({ category, description: desc, amount, date });
-          Utils.toast('تم تسجيل المصروف', 'success');
-        }
-        await refreshShell();
-        render(container);
-      } catch (err) {
-        Utils.toast('التسجيل مانجحش: ' + (err.message || ''), 'error');
-        if (btn) { btn.disabled = false; btn.textContent = oldTxt; }
-      } finally {
-        saving = false;
-      }
+    // ---------- الأزرار السريعة ----------
+    container.querySelector('#editPresets').addEventListener('click', () => {
+      editMode = !editMode; render(container);
     });
 
-    container.querySelector('#expBody').addEventListener('click', async (e) => {
+    container.querySelector('#qxGrid').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.qx-btn');
+      if (!btn) return;
+      if (btn.id === 'qxAdd') { openPresetDialog(null, presets, container); return; }
+      const p = presets[Number(btn.dataset.i)];
+      if (!p) return;
+      if (editMode) { openPresetDialog(Number(btn.dataset.i), presets, container); return; }
+      await quickAdd(container, p);
+    });
+
+    // Enter في خانة المبلغ المختلف = مفيش حاجة تتسجل من غير ما يدوس زرار
+    container.querySelector('#qxAmount').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); Utils.toast('دلوقتي دوس على زرار المصروف', 'info'); }
+    });
+
+    // ---------- الفورم الصغيرة ----------
+    Utils.guardSubmit(container.querySelector('#expForm'), async () => {
+      const category = container.querySelector('#eCategory').value.trim();
+      const amount = Number(container.querySelector('#eAmount').value || 0);
+      if (!category) { container.querySelector('#eCategory').focus(); throw new Error('اكتب إيه المصروف'); }
+      if (!(amount > 0)) { container.querySelector('#eAmount').focus(); throw new Error('اكتب المبلغ'); }
+      const date = dayToISO(container.querySelector('#eDate').value);
+      const id = await Services.saveExpense({ category, description: '', amount, date });
+      await refreshShell();
+      await render(container);
+      showUndo(container, id, category, amount);
+    });
+
+    // ---------- مسح ----------
+    // على #expRoot مش على الحاوية: الشاشة بتتعاد رسمها بعد كل دوسة،
+    // ولو ربطنا على الحاوية كل رسمة كانت بتضيف سماعة فوق اللي قبلها
+    container.querySelector('#expRoot').addEventListener('click', async (e) => {
       if (e.target.classList.contains('locked-exp')) {
         Utils.toast(e.target.dataset.why || 'المصروف ده مربوط بمستند تاني', 'info');
         return;
       }
       if (!e.target.classList.contains('del-exp')) return;
-      const id = Number(e.target.closest('tr').dataset.id);
-      const ok = await Utils.confirmDialog('حذف هذا المصروف؟ هيترد مبلغه للخزنة.');
-      if (!ok) return;
-      await Services.deleteExpense(id);
+      const row = e.target.closest('[data-id]');
+      const id = Number(row.dataset.id);
+      if (!(await Utils.confirmDialog('تمسح المصروف ده؟ فلوسه هترجع للخزنة.'))) return;
+      try { await Services.deleteExpense(id); } catch (err) { Utils.toast(err.message, 'error'); return; }
       await refreshShell();
-      Utils.toast('تم الحذف', 'success');
+      Utils.toast('اتمسح ورجعت فلوسه للخزنة', 'success');
       render(container);
+    });
+  }
+
+  /* دوسة على زرار سريع: بنسجّل على طول. المبلغ من الخانة لو كاتب،
+     وإلا سعر الزرار. لو الاتنين فاضيين بنطلب المبلغ بس. */
+  async function quickAdd(container, p) {
+    const box = container.querySelector('#qxAmount');
+    let amount = Number(box.value || 0);
+    if (!(amount > 0)) amount = Number(p.amount || 0);
+    if (!(amount > 0)) {
+      Utils.toast('اكتب المبلغ فوق وبعدين دوس "' + p.name + '" تاني', 'info');
+      box.focus();
+      return;
+    }
+    container.querySelectorAll('.qx-btn').forEach(b => b.disabled = true);
+    try {
+      const id = await Services.saveExpense({ category: p.name, description: '', amount, date: Utils.nowISO() });
+      Utils.beep('ok');
+      await refreshShell();
+      await render(container);
+      showUndo(container, id, p.name, amount);
+    } catch (err) {
+      Utils.toast('مااتسجلش: ' + (err.message || ''), 'error');
+      container.querySelectorAll('.qx-btn').forEach(b => b.disabled = false);
+    }
+  }
+
+  /* شريط "اتسجل … — تراجع" لمدة ١٠ ثواني. التراجع بيمسح المصروف
+     وبيرجّع فلوسه للخزنة — عشان الدوسة بالغلط ماتبقاش مشكلة. */
+  function showUndo(container, id, name, amount) {
+    const bar = container.querySelector('#qxUndo');
+    if (!bar) return;
+    if (lastUndo && lastUndo.timer) clearTimeout(lastUndo.timer);
+    bar.hidden = false;
+    bar.innerHTML = `✅ اتسجل <strong>${Utils.escapeHtml(name)}</strong> ${Utils.formatMoney(amount)}
+      <button type="button" class="btn btn-ghost btn-sm" id="qxUndoBtn">↩︎ تراجع</button>`;
+    bar.querySelector('#qxUndoBtn').addEventListener('click', async () => {
+      try {
+        await Services.deleteExpense(id);
+        await refreshShell();
+        Utils.toast('اتلغى ورجعت الفلوس للخزنة', 'success');
+        lastUndo = null;
+        render(container);
+      } catch (err) { Utils.toast(err.message, 'error'); }
+    });
+    lastUndo = { id, timer: setTimeout(() => { if (bar.isConnected) bar.hidden = true; }, 10000) };
+  }
+
+  /* إضافة / تعديل / مسح زرار سريع */
+  function openPresetDialog(index, presets, container) {
+    const p = index != null ? presets[index] : { name: '', amount: '', icon: '' };
+    Utils.openModal({
+      title: index != null ? 'عدّل الزرار' : 'زرار جديد',
+      bodyHtml: `
+        <form id="presetForm" novalidate>
+          <div class="field-row">
+            <div class="field" style="flex:2;"><label>الاسم</label>
+              <input type="text" id="ppName" value="${Utils.escapeHtml(p.name)}" placeholder="مثلاً: شاي" autofocus></div>
+            <div class="field"><label>السعر المعتاد</label>
+              <input type="number" id="ppAmount" min="0" step="0.01" inputmode="decimal"
+                     value="${Number(p.amount) > 0 ? p.amount : ''}" placeholder="فاضي = يسأل كل مرة"></div>
+            <div class="field" style="max-width:90px;"><label>رمز</label>
+              <input type="text" id="ppIcon" value="${Utils.escapeHtml(p.icon || '')}" placeholder="☕" maxlength="4"></div>
+          </div>
+          <div class="hint">سيب السعر فاضي لو بيختلف كل مرة (زي المواصلات) — هيطلب منك المبلغ وقتها.</div>
+          <div class="form-actions">
+            ${index != null ? '<button type="button" class="btn btn-danger" id="ppDel">🗑️ امسح الزرار</button>' : ''}
+            <button type="submit" class="btn btn-amber">حفظ</button>
+          </div>
+        </form>`,
+      onMount: (body, close) => {
+        const del = body.querySelector('#ppDel');
+        if (del) del.addEventListener('click', async () => {
+          presets.splice(index, 1);
+          await savePresets(presets);
+          close(); render(container);
+        });
+        Utils.guardSubmit(body.querySelector('#presetForm'), async () => {
+          const name = body.querySelector('#ppName').value.trim();
+          if (!name) throw new Error('اكتب اسم الزرار');
+          const item = { name, amount: Number(body.querySelector('#ppAmount').value || 0),
+                         icon: body.querySelector('#ppIcon').value.trim() };
+          if (index != null) presets[index] = item; else presets.push(item);
+          await savePresets(presets);
+          close(); render(container);
+        });
+      }
     });
   }
 
