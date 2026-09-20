@@ -127,6 +127,102 @@ const Services = (() => {
     }
   }
 
+  /* ---------- سطور فاتورة الشرا اللي مش بضاعة ----------
+
+     فاتورة المورد ساعات فيها ماكينة (أصل ثابت) أو قطع غيار وصيانة
+     للماكينة — دي مش بضاعة تتباع، فمينفعش تدخل المخزن. صاحب المحل
+     بيكتب في خانة التصنيف "أصل ثابت" أو "صيانة وقطع غيار" والبرنامج
+     بيفهم: الفاتورة نفسها بتتسجل عادي (المورد والخزنة صح)، والسطر
+     بيروح مكانه الصح — الأصول الثابتة (وبيتهلك شهريًا) أو المصروفات
+     (من غير ما تخرج فلوس تاني من الخزنة، لأنها اتدفعت في الفاتورة). */
+  const LINE_KINDS = {
+    goods: { key: 'goods', label: '' },
+    asset: { key: 'asset', label: 'أصل ثابت' },
+    maint: { key: 'maint', label: 'صيانة وقطع غيار' }
+  };
+  const MAINT_CATEGORY = 'صيانة وقطع غيار';
+  function lineKind(category) {
+    const n = Search.norm(category || '');
+    if (!n) return 'goods';
+    if (/اصل|اصول/.test(n)) return 'asset';
+    if (/صيان|قطع غيار|قطع الغيار/.test(n)) return 'maint';
+    return 'goods';
+  }
+  function isSpecialLine(line) {
+    return !!line && line.kind && line.kind !== 'goods';
+  }
+
+  // تسجيل الماكينة/المصروف اللي جم في فاتورة شرا (بعد ما الفاتورة اتحفظت وبقى ليها رقم)
+  async function _applySpecialLines(t, { purchaseId, number, date, supplierId, lines }) {
+    for (const line of (lines || [])) {
+      if (!isSpecialLine(line)) continue;
+      const amount = Math.round(Number(line.qty || 0) * Number(line.cost || 0) * 100) / 100;
+      if (line.kind === 'asset') {
+        await DB.reqToPromise(t.objectStore('fixedAssets').add({
+          name: String(line.name || '').trim() + (Number(line.qty) > 1 ? ' ×' + Number(line.qty) : ''),
+          cost: amount, usefulLife: DEFAULT_LIFE_YEARS,
+          purchaseDate: date || Utils.nowISO(),
+          notes: 'من فاتورة شراء ' + number,
+          purchaseId, supplierId: supplierId || null,
+          servesCategory: line.servesCategory || ''
+        }));
+      } else if (line.kind === 'maint') {
+        await DB.reqToPromise(t.objectStore('expenses').add({
+          date: date || Utils.nowISO(), category: MAINT_CATEGORY,
+          description: String(line.name || '').trim() + ' — فاتورة شراء ' + number,
+          amount, source: 'purchase', purchaseId, assetId: line.assetId || null
+        }));
+      }
+    }
+  }
+
+  /* لما الفاتورة تتعدل أو تتلغي: الماكينة والمصروف اللي جم منها بيتشالوا.
+     لو الماكينة اتسجل عليها إهلاك خلاص، بنوقف — الإهلاك ده دخل في
+     أرباح شهور فاتت، ومينفعش يختفي من غير ما يشوفه. */
+  async function _reverseSpecialLines(t, purchaseId, number) {
+    const assets = (await DB.reqToPromise(t.objectStore('fixedAssets').getAll()))
+      .filter(a => Number(a.purchaseId) === Number(purchaseId));
+    const expStore = t.objectStore('expenses');
+    const expenses = await DB.reqToPromise(expStore.getAll());
+    if (assets.length) {
+      const depreciated = new Set();
+      for (const e of expenses) {
+        if (e.source !== 'depreciation') continue;
+        for (const l of (e.lines || [])) depreciated.add(Number(l.assetId));
+      }
+      const stuck = assets.filter(a => depreciated.has(Number(a.id)));
+      if (stuck.length) {
+        throw new Error('الفاتورة ' + number + ' فيها ماكينة اتسجل عليها إهلاك (' +
+          stuck.map(a => a.name).join('، ') + ') — امسح قيود الإهلاك من شاشة الأصول الثابتة الأول');
+      }
+      for (const a of assets) await DB.reqToPromise(t.objectStore('fixedAssets').delete(a.id));
+    }
+    for (const e of expenses) {
+      if (e.source === 'purchase' && Number(e.purchaseId) === Number(purchaseId)) {
+        await DB.reqToPromise(expStore.delete(e.id));
+      }
+    }
+  }
+
+  // تصنيف كذا صنف مرة واحدة من شاشة المخزون
+  async function setItemsCategory(ids, category) {
+    const cat = String(category || '').trim();
+    const list = (ids || []).map(Number).filter(Boolean);
+    if (!list.length) return 0;
+    return DB.tx(['items'], 'readwrite', async (t) => {
+      const store = t.objectStore('items');
+      let n = 0;
+      for (const id of list) {
+        const it = await DB.reqToPromise(store.get(id));
+        if (!it || (it.category || '') === cat) continue;
+        it.category = cat;
+        await DB.reqToPromise(store.put(it));
+        n++;
+      }
+      return n;
+    });
+  }
+
   // ---------- المبيعات ----------
   // sale: { date, lines:[{itemId,name,barcode,qty,price,cost}], discount, paymentMethod, customerId, paidNow }
   async function saveSale(sale) {
@@ -337,7 +433,8 @@ const Services = (() => {
 
   /* ---------- تعديل فاتورة شراء متسجلة ---------- */
   async function updatePurchase(purchaseId, purchase) {
-    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers'], 'readwrite', async (t) => {
+    _requirePositiveQty(purchase.lines, 'الصنف');
+    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers', 'fixedAssets', 'expenses'], 'readwrite', async (t) => {
       const store = t.objectStore('purchases');
       const old = await DB.reqToPromise(store.get(purchaseId));
       if (!old) throw new Error('الفاتورة مش موجودة');
@@ -348,7 +445,9 @@ const Services = (() => {
       const now = Utils.nowISO();
 
       // ١) نرجّع أثر القديم — البضاعة تطلع من المخزن، والتكلفة ترجع لمتوسطها
+      await _reverseSpecialLines(t, purchaseId, old.number);
       for (const line of (old.lines || [])) {
+        if (isSpecialLine(line)) continue;
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
           const av = _avgOut(item.stock || 0, item.costPrice || 0, line.qty, line.cost || 0);
@@ -378,6 +477,7 @@ const Services = (() => {
       const dueAmount = Math.round((total - paidNow) * 100) / 100;
 
       for (const line of lines) {
+        if (isSpecialLine(line)) continue;
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
           const av = _avgIn(item.stock || 0, item.costPrice || 0, line.qty, line.cost);
@@ -399,6 +499,8 @@ const Services = (() => {
       if (dueAmount > 0 && purchase.supplierId) {
         await _bumpPartyBalance(t, 'suppliers', purchase.supplierId, dueAmount);
       }
+      await _applySpecialLines(t, { purchaseId, number: old.number, date: purchase.date || old.date,
+                                    supplierId: purchase.supplierId, lines });
 
       const updated = Object.assign({}, old, {
         date: purchase.date || old.date, lines, total,
@@ -513,7 +615,7 @@ const Services = (() => {
   // purchase: { date, supplierId, lines:[{itemId,name,barcode,qty,cost}], paidNow }
   async function savePurchase(purchase) {
     _requirePositiveQty(purchase.lines, 'الصنف');
-    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers', 'sales'], 'readwrite', async (t) => {
+    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers', 'sales', 'fixedAssets', 'expenses'], 'readwrite', async (t) => {
       const itemsStore = t.objectStore('items');
       const movStore = t.objectStore('stockMovements');
       const total = Math.round(purchase.lines.reduce((s, l) => s + l.qty * l.cost, 0) * 100) / 100;
@@ -521,6 +623,7 @@ const Services = (() => {
       const dueAmount = Math.round((total - paidNow) * 100) / 100;
 
       for (const line of purchase.lines) {
+        if (isSpecialLine(line)) continue;      // ماكينة أو صيانة — مش بتدخل المخزن
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
           const av = _avgIn(item.stock || 0, item.costPrice || 0, line.qty, line.cost);
@@ -558,6 +661,8 @@ const Services = (() => {
       if (dueAmount > 0 && purchase.supplierId) {
         await _bumpPartyBalance(t, 'suppliers', purchase.supplierId, dueAmount);
       }
+      await _applySpecialLines(t, { purchaseId, number, date: purchase.date || Utils.nowISO(),
+                                    supplierId: purchase.supplierId, lines: purchase.lines });
       /* المورد بيتصنّف لوحده من أول فاتورة: لو الفاتورة أغلبها كهرباء
          يبقى مورد كهرباء. بس لو صاحب المحل كاتبله تصنيف بإيده بنسيبه. */
       if (purchase.supplierId) await _autoCategorizeSupplier(t, purchase.supplierId, purchase.lines);
@@ -571,7 +676,7 @@ const Services = (() => {
     const totals = {};
     for (const l of lines || []) {
       const c = String(l.category || '').trim();
-      if (!c) continue;
+      if (!c || isSpecialLine(l) || lineKind(c) !== 'goods') continue;   // الماكينة مش تصنيف مورد
       totals[c] = (totals[c] || 0) + Number(l.qty || 0) * Number(l.cost || 0);
     }
     let best = '', bestV = 0;
@@ -699,7 +804,7 @@ const Services = (() => {
   }
 
   async function voidPurchase(purchaseId) {
-    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers'], 'readwrite', async (t) => {
+    return DB.tx(['items', 'stockMovements', 'purchases', 'treasury', 'settings', 'suppliers', 'fixedAssets', 'expenses'], 'readwrite', async (t) => {
       const purchasesStore = t.objectStore('purchases');
       const purchase = await DB.reqToPromise(purchasesStore.get(purchaseId));
       if (!purchase || purchase.voided) return false;
@@ -709,6 +814,7 @@ const Services = (() => {
          ويطلع رصيد مش حقيقي. بنوقف ونقول له الأصناف بالاسم. */
       const short = [];
       for (const line of purchase.lines) {
+        if (isSpecialLine(line)) continue;
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (!item) continue;
         const after = Math.round(((item.stock || 0) - line.qty) * 1000) / 1000;
@@ -720,7 +826,9 @@ const Services = (() => {
           '\n\nلو عايز تصلّح الفاتورة، عدّلها بدل ما تلغيها.');
       }
 
+      await _reverseSpecialLines(t, purchaseId, purchase.number);
       for (const line of purchase.lines) {
+        if (isSpecialLine(line)) continue;
         const item = await DB.reqToPromise(itemsStore.get(line.itemId));
         if (item) {
           const av = _avgOut(item.stock || 0, item.costPrice || 0, line.qty, line.cost || 0);
@@ -1149,10 +1257,13 @@ const Services = (() => {
   // ---------- المصروفات ----------
   async function saveExpense(expense) {
     return DB.tx(['expenses', 'treasury', 'settings'], 'readwrite', async (t) => {
-      const id = await DB.reqToPromise(t.objectStore('expenses').add({
+      const rec = {
         date: expense.date || Utils.nowISO(), category: expense.category,
         description: expense.description || '', amount: expense.amount
-      }));
+      };
+      // صيانة لماكينة بعينها — بتتحسب على الماكينة دي في تكلفة الوحدة
+      if (expense.assetId) rec.assetId = Number(expense.assetId);
+      const id = await DB.reqToPromise(t.objectStore('expenses').add(rec));
       // الفلوس تطلع من الخزنة بنفس تاريخ المصروف — لو سجّلته بتاريخ
       // امبارح، حركة الخزنة تبقى امبارح كمان مش النهاردة
       await _writeTreasuryMove(t, { direction: 'out', amount: expense.amount, source: 'expense',
@@ -1174,6 +1285,11 @@ const Services = (() => {
       }
       if (exp.source === 'depreciation') {
         throw new Error('ده إهلاك أصول ثابتة — امسحه من شاشة الأصول الثابتة');
+      }
+      /* الصيانة اللي جت في فاتورة شرا اتدفعت مع الفاتورة — مفيش فلوس
+         خرجت من هنا. عايز تشيلها؟ عدّل الفاتورة نفسها. */
+      if (exp.source === 'purchase') {
+        throw new Error('ده جاي من فاتورة شراء — عدّل الفاتورة من شاشة المشتريات');
       }
       await _writeTreasuryMove(t, { direction: 'in', amount: exp.amount, source: 'expense', refId: expenseId,
         reversal: true, note: 'إلغاء مصروف: ' + exp.category });
@@ -1948,6 +2064,79 @@ const Services = (() => {
     return true;
   }
 
+  /* ---------- الماكينة بتكلّف الوحدة كام؟ ----------
+
+     ماكينة المفاتيح مش بس تمنها: ده إهلاكها كل شهر + صيانتها وقطع
+     غيارها، مقسومين على عدد المفاتيح اللي بتطلع في الشهر. الرقم ده
+     هو اللي لازم يتحط فوق سعر الخامة عشان سعر المفتاح يبقى صح.
+
+     الماكينة بتتربط بتصنيف ("بتخدم: مفاتيح")، وعدد الوحدات بنجيبه من
+     مبيعات آخر ٣ شهور من التصنيف ده (أو من يوم الشرا لو أحدث).
+     الإهلاك هنا بنحسبه دايمًا حتى لو الماكينة اتهلكت في الدفاتر —
+     لأنها لسه بتتبهدل وهتتغير يوم ما، والسعر لازم يحط حسابها. */
+  async function assetMaintenance() {          // رقم الماكينة → مجموع صيانتها
+    const map = {};
+    for (const e of await DB.getAll('expenses')) {
+      if (!e.assetId || e.source === 'depreciation') continue;
+      map[e.assetId] = Math.round(((map[e.assetId] || 0) + Number(e.amount || 0)) * 100) / 100;
+    }
+    return map;
+  }
+
+  async function assetBurdens() {
+    const [assets, maint, sales, items] = await Promise.all([
+      DB.getAll('fixedAssets'), assetMaintenance(), DB.getAll('sales'), DB.getAll('items')
+    ]);
+    const catOf = new Map(items.map(i => [i.id, String(i.category || '').trim()]));
+    const unitOf = new Map(items.map(i => [i.id, i.unit || 'قطعة']));
+    const DAY = 86400000, MONTH = 30.4;
+    const now = Date.now();
+    const out = {};
+    for (const a of assets) {
+      const cat = String(a.servesCategory || '').trim();
+      const bought = new Date(a.purchaseDate || a.date || now).getTime();
+      const ageDays = Math.max(1, (now - bought) / DAY);
+      const monthsOwned = Math.max(1, ageDays / MONTH);
+      const monthlyDep = monthlyDepreciation(a);
+      const maintTotal = Number(maint[a.id] || 0);
+      const monthlyMaint = Math.round(maintTotal / monthsOwned * 100) / 100;
+      const rec = { cat, monthlyDep, monthlyMaint, maintTotal,
+                    monthsOwned: Math.round(monthsOwned * 10) / 10,
+                    unitsPerMonth: 0, perUnit: null, unit: 'قطعة', windowDays: 0 };
+      if (cat) {
+        const windowDays = Math.min(90, Math.max(30, ageDays));
+        const since = now - windowDays * DAY;
+        let units = 0;
+        for (const s of sales) {
+          if (s.voided || new Date(s.date).getTime() < since) continue;
+          for (const l of (s.lines || [])) {
+            if (catOf.get(l.itemId) !== cat) continue;
+            units += Math.max(0, Number(l.qty || 0) - Number(l.returnedQty || 0));
+            rec.unit = unitOf.get(l.itemId) || rec.unit;
+          }
+        }
+        rec.windowDays = Math.round(windowDays);
+        rec.unitsPerMonth = Math.round(units / (windowDays / MONTH) * 10) / 10;
+        if (rec.unitsPerMonth > 0) {
+          rec.perUnit = Math.round((monthlyDep + monthlyMaint) / rec.unitsPerMonth * 100) / 100;
+        }
+      }
+      out[a.id] = rec;
+    }
+    return out;
+  }
+
+  // تصنيف → تكلفة الوحدة من كل الماكينات اللي بتخدمه (لشاشة المخزون)
+  async function assetBurdenByCategory() {
+    const b = await assetBurdens();
+    const map = {};
+    for (const id in b) {
+      const r = b[id];
+      if (r.cat && r.perUnit != null) map[r.cat] = Math.round(((map[r.cat] || 0) + r.perUnit) * 100) / 100;
+    }
+    return map;
+  }
+
   /* ---------- تقفيل اليومية ----------
      آخر اليوم بتعدّ اللي في الدرج وتكتبه. البرنامج بيقارنه باللي عنده:
        - لو زي بعضه: بيتسجل تقفيل نضيف.
@@ -2406,6 +2595,8 @@ const Services = (() => {
     closePayrollMonth, voidPayrollClosing, voidEmployeeMove, monthRange,
     monthlyDepreciation, accumulatedDepreciation, depreciationPlan,
     postDepreciation, voidDepreciation, DEFAULT_LIFE_YEARS,
+    assetMaintenance, assetBurdens, assetBurdenByCategory, MAINT_CATEGORY,
+    LINE_KINDS, lineKind, isSpecialLine, setItemsCategory,
     financialPosition, receivableAging,
     exportBackup, importBackup
   };

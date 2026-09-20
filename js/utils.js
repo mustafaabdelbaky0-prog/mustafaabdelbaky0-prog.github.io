@@ -170,6 +170,31 @@ const Utils = (() => {
     });
   }
 
+  // سؤال بخانة كتابة واحدة — بيرجع النص، أو null لو قفل من غير ما يكتب
+  function promptDialog(message, { placeholder = '', value = '' } = {}) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; close(); resolve(v); };
+      const { close } = openModal({
+        title: message,
+        bodyHtml: `
+          <form id="pd-form" novalidate>
+            <div class="field"><input type="text" id="pd-in" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" autofocus autocomplete="off"></div>
+            <div class="form-actions">
+              <button class="btn btn-ghost" id="pd-no" type="button">إلغاء</button>
+              <button class="btn btn-amber" id="pd-yes" type="submit">تمام</button>
+            </div>
+          </form>`,
+        onMount: (body) => {
+          const input = body.querySelector('#pd-in');
+          setTimeout(() => input.focus(), 30);
+          body.querySelector('#pd-form').addEventListener('submit', (e) => { e.preventDefault(); finish(input.value); });
+          body.querySelector('#pd-no').addEventListener('click', () => finish(null));
+        }
+      });
+    });
+  }
+
   /* ---------- منع تسجيل نفس العملية مرتين ----------
 
      المشكلة اللي حصلت فعلاً في المحل: دفعة لمورد اتسجلت ١١ مرة.
@@ -217,7 +242,7 @@ const Utils = (() => {
   return {
     formatMoney, formatDate, formatDateTime, todayISO, nowISO, dateKey,
     genInternalBarcode, debounce, el, escapeHtml, fieldOf,
-    beep, toast, openModal, confirmDialog, guardSubmit
+    beep, toast, openModal, confirmDialog, promptDialog, guardSubmit
   };
 })();
 

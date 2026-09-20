@@ -23,6 +23,11 @@ Modules.purchases = (() => {
     r.barcode = it ? (it.barcode || '') : '';
     r.name = l.name || (it ? it.name : '');
     r.category = it ? (it.category || '') : '';
+    // سطر ماكينة/صيانة: التصنيف هو اللي بيقول نوعه، ومفيش صنف وراه
+    if (Services.isSpecialLine(l)) {
+      r.category = (Services.LINE_KINDS[l.kind] || {}).label || '';
+      r.assetId = l.assetId || null;
+    }
     r.salePrice = it ? (it.salePrice || '') : '';
     r.packSalePrice = it ? (it.packPrice || '') : '';
     if (Number(l.packSize || 0) > 0) {
@@ -65,8 +70,28 @@ Modules.purchases = (() => {
     return {
       _id: ++rowSeq, itemId: null, barcode: '', name: '', category: '',
       unit: 'قطعة', packType: 'قطعة', packSize: '', qty: '', price: '',
-      salePrice: '', packSalePrice: ''
+      salePrice: '', packSalePrice: '', assetId: null
     };
+  }
+
+  /* السطر ده بضاعة ولا ماكينة ولا صيانة؟ — من خانة التصنيف.
+     "أصل ثابت" → بيتسجل في الأصول الثابتة مش المخزن.
+     "صيانة وقطع غيار" → مصروف على ماكينة بعينها. */
+  let assetsList = [];
+  const SPECIAL_CATS = [Services.LINE_KINDS.asset.label, Services.LINE_KINDS.maint.label];
+  function lineKind(r) { return Services.lineKind(r.category); }
+  function kindNote(r) {
+    const k = lineKind(r);
+    if (k === 'asset') return `<div class="line-note asset">🏭 هيتسجل في <strong>الأصول الثابتة</strong> (ماكينة/عدة) مش في المخزن — وهيتهلك شهريًا</div>`;
+    if (k === 'maint') {
+      const opts = assetsList.map(a =>
+        `<option value="${a.id}" ${Number(r.assetId) === Number(a.id) ? 'selected' : ''}>${Utils.escapeHtml(a.name)}</option>`).join('');
+      return `<div class="line-note maint">🔧 مصروف صيانة — لأنهي ماكينة؟
+        <select class="cell f-asset">
+          <option value="">${assetsList.length ? '— اختار —' : 'مفيش ماكينات مسجلة'}</option>${opts}
+        </select></div>`;
+    }
+    return '';
   }
 
   /* ---------- المسودة ----------
@@ -410,7 +435,8 @@ Modules.purchases = (() => {
     if (!(r.name || '').trim()) return out;          // سطر فاضي خالص
     if (!(c.totalUnits > 0)) out.push('الكمية');
     if (!(c.unitCost > 0)) out.push('سعر الشراء');
-    if (!(Number(r.salePrice || 0) > 0)) out.push('سعر البيع');
+    // الماكينة والصيانة مش بيتباعوا — مفيش سعر بيع ليهم
+    if (lineKind(r) === 'goods' && !(Number(r.salePrice || 0) > 0)) out.push('سعر البيع');
     // "فيها كام" ناقصة بس لو كاتب نوع عبوة مش وحدة بيع
     const pt = (r.packType || '').trim();
     if (pt && !Units.isBaseUnit(pt) && !(Number(r.packSize || 0) > 0)) out.push('فيها كام');
@@ -429,6 +455,7 @@ Modules.purchases = (() => {
     await AppState.reloadItems();
     await AppState.reloadParties();
     markup = await Services.getDefaultMarkup();
+    assetsList = await DB.getAll('fixedAssets');   // لسطر "صيانة وقطع غيار": لأنهي ماكينة؟
     rowFilter = '';   // بحث السطور بيبدأ فاضي كل مرة تفتح الشاشة
     let draft = null;
     if (!keepEdit) {
@@ -607,7 +634,7 @@ Modules.purchases = (() => {
         ${AppState.items.map(i => `<option value="${Utils.escapeHtml(i.name)}">`).join('')}
       </datalist>
       <datalist id="catList">
-        ${AppState.categorySuggestions().map(v => `<option value="${Utils.escapeHtml(v)}">`).join('')}
+        ${AppState.categorySuggestions().concat(SPECIAL_CATS).map(v => `<option value="${Utils.escapeHtml(v)}">`).join('')}
       </datalist>
       <datalist id="typeList">
         ${AppState._uniq(AppState.unitSuggestions().concat(AppState.packTypeSuggestions()))
@@ -774,7 +801,7 @@ Modules.purchases = (() => {
       },
       '.f-category': {
         search: (q) => Picker.searchText(q, [...new Set(AppState.items
-          .map(i => (i.category || '').trim()).filter(Boolean))]),
+          .map(i => (i.category || '').trim()).filter(Boolean).concat(SPECIAL_CATS))]),
         render: Picker.textRow,
         onPick: (t, input) => {
           const id = Number(input.closest('tr').dataset.id);
@@ -782,6 +809,11 @@ Modules.purchases = (() => {
           if (!r) return;
           r.category = t;
           input.value = t;
+          // بقى ماكينة/صيانة (أو رجع بضاعة)؟ السطر شكله بيتغير
+          if (lineKind(r) !== (r._drawnKind || 'goods')) {
+            if (lineKind(r) !== 'goods') { r.salePrice = ''; r._saleAuto = false; r.itemId = null; }
+            drawRows(container, id, 'qty');
+          }
           scheduleDraft(container);
         }
       }
@@ -878,6 +910,7 @@ Modules.purchases = (() => {
 
   function suggestSale(r) {
     if (!(markup > 0)) return false;
+    if (lineKind(r) !== 'goods') return false;   // ماكينة/صيانة — مفيش سعر بيع
     // كتبه بإيده؟ أو صنف موجود ليه سعر بيع أصلاً؟ نسيبه
     if (r.salePrice !== '' && r.salePrice != null && !r._saleAuto) return false;
     const c = calc(r);
@@ -911,8 +944,11 @@ Modules.purchases = (() => {
       const c = calc(r);
       const u = effUnit(r);
       const gaps = missingIn(r);
+      const kind = lineKind(r);
+      r._drawnKind = kind;   // السطر مرسوم كإيه — عشان نعرف لو التصنيف غيّر نوعه
+      const cls = [gaps.length ? 'row-missing' : '', kind !== 'goods' ? 'row-special row-' + kind : ''].filter(Boolean).join(' ');
       return `
-      <tr data-id="${r._id}"${gaps.length ? ` class="row-missing" title="ناقص: ${Utils.escapeHtml(gaps.join(' · '))}"` : ''}>
+      <tr data-id="${r._id}"${cls ? ` class="${cls}"` : ''}${gaps.length ? ` title="ناقص: ${Utils.escapeHtml(gaps.join(' · '))}"` : ''}>
         <td data-label="#" class="row-num">${idx + 1}</td>
         <td data-label="الباركود">
           <div class="cell-scan">
@@ -921,7 +957,8 @@ Modules.purchases = (() => {
           </div>
         </td>
         <td data-label="الصنف">
-          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" placeholder="ابحث بالاسم أو الباركود" autocomplete="off">
+          <input type="text" class="cell f-name" value="${Utils.escapeHtml(r.name)}" placeholder="${kind === 'asset' ? 'اسم الماكينة / العدة' : (kind === 'maint' ? 'قطعة الغيار / الصيانة' : 'ابحث بالاسم أو الباركود')}" autocomplete="off">
+          ${kindNote(r)}
         </td>
         <td data-label="التصنيف">
           <input type="text" class="cell f-category" value="${Utils.escapeHtml(r.category)}" placeholder="كهرباء..." autocomplete="off">
@@ -953,14 +990,15 @@ Modules.purchases = (() => {
             : `<div class="cell-muted">—</div>`}
         </td>
         <td data-label="سعر البيع">
-          <input type="number" class="cell f-sale num${r._saleAuto ? ' suggested' : ''}" value="${r.salePrice}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" title="${r._saleAuto ? 'سعر مقترح (' + markup + '٪ فوق التكلفة) — عدّله براحتك' : 'سعر بيع ال' + Utils.escapeHtml(u) + ' الواحد'}">
+          ${kind !== 'goods' ? `<div class="cell-muted" title="ده مش للبيع">—</div>` : `
+          <input type="number" class="cell f-sale num${r._saleAuto ? ' suggested' : ''}" value="${r.salePrice}" min="0" step="0.01" inputmode="decimal" placeholder="0.00" title="${r._saleAuto ? 'سعر مقترح (' + markup + '٪ فوق التكلفة) — عدّله براحتك' : 'سعر بيع ال' + Utils.escapeHtml(u) + ' الواحد'}">`}
           ${c.unitCost > 0 && Number(r.salePrice || 0) > 0 ? `
             <div class="profit-tag ${Number(r.salePrice) >= c.unitCost ? 'good' : 'bad'}">
               ${Number(r.salePrice) >= c.unitCost
                 ? '+' + Utils.formatMoney(Number(r.salePrice) - c.unitCost)
                 : 'أقل من التكلفة!'}
             </div>` : ''}
-          ${c.pack ? `
+          ${c.pack && kind === 'goods' ? `
             <div class="pack-sale">
               <span class="pack-sale-lbl">سعر ال${Utils.escapeHtml(r.packType || 'عبوة')}</span>
               <input type="number" class="cell f-packsale num" value="${r.packSalePrice}" min="0" step="0.01"
@@ -1036,7 +1074,17 @@ Modules.purchases = (() => {
       });
 
       $('.f-category').addEventListener('input', (e) => { r.category = e.target.value; });
-      $('.f-category').addEventListener('change', (e) => { r.category = e.target.value.trim(); });
+      $('.f-category').addEventListener('change', (e) => {
+        r.category = e.target.value.trim();
+        /* كتب "أصل ثابت" أو "صيانة" (أو شالها)؟ السطر بيتغير شكله:
+           سعر البيع بيختفي وبتظهر ملاحظة بتقول هيروح فين */
+        if (lineKind(r) !== (r._drawnKind || 'goods')) {
+          if (lineKind(r) !== 'goods') { r.salePrice = ''; r._saleAuto = false; r.itemId = null; }
+          drawRows(container, id, 'qty');
+        }
+      });
+      const assetSel = $('.f-asset');
+      if (assetSel) assetSel.addEventListener('change', (e) => { r.assetId = Number(e.target.value) || null; scheduleDraft(container); });
 
       $('.f-qty').addEventListener('input', (e) => { r.qty = e.target.value; refreshLine(container, tr, r); });
       $('.f-price').addEventListener('input', (e) => {
@@ -1044,7 +1092,7 @@ Modules.purchases = (() => {
         if (suggestSale(r) || r._saleAuto === false) paintSuggested(tr, r);
         refreshLine(container, tr, r);
       });
-      $('.f-sale').addEventListener('input', (e) => {
+      if ($('.f-sale')) $('.f-sale').addEventListener('input', (e) => {
         r.salePrice = e.target.value;
         r._saleAuto = false;      // كتبه بإيده — مبقاش اقتراح
         paintSuggested(tr, r);
@@ -1311,6 +1359,19 @@ Modules.purchases = (() => {
     for (const r of valid) {
       const c = calc(r);
       const u = effUnit(r);
+
+      /* ماكينة أو صيانة: مش صنف ومش بتدخل المخزن — بتتسجل مع الفاتورة
+         وبعد الحفظ بتروح للأصول الثابتة أو المصروفات لوحدها */
+      const kind = lineKind(r);
+      if (kind !== 'goods') {
+        lines.push({
+          itemId: null, kind, assetId: kind === 'maint' ? (r.assetId || null) : null,
+          name: r.name.trim(), unit: u, qty: c.totalUnits, cost: c.unitCost,
+          category: (r.category || '').trim()
+        });
+        continue;
+      }
+
       const sale = Number(r.salePrice || 0);
       // سعر بيع العبوة كاملة (لفة/كرتونة) — بيتحفظ على الصنف عشان البياع
       // يلاقيه جاهز في شاشة البيع
@@ -1378,6 +1439,7 @@ Modules.purchases = (() => {
       lines.push({
         itemId, name: r.name.trim(), unit: u,
         qty: c.totalUnits, cost: c.unitCost,
+        category: (r.category || '').trim(),   // عشان المورد يتصنّف لوحده من فواتيره
         packQty: c.pack ? c.qty : null, packCost: c.pack ? c.price : null,
         packSize: c.pack ? c.size : null, packName: c.pack ? r.packType : null,
         // اللي لسه ناقص في السطر — عشان يبان أحمر في الفاتورة بعدين

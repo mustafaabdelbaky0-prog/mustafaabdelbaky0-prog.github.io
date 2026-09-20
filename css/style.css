@@ -598,6 +598,9 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .notice{background:var(--steel-light);border-radius:var(--radius-sm);padding:12px 14px;font-size:13px;line-height:1.9;color:var(--ink);}
 .notice-warn{background:#FEF3E2;color:#8A5A12;}
 .notice-ok{background:var(--success-bg);color:#1D6B3D;}
+.notice-info{background:#EEF3FA;color:#243B57;}
+/* رقم شكله لينك — دوسة عليه بتفتح تفاصيله */
+.link-btn{background:none;border:none;padding:0;font:inherit;font-weight:700;color:#2F4A6B;text-decoration:underline dotted;cursor:pointer;}
 .steps{margin:0;padding-right:20px;font-size:13.5px;line-height:2.2;}
 .conn-url{margin-top:12px;font-weight:800;font-size:15px;direction:ltr;word-break:break-all;color:var(--navy-deep);}
 
@@ -761,6 +764,16 @@ tr.row-missing > td:first-child{box-shadow:inset 3px 0 0 var(--danger);}
 tr.row-missing input.cell,
 tr.row-missing select.cell{border-color:#E9A8A8;}
 .line-card.card-missing{background:#FDF2F2;border-color:#E9A8A8;}
+
+/* سطر ماكينة (أصل ثابت) أو صيانة في فاتورة الشرا — لونه مختلف
+   وتحته ملاحظة بتقول هيروح فين، عشان مايتلخبطش مع البضاعة */
+tr.row-special > td{background:#F3F6FB;}
+tr.row-special > td:first-child{box-shadow:inset 3px 0 0 #3B6FB6;}
+tr.row-maint > td{background:#FBF6EC;}
+tr.row-maint > td:first-child{box-shadow:inset 3px 0 0 var(--amber);}
+.line-note{font-size:12px;color:#2F4A6B;margin-top:5px;line-height:1.7;}
+.line-note.maint{color:#7A5A12;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.line-note select.f-asset{width:auto;min-width:150px;font-size:12.5px;padding:4px 8px;height:auto;}
 
 /* ===== مقارنة أسعار الموردين ===== */
 .price-cmp{display:flex;flex-wrap:wrap;gap:8px;}
@@ -1021,6 +1034,26 @@ tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}
 .cc-name{font-weight:800;font-size:14px;color:var(--navy-deep);}
 .cc-sub{font-size:12px;color:var(--ink-soft);font-weight:700;}
 .cc-sub2{font-size:11px;color:var(--steel);}
+.cat-chip.uncat{border-style:dashed;}
+.cat-chip.uncat .cc-name{color:#8A5A12;}
+
+/* التصنيف من شاشة المخزون: زرار مكان الشارة، وشريط للتصنيف الجماعي */
+.cat-pick{
+  background:var(--steel-light);border:1px dashed transparent;border-radius:999px;
+  padding:3px 11px;font:inherit;font-size:12.5px;font-weight:700;color:var(--ink);cursor:pointer;
+}
+.cat-pick:hover{border-color:var(--amber);background:#FFF8EA;}
+.cat-pick.empty{color:#8A5A12;border-color:#E7C98A;background:#FFF8EA;}
+select.cat-inline{font:inherit;font-size:13px;padding:4px 8px;border:1.5px solid var(--amber);border-radius:8px;background:#fff;min-width:140px;}
+.sel-col{width:34px;text-align:center;}
+.sel-col input{width:17px;height:17px;cursor:pointer;accent-color:var(--amber);}
+.bulk-bar{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  background:#FFF8EA;border:1px solid #F2C97A;border-radius:12px;padding:10px 14px;margin-bottom:12px;
+  font-weight:700;font-size:13.5px;
+}
+.bulk-bar label{display:flex;align-items:center;gap:8px;}
+.bulk-bar select{font:inherit;font-size:13px;padding:6px 10px;border:1.5px solid var(--line);border-radius:8px;background:#fff;min-width:160px;}
 
 /* سعر البيع المقترح في فاتورة الشرا — لون هادي يقول "ده اقتراح" */
 input.cell.f-sale.suggested{background:#FFF8EA;border-color:#F2C97A;color:#8A5A00;}

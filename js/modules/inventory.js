@@ -9,14 +9,38 @@ Modules.inventory = (() => {
   };
 
   let catFilter = '';   // التصنيف المختار (كهرباء / حدايد …) — بيفضل لما يرجع للشاشة
+  let selected = new Set();   // الأصناف المعلّم عليها ✓ عشان يتصنّفوا مرة واحدة
 
   function printCountSheet(list, cat) {
     if (!list.length) { Utils.toast('مفيش أصناف تتطبع', 'info'); return; }
     Printing.countSheet(list, cat || 'كل الأصناف');
   }
 
+  // التصنيفات اللي ينفع يتحط فيها صنف (من غير "أصل ثابت" و"صيانة" — دول مش بضاعة)
+  function goodsCategories() {
+    return AppState.categorySuggestions().filter(c => Services.lineKind(c) === 'goods');
+  }
+  const NEW_CAT = '__new__', NO_CAT = '__none__';
+  // قايمة صنف واحد: التصنيف الحالي مختار و"من غير تصنيف" اختيار عادي.
+  // قايمة التصنيف الجماعي: بتبدأ بـ "اختار…" عشان مايدوسش تطبيق بالغلط ويشيل التصنيف من الكل.
+  function catOptions(current, bulk) {
+    const cats = goodsCategories().map(c => `<option value="${Utils.escapeHtml(c)}" ${!bulk && c === current ? 'selected' : ''}>${Utils.escapeHtml(c)}</option>`).join('');
+    return (bulk ? `<option value="" selected>اختار التصنيف…</option>` : `<option value="">— من غير تصنيف —</option>`) +
+      cats + `<option value="${NEW_CAT}">＋ تصنيف جديد…</option>` +
+      (bulk ? `<option value="${NO_CAT}">✕ شيل التصنيف</option>` : '');
+  }
+  // "تصنيف جديد…" → يسأله على الاسم
+  async function resolveCatChoice(value) {
+    if (value === NO_CAT) return '';
+    if (value !== NEW_CAT) return value;
+    const name = await Utils.promptDialog('اسم التصنيف الجديد', { placeholder: 'مثلاً: سباكة' });
+    return name == null ? null : String(name).trim();
+  }
+
   async function render(container) {
     await AppState.reloadItems();
+    selected = new Set();
+    const burdenByCat = Auth.isSeller() ? {} : await Services.assetBurdenByCategory();
     const totalValue = AppState.items.reduce((s, i) => s + (i.stock * i.costPrice), 0);
     const lowStock = AppState.items.filter(i => i.minStock && i.stock <= i.minStock && i.stock > 0);
     const outOfStock = AppState.items.filter(i => i.stock <= 0);
@@ -52,9 +76,22 @@ Modules.inventory = (() => {
           <button class="btn btn-ghost" id="invLabelBtn">🏷️ طباعة ملصقات</button>
         </div>
       </div>
+
+      ${Auth.isSeller() ? '' : `
+      <div class="bulk-bar" id="bulkBar" hidden>
+        <span id="bulkCount"></span>
+        <label>صنّفهم كـ
+          <select id="bulkCat">${catOptions('', true)}</select>
+        </label>
+        <button type="button" class="btn btn-amber btn-sm" id="bulkApply">تطبيق</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="bulkClear">إلغاء التحديد</button>
+      </div>`}
+
       <div class="table-wrap">
         <table>
-          <thead><tr><th>الباركود</th><th>الصنف</th><th>التصنيف</th><th>الرصيد</th><th>تالف/ضمان</th><th>الحد الأدنى</th>
+          <thead><tr>
+            ${Auth.isSeller() ? '' : '<th class="sel-col"><input type="checkbox" id="selAll" title="علّم على كل اللي ظاهر"></th>'}
+            <th>الباركود</th><th>الصنف</th><th>التصنيف</th><th>الرصيد</th><th>تالف/ضمان</th><th>الحد الأدنى</th>
             ${Auth.isSeller() ? '' : '<th>قيمة الرصيد</th>'}<th></th></tr></thead>
           <tbody id="invBody"></tbody>
         </table>
@@ -62,6 +99,8 @@ Modules.inventory = (() => {
     `;
 
     const tbody = container.querySelector('#invBody');
+    const owner = !Auth.isSeller();
+    const COLS = owner ? 9 : 7;
 
     /* ---------- المخزون حسب التصنيف ----------
        كهرباء بكام، حدايد بكام، مفاتيح بكام — ودوسة على التصنيف بتفلتر
@@ -87,12 +126,15 @@ Modules.inventory = (() => {
             <span class="cc-sub">${AppState.items.length} صنف${seller ? '' : ' · ' + Utils.formatMoney(totalValue)}</span>
           </button>
           ${names.map(c => `
-          <button type="button" class="cat-chip ${catFilter === c ? 'on' : ''}" data-cat="${Utils.escapeHtml(c)}">
+          <button type="button" class="cat-chip ${catFilter === c ? 'on' : ''} ${c === 'من غير تصنيف' ? 'uncat' : ''}" data-cat="${Utils.escapeHtml(c)}">
             <span class="cc-name">${Utils.escapeHtml(c)}</span>
             <span class="cc-sub">${groups[c].n} صنف${seller ? '' : ' · ' + Utils.formatMoney(groups[c].cost)}</span>
             ${!seller && groups[c].sale > 0 ? `<span class="cc-sub2">بسعر البيع ${Utils.formatMoney(groups[c].sale)}</span>` : ''}
+            ${burdenByCat[c] > 0 ? `<span class="cc-sub2" title="إهلاك وصيانة الماكينات اللي بتخدم التصنيف ده، مقسومين على اللي بيتباع منه">🏭 + ${Utils.formatMoney(burdenByCat[c])} للوحدة من الماكينات</span>` : ''}
           </button>`).join('')}
-        </div>`;
+        </div>
+        ${!seller && groups['من غير تصنيف'] && catFilter === 'من غير تصنيف' ? `
+        <div class="hint" style="margin:-6px 0 12px;">علّم ✓ على الأصناف وصنّفهم مرة واحدة من الشريط تحت — أو دوس على «من غير تصنيف» جنب أي صنف وغيّره لوحده.</div>` : ''}`;
       box.querySelectorAll('.cat-chip').forEach(b => b.addEventListener('click', () => {
         catFilter = b.dataset.cat || '';
         drawCats(); redraw();
@@ -111,18 +153,23 @@ Modules.inventory = (() => {
 
     function draw(list) {
       if (!list.length) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="${Auth.isSeller() ? 7 : 8}">مفيش أصناف${catFilter ? ' في "' + Utils.escapeHtml(catFilter) + '"' : ''}</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="${COLS}">مفيش أصناف${catFilter ? ' في "' + Utils.escapeHtml(catFilter) + '"' : ''}</td></tr>`;
+        syncBulk();
         return;
       }
       tbody.innerHTML = list.map(i => {
         /* الرصيد بالسالب = بضاعة اتباعت ولسه ما اتسجلتش في المشتريات.
            بننوّر السطر أحمر ونقوله المطلوب يدخّله كام. */
         const neg = Number(i.stock || 0) < -0.0001;
+        const cat = String(i.category || '').trim();
         return `
         <tr data-id="${i.id}"${neg ? ' class="row-missing" title="اتباع ولسه ما اتسجلش — سجّل فاتورة الشراء والرقم هيتظبط لوحده"' : ''}>
+          ${owner ? `<td class="sel-col"><input type="checkbox" class="sel-row" ${selected.has(i.id) ? 'checked' : ''}></td>` : ''}
           <td>${Utils.escapeHtml(i.barcode || '—')}</td>
           <td style="font-weight:700;">${Utils.escapeHtml(i.name)}</td>
-          <td>${i.category ? `<span class="badge badge-muted">${Utils.escapeHtml(i.category)}</span>` : '<span class="muted">—</span>'}</td>
+          <td>${owner
+                ? `<button type="button" class="cat-pick ${cat ? '' : 'empty'}" title="دوس عشان تغيّر التصنيف">${cat ? Utils.escapeHtml(cat) : 'من غير تصنيف'}</button>`
+                : (cat ? `<span class="badge badge-muted">${Utils.escapeHtml(cat)}</span>` : '<span class="muted">—</span>')}</td>
           <td>${neg
                 ? `<span class="badge badge-danger">ناقص ${Units.fmtQty(-i.stock, i.unit)}</span>
                    <div class="unit-cost-sub">اتباع ولسه ما اتسجلش</div>`
@@ -136,6 +183,48 @@ Modules.inventory = (() => {
             <button class="icon-btn hist-btn" title="سجل الحركة">📜</button>
           </td>
         </tr>`; }).join('');
+      syncBulk();
+    }
+
+    /* ---------- التصنيف من هنا على طول ----------
+       بدل ما يدخل على فاتورة فاتورة: يعلّم ✓ على كام صنف ويصنّفهم مرة
+       واحدة، أو يدوس على تصنيف الصنف ويغيّره لوحده. */
+    function syncBulk() {
+      const bar = container.querySelector('#bulkBar');
+      if (!bar) return;
+      const n = selected.size;
+      bar.hidden = n === 0;
+      const cnt = container.querySelector('#bulkCount');
+      if (cnt) cnt.textContent = 'اتعلّم على ' + n + ' صنف —';
+      const all = container.querySelector('#selAll');
+      if (all) {
+        const vis = visible();
+        all.checked = vis.length > 0 && vis.every(i => selected.has(i.id));
+      }
+    }
+    async function applyCategory(ids, cat) {
+      const n = await Services.setItemsCategory(ids, cat);
+      await AppState.reloadItems();
+      selected = new Set();
+      drawCats(); redraw();
+      Utils.toast(cat ? `اتصنّف ${n} صنف كـ «${cat}»` : `اتشال التصنيف من ${n} صنف`, 'success');
+    }
+    // دوسة على تصنيف صنف واحد → قايمة مكانه
+    function openCatPicker(td, item) {
+      const cur = String(item.category || '').trim();
+      td.innerHTML = `<select class="cat-inline">${catOptions(cur)}</select>`;
+      const sel = td.querySelector('select');
+      sel.focus();
+      let done = false;
+      const finish = async () => {
+        if (done) return; done = true;
+        const v = await resolveCatChoice(sel.value);
+        if (v == null || v === cur) { redraw(); return; }
+        await applyCategory([item.id], v);
+      };
+      sel.addEventListener('change', finish);
+      sel.addEventListener('blur', () => { if (!done && sel.value === cur) { done = true; redraw(); } });
+      sel.addEventListener('keydown', (e) => { if (e.key === 'Escape') { done = true; redraw(); } });
     }
     drawCats();
     redraw();
@@ -145,10 +234,35 @@ Modules.inventory = (() => {
 
     container.querySelector('#invSearch').addEventListener('input', Utils.debounce(redraw, 150));
 
+    if (owner) {
+      container.querySelector('#selAll').addEventListener('change', (e) => {
+        const vis = visible();
+        if (e.target.checked) vis.forEach(i => selected.add(i.id));
+        else vis.forEach(i => selected.delete(i.id));
+        redraw();
+      });
+      container.querySelector('#bulkClear').addEventListener('click', () => { selected = new Set(); redraw(); });
+      container.querySelector('#bulkApply').addEventListener('click', async () => {
+        if (!selected.size) return;
+        const raw = container.querySelector('#bulkCat').value;
+        if (!raw) { Utils.toast('اختار التصنيف الأول', 'error'); return; }
+        const v = await resolveCatChoice(raw);
+        if (v == null) return;
+        await applyCategory([...selected], v);
+      });
+      tbody.addEventListener('change', (e) => {
+        if (!e.target.classList.contains('sel-row')) return;
+        const id = Number(e.target.closest('tr').dataset.id);
+        if (e.target.checked) selected.add(id); else selected.delete(id);
+        syncBulk();
+      });
+    }
+
     tbody.addEventListener('click', async (e) => {
       const tr = e.target.closest('tr');
       if (!tr) return;
       const item = AppState.items.find(i => i.id === Number(tr.dataset.id));
+      if (e.target.classList.contains('cat-pick')) { openCatPicker(e.target.closest('td'), item); return; }
       if (e.target.classList.contains('adj-btn')) openAdjustModal(item, () => render(container));
       if (e.target.classList.contains('hist-btn')) openHistoryModal(item);
       if (e.target.classList.contains('label-btn')) {
