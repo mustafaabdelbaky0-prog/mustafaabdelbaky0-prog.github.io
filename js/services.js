@@ -1630,6 +1630,36 @@ const Services = (() => {
     return { party, entries, computed: running, stored: Number(party.balance || 0) };
   }
 
+  /* مراجعة أرصدة العملاء والموردين: الرقم المخزّن لازم يساوي كشف الحساب.
+     اتلاقى إن الرصيد ممكن يتبوّظ من بره (إعادة الحساب وقت المزامنة كانت
+     غلط لفترة وطلّعت محروس بالسالب ٦٣٢ ألف) — فالبرنامج بيراجع نفسه
+     أول ما يفتح وكل شوية، وبيصلّح بس لما طريقتين مستقلتين يتفقوا على
+     نفس الرقم: كشف الحساب (partyLedger) وإعادة الحساب (Merge.recompute).
+     لو مختلفين بيسيبه زي ما هو — الإصلاح الغلط أسوأ من إنه مايتعملش. */
+  async function healPartyBalances() {
+    const fixed = [];
+    const snap = {};
+    for (const s of DB.STORE_NAMES) snap[s] = await DB.getAll(s);
+    const wrong = Merge.recompute(snap).fixes
+      .filter(f => (f.store === 'customers' || f.store === 'suppliers') && f.field === 'balance');
+    for (const f of wrong) {
+      const row = await DB.get(f.store, f.id);
+      if (!row) continue;
+      const L = await partyLedger(f.store, f.id);
+      if (Math.abs(L.computed - Number(f.now)) > 0.005) continue;          // مش متفقين → مانلمسوش
+      if (Math.abs(Number(row.balance || 0) - L.computed) <= 0.005) continue;
+      const was = Number(row.balance || 0);
+      row.balance = L.computed;
+      await DB.put(f.store, row);
+      fixed.push({ kind: f.store, id: row.id, name: row.name, was, now: L.computed });
+    }
+    if (fixed.length) {
+      await AppState.reloadParties();
+      try { Utils.toast('اتراجعت أرصدة الحسابات واتصلّح ' + fixed.length + ' رصيد', 'info'); } catch (e) { }
+    }
+    return fixed;
+  }
+
   /* ================= الموظفين =================
 
      حساب الموظف زي دفتر: كل سطر إما "ليه" (credit) أو "عليه" (debit).
@@ -2366,7 +2396,7 @@ const Services = (() => {
     collectFromCustomer, payToSupplier, adjustStock, setOpeningCashBalance,
     voidPartyPayment, editPartyPayment, refundParty, recentSamePayment,
     getDefaultMarkup, setDefaultMarkup, suggestSalePrice, autoCloseDays, dayHistory,
-    partyLedger, isPartyPayment, duplicatePayments, dropDuplicatePayments,
+    partyLedger, healPartyBalances, isPartyPayment, duplicatePayments, dropDuplicatePayments,
     duplicatePaymentsAll,
     closeDay, daySummary,
     isManualMove, isReversalMove, reversedMoveIds,
