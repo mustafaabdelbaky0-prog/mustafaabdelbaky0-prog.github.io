@@ -185,6 +185,7 @@ const Merge = (() => {
   function combine(mine, theirs) {
     const outData = {};
     const report = { added: 0, updated: 0, kept: 0 };
+    const addedKeys = [];   // اللي جه من الجهاز التاني — عشان لو اتشال بشاهد ما يتحسبش "جديد"
 
     const allStores = new Set([...LEDGERS, ...ENTITIES,
       ...Object.keys(mine || {}), ...Object.keys(theirs || {})]);
@@ -200,6 +201,7 @@ const Merge = (() => {
         if (!map.has(k)) {
           map.set(k, r);
           report.added++;
+          addedKeys.push(store + ':' + k);
         } else if (ENTITIES.includes(store)) {
           // بيانات وصفية: الأحدث يكسب
           const win = newer(map.get(k), r);
@@ -255,6 +257,10 @@ const Merge = (() => {
         removed += before - outData[store].length;
       }
       report.removed = removed;
+      /* الصف اللي جه من الجهاز التاني واتشال بشاهد مش "جديد" — من غير
+         السطر ده المزامنة كانت بتفتكر إن فيه جديد كل مرة، وتعيد الدمج
+         والحفظ كل ٤٥ ثانية على الفاضي. */
+      report.added = addedKeys.filter(key => !tombs[key]).length;
       // القايمة الموحّدة بتتحفظ عشان توصل للجهاز التاني هو كمان
       const sRows = outData['settings'] || (outData['settings'] = []);
       const idx = sRows.findIndex(x => x.key === 'tombstones');
