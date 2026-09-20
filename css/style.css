@@ -487,6 +487,19 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .num-cell{text-align:center;white-space:nowrap;}
 .num-cell.debit{color:var(--danger);font-weight:700;}
 .num-cell.credit{color:var(--success);font-weight:700;}
+/* شريط "فيه نسخة جديدة" — تحت الشاشة، مش بيغطي حاجة، وبيختفي مع التحميل */
+.update-strip{
+  position:fixed;bottom:0;right:0;left:0;z-index:900;
+  display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;
+  background:#0F2438;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;
+  box-shadow:0 -3px 12px rgba(0,0,0,.18);
+}
+.update-strip button{
+  background:#F2A93B;color:#0F2438;border:none;border-radius:8px;padding:7px 16px;
+  font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;
+}
+@media print{.update-strip{display:none;}}
+
 /* شريط "اتحفظت الفاتورة" — بيفضل فوق بعد الحفظ عشان لو الزبون
    رجع يسأل تلاقي فاتورته قدامك بزرار */
 .last-saved{

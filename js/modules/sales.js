@@ -1136,5 +1136,10 @@ Modules.sales = (() => {
     if (pendingEditId) { const id = pendingEditId; pendingEditId = null; await openForEdit(container, id); }
   }
 
-  return { render: renderWithPending, renderSaleCards, openQuickReturn, sortNewestFirst, editFromList };
+  // فيه فاتورة على الشاشة لسه ما اتحفظتش؟ (تحميل النسخة الجديدة بيسأل قبل ما يعيد فتح الصفحة)
+  function hasUnsaved() {
+    return rows.some(r => r.itemId || (r.name || '').trim() || (r.barcode || '').trim());
+  }
+
+  return { render: renderWithPending, renderSaleCards, openQuickReturn, sortNewestFirst, editFromList, hasUnsaved };
 })();

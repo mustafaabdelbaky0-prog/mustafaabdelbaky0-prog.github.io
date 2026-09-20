@@ -652,5 +652,10 @@ Modules.returns = (() => {
     }));
   }
 
-  return { render };
+  // فيه مرتجع على الشاشة لسه ما اتحفظش؟ (تحميل النسخة الجديدة بيسأل قبل ما يعيد فتح الصفحة)
+  function hasUnsaved() {
+    return rows.some(r => r.itemId || (r.name || '').trim() || (r.barcode || '').trim());
+  }
+
+  return { render, hasUnsaved };
 })();
