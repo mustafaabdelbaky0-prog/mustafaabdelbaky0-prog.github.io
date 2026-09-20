@@ -110,8 +110,19 @@ const Merge = (() => {
           }
           calc -= Math.max(0, money(amt));
         }
+        /* الدفعات: الاتجاه هو اللي بيحدد.
+             عميل: تحصيل (داخل) بيقلّل اللي عليه — ورد فلوس له أو
+                   إلغاء تحصيل (خارج) بيرجّعه.
+             مورد: سداد (خارج) بيقلّل اللي له — واسترداد منه أو
+                   إلغاء سداد (داخل) بيرجّعه.
+           قبل كده كنا بنطرح كل الحركات بغض النظر عن الاتجاه، فالدفعة
+           الملغية كانت بتتطرح مرتين (هي وعكسها) — وحساب مورد طلع
+           بالسالب ٦٣٢ ألف بعد أول مزامنة. */
         for (const t of treasury) {
-          if (t.refId === p.id && t.source === (isCust ? 'collect' : 'pay')) calc -= Number(t.amount || 0);
+          if (t.refId !== p.id || t.source !== (isCust ? 'collect' : 'pay')) continue;
+          const amt = Number(t.amount || 0);
+          const reduces = isCust ? (t.direction === 'in') : (t.direction === 'out');
+          calc += reduces ? -amt : amt;
         }
         calc = money(calc);
         if (Math.abs(Number(p.balance || 0) - calc) > 0.005) {
@@ -255,5 +266,15 @@ const Merge = (() => {
     return { data: res.data, fixes: res.fixes, report };
   }
 
-  return { combine, recompute, LEDGERS, ENTITIES };
+  /* مراجعة البرنامج لنفسه: بياخد نسخة من كل البيانات ويعيد حساب
+     الأرصدة من الأول ويرجّع الفروق — من غير ما يغيّر حاجة.
+     (recompute من غير بيانات كان بيرجع "مفيش فرق" وهو ما راجعش حاجة —
+      وده اللي خلّى غلطة أرصدة الموردين تعدّي من كل الاختبارات.) */
+  async function check() {
+    const data = {};
+    for (const s of DB.STORE_NAMES) data[s] = await DB.getAll(s);
+    return recompute(data);
+  }
+
+  return { combine, recompute, check, LEDGERS, ENTITIES };
 })();
