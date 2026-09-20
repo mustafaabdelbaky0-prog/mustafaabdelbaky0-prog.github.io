@@ -227,6 +227,30 @@ const Merge = (() => {
       }
     }
 
+    /* شواهد القبور: الصفوف اللي اتمسحت على أي جهاز.
+       بنوحّد القايمتين، وأي صف عليه شاهد بيتشال من النتيجة — عشان
+       المسح ما يرجعش تاني من نسخة الجهاز التاني (شوف db.js delete). */
+    const tombA = (rowsOf(mine, 'settings').find(x => x.key === 'tombstones') || {}).value || {};
+    const tombB = (rowsOf(theirs, 'settings').find(x => x.key === 'tombstones') || {}).value || {};
+    const tombs = Object.assign({}, tombA, tombB);
+    const tombKeys = Object.keys(tombs);
+    if (tombKeys.length) {
+      let removed = 0;
+      for (const store of Object.keys(outData)) {
+        if (store === 'settings') continue;
+        const kn = keyOf(store);
+        const before = outData[store].length;
+        outData[store] = outData[store].filter(r => !tombs[store + ':' + r[kn]]);
+        removed += before - outData[store].length;
+      }
+      report.removed = removed;
+      // القايمة الموحّدة بتتحفظ عشان توصل للجهاز التاني هو كمان
+      const sRows = outData['settings'] || (outData['settings'] = []);
+      const idx = sRows.findIndex(x => x.key === 'tombstones');
+      const merged = { key: 'tombstones', value: tombs, updatedAt: new Date().toISOString() };
+      if (idx >= 0) sRows[idx] = merged; else sRows.push(merged);
+    }
+
     const res = recompute(outData);
     return { data: res.data, fixes: res.fixes, report };
   }

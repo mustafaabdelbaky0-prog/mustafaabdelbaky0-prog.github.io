@@ -1308,6 +1308,34 @@ const Services = (() => {
     });
   }
 
+  /* إلغاء حركة يدوية (إيداع/سحب) بدل مسحها.
+
+     الإلغاء أضمن من المسح مع المزامنة: المسح بيشيل الصف، والصف ممكن
+     يرجع من نسخة الموبايل لو الموبايل كان لسه شايفه. الإلغاء بيسيب
+     الصف مكانه معلّم "ملغي" وبيكتب حركة عكسية — والاتنين بيعدّوا في
+     الدمج عادي لأن الأحدث بيكسب. والشاشة بتخبّي الاتنين مع بعض. */
+  async function voidTreasuryMove(id, why) {
+    return DB.tx(['treasury', 'settings'], 'readwrite', async (t) => {
+      const store = t.objectStore('treasury');
+      const m = await DB.reqToPromise(store.get(id));
+      if (!m) throw new Error('الحركة دي مش موجودة');
+      if (!isManualMove(m)) throw new Error('الحركة دي جاية من مستند — الغيها من مكانها');
+      if (m.voided) throw new Error('الحركة دي ملغية بالفعل');
+      await _writeTreasuryMove(t, {
+        direction: m.direction === 'in' ? 'out' : 'in',
+        amount: Number(m.amount || 0), source: m.source, refId: m.refId ?? null,
+        reversal: true, name: m.name || '', kind: m.kind || null,
+        note: 'إلغاء ' + (m.note || (m.direction === 'in' ? 'إيداع' : 'سحب')) + (why ? ' — ' + why : '')
+      });
+      const cur = await DB.reqToPromise(store.get(id));
+      cur.voided = true;
+      cur.voidedAt = Utils.nowISO();
+      if (why) cur.voidNote = String(why).trim();
+      await DB.reqToPromise(store.put(cur));
+      return _restack(t);
+    });
+  }
+
   /* سداد لمورد — بينزل من الخزنة ومن حساب المورد في نفس الوقت.
      مهم: ده مش "مصروف". البضاعة اتحسبت عليك يوم ما اشتريتها، فلو
      حسبنا الدفعة مصروف كمان كانت هتتحسب مرتين والأرباح تطلع غلط. */
@@ -2219,15 +2247,29 @@ const Services = (() => {
     const supplierPrepaid = Math.round(suppliers.reduce((s, x) =>
       s + Math.max(0, -Number(x.balance || 0)), 0) * 100) / 100;
 
+    /* السلف من بره: قاعدة صاحب المحل إن الخزنة بتتغذّى من البيع بس،
+       وأي فلوس جاية من بره سلفة وهترجع. السلفة اللي لسه ما اترجّعتش
+       دين عليه (التزام) — مش رأس مال ومش ربح. */
+    let loansIn = 0, loansOut = 0;
+    for (const m of treasury) {
+      if (m.kind === 'loan' && m.direction === 'in') loansIn += Number(m.amount || 0);
+      if (m.kind === 'loan_repay' && m.direction === 'out') loansOut += Number(m.amount || 0);
+    }
+    const loans = Math.max(0, Math.round((loansIn - loansOut) * 100) / 100);
+
     const totalAssets = Math.round((cash + inventory + receivable + assetsNet + supplierPrepaid) * 100) / 100;
-    const totalLiabilities = Math.round((payable + employeeDues + customerCredit) * 100) / 100;
+    const totalLiabilities = Math.round((payable + employeeDues + customerCredit + loans) * 100) / 100;
     const equity = Math.round((totalAssets - totalLiabilities) * 100) / 100;
 
     // رأس المال اللي دخل من جيبه، والمسحوبات الشخصية
+    // (الحركة العكسية لإلغاء إيداع رأس مال بتيجي kind=capital بس خارجة — فبتتخصم)
     let capital = 0, drawings = 0;
     for (const m of treasury) {
-      if (m.kind === 'capital' && m.direction === 'in') capital += Number(m.amount || 0);
-      if (m.kind === 'drawings' && m.direction === 'out') drawings += Number(m.amount || 0);
+      const a = Number(m.amount || 0);
+      // الرصيد الافتتاحي القديم (قبل ما نضيف خانة "الفلوس دي إيه") رأس مال برضه
+      const isCap = m.kind === 'capital' || (!m.kind && m.source === 'deposit' && /رصيد افتتاحي/.test(String(m.note || '')));
+      if (isCap) capital += (m.direction === 'in' ? a : -a);
+      if (m.kind === 'drawings') drawings += (m.direction === 'out' ? a : -a);
     }
     capital = Math.round(capital * 100) / 100;
     drawings = Math.round(drawings * 100) / 100;
@@ -2237,7 +2279,7 @@ const Services = (() => {
     return {
       cash, inventory, receivable, assetsCost, accumDep, assetsNet,
       supplierPrepaid, totalAssets,
-      payable, employeeDues, customerCredit, totalLiabilities,
+      payable, employeeDues, customerCredit, loans, totalLiabilities,
       equity, capital, drawings, retained
     };
   }
@@ -2329,7 +2371,7 @@ const Services = (() => {
     closeDay, daySummary,
     isManualMove, isReversalMove, reversedMoveIds,
     mergeItems, duplicateItems,
-    updateTreasuryMove, deleteTreasuryMove,
+    updateTreasuryMove, deleteTreasuryMove, voidTreasuryMove,
     employeeAdvance, payEmployee, employeeAdjust, employeeSales,
     closePayrollMonth, voidPayrollClosing, voidEmployeeMove, monthRange,
     monthlyDepreciation, accumulatedDepreciation, depreciationPlan,

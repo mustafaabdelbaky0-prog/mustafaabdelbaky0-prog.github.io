@@ -121,6 +121,7 @@ Modules.finance = (() => {
             <tr><td>مستحق للموردين</td><td>${Utils.formatMoney(pos.payable)}</td></tr>
             <tr><td>مستحق للموظفين</td><td>${Utils.formatMoney(pos.employeeDues)}</td></tr>
             ${pos.customerCredit > 0.005 ? `<tr><td>أمانات عملاء (دفعوا زيادة)</td><td>${Utils.formatMoney(pos.customerCredit)}</td></tr>` : ''}
+            ${pos.loans > 0.005 ? `<tr><td>سلف من بره لسه مترجعتش</td><td style="color:var(--danger);">${Utils.formatMoney(pos.loans)}</td></tr>` : ''}
             <tr class="mini-total"><td>الإجمالي</td><td>${Utils.formatMoney(pos.totalLiabilities)}</td></tr>
           </table>
 

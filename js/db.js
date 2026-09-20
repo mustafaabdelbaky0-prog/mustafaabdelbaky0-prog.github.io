@@ -155,6 +155,16 @@ const DB = (() => {
       };
       rowsOf(store).forEach(consider);
       Object.values(overlayOf(store)).forEach(r => { if (r !== DELETED) consider(r); });
+      /* الأرقام اللي اتمسحت مبتتعادش. لو اتعادت، الصف الجديد بياخد
+         رقم صف قديم اتمسح — فالمزامنة بتفتكره هو نفسه القديم وتمسحه،
+         أو نسخة الموبايل القديمة تدوس عليه. */
+      const tomb = readRow('settings', 'tombstones');
+      if (tomb && tomb.value) {
+        const pre = store + ':';
+        for (const k of Object.keys(tomb.value)) {
+          if (k.startsWith(pre)) consider({ [kn]: k.slice(pre.length) });
+        }
+      }
       return max + 1;
     }
 
@@ -191,6 +201,24 @@ const DB = (() => {
           delete(key) {
             overlayOf(store)[key] = DELETED;
             ops.push({ store, type: 'delete', id: key });
+            /* شاهد قبر (tombstone): بنسجّل إن الصف ده اتمسح.
+
+               من غير ده، المسح كان بيرجع تاني: المزامنة مع الموبايل
+               بتجمع سجلات الجهازين، فأي صف اتمسح هنا ولسه موجود في
+               نسخة الموبايل كان بيتضاف من جديد كأنه ما اتمسحش. حصلت
+               فعلاً مع إيداع اتمسح من الخزنة ورجع بعد دقيقة.
+               بنحطها في الإعدادات تحت مفتاح واحد، والدمج بيوحّدها
+               من الجهازين وبيشيل أي صف عليه شاهد. */
+            if (store !== 'settings') {
+              const TOMB = 'tombstones';
+              const cur = readRow('settings', TOMB) || { key: TOMB, value: {} };
+              const val = Object.assign({}, cur.value || {});
+              val[store + ':' + key] = (typeof Utils !== 'undefined') ? Utils.nowISO() : new Date().toISOString();
+              const trow = { key: TOMB, value: val };
+              stamp(trow);
+              overlayOf('settings')[TOMB] = trow;
+              ops.push({ store: 'settings', type: 'put', row: trow });
+            }
             return undefined;
           },
           clear() {

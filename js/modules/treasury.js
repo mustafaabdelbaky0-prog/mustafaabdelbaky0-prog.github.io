@@ -172,10 +172,11 @@ Modules.treasury = (() => {
                 <td style="color:var(--danger);font-weight:700;">${m.direction === 'out' ? Utils.formatMoney(m.amount) : ''}</td>
                 <td>${Utils.formatMoney(m.balanceAfter)}</td>
                 <td>
-                  ${manual
+                  ${manual && !dead
                     ? `<button class="icon-btn edit-move" title="تعديل">✏️</button>
-                       <button class="icon-btn del-move" title="حذف">🗑️</button>`
-                    : `<button class="icon-btn why-move" title="${Utils.escapeHtml(SOURCE_ORIGIN[m.source] || 'حركة مربوطة بمستند')}">🔒</button>`}
+                       <button class="icon-btn del-move" title="إلغاء">🗑️</button>`
+                    : (manual ? ''
+                    : `<button class="icon-btn why-move" title="${Utils.escapeHtml(SOURCE_ORIGIN[m.source] || 'حركة مربوطة بمستند')}">🔒</button>`)}
                 </td>
               </tr>`; }).join('')
               : `<tr class="empty-row"><td colspan="8">${filtering ? 'مفيش حركة بالمواصفات دي' : 'مفيش حركة على الخزنة لسه'}</td></tr>`}
@@ -231,15 +232,17 @@ Modules.treasury = (() => {
         openMoveModal(move.direction, container, move);
       } else if (e.target.classList.contains('del-move')) {
         const ok = await Utils.confirmDialog(
-          `تمسح الحركة دي؟\n\n${SOURCE_LABELS[move.source]} · ${Utils.formatMoney(move.amount)}` +
-          `${move.name ? ' · ' + move.name : ''}\n\nرصيد الخزنة هيتظبط لوحده.`);
+          `تلغي الحركة دي؟\n\n${SOURCE_LABELS[move.source]} · ${Utils.formatMoney(move.amount)}` +
+          `${move.name ? ' · ' + move.name : ''}\n\nرصيد الخزنة هيتظبط لوحده، والحركة هتفضل باينة في الدفتر إنها اتلغت.`);
         if (!ok) return;
         try {
-          await Services.deleteTreasuryMove(id);
+          /* إلغاء مش مسح — عشان ماترجعش تاني من نسخة الموبايل وقت
+             المزامنة، وعشان الدفتر يفضل فيه أثر اللي حصل */
+          await Services.voidTreasuryMove(id);
           await refreshShell();
-          Utils.toast('اتمسحت الحركة', 'success');
+          Utils.toast('اتلغت الحركة والرصيد اتظبط', 'success');
           render(container);
-        } catch (err) { Utils.toast(err.message || 'المسح مانجحش', 'error'); }
+        } catch (err) { Utils.toast(err.message || 'الإلغاء مانجحش', 'error'); }
       }
     });
   }
@@ -399,6 +402,8 @@ Modules.treasury = (() => {
             <label>الفلوس دي إيه؟</label>
             <select id="mKind">
               <option value="">حركة عادية</option>
+              <option value="loan" ${editing && editMove.kind === 'loan' ? 'selected' : ''}>سلفة من بره — فلوس هرجعها</option>
+              <option value="loan_repay" ${editing && editMove.kind === 'loan_repay' ? 'selected' : ''}>رد سلفة — بترجّع فلوس اتسلفتها</option>
               <option value="capital" ${editing && editMove.kind === 'capital' ? 'selected' : ''}>رأس مال — فلوس من جيبي للمحل</option>
               <option value="drawings" ${editing && editMove.kind === 'drawings' ? 'selected' : ''}>مسحوبات شخصية — فلوس من المحل ليا</option>
             </select>
@@ -436,14 +441,18 @@ Modules.treasury = (() => {
         function syncKind() {
           const k = kindEl.value;
           // رأس المال دايمًا داخل، والمسحوبات دايمًا خارجة
-          if (k === 'capital') dirEl.value = 'in';
-          if (k === 'drawings') dirEl.value = 'out';
+          if (k === 'capital' || k === 'loan') dirEl.value = 'in';
+          if (k === 'drawings' || k === 'loan_repay') dirEl.value = 'out';
           dirEl.disabled = !!k;
           kindHint.textContent = k === 'capital'
             ? 'هتزوّد رأس مالك في المحل — مش إيراد ومش هتتحسب ربح'
             : (k === 'drawings'
               ? 'هتقلّل حقك في المحل — مش مصروف ومش هتقلّل الأرباح'
-              : '');
+              : (k === 'loan'
+                ? 'فلوس داخلة من بره لازم ترجع — هتتسجل دين عليك في المركز المالي لحد ما تردها'
+                : (k === 'loan_repay'
+                  ? 'بترجّع فلوس كنت متسلفها — الدين هيقل بنفس المبلغ'
+                  : '')));
           syncBtn();
         }
         function syncBtn() {
