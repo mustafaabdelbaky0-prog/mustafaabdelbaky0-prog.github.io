@@ -300,7 +300,8 @@ ${tel ? `<a class="fab" href="tel:${esc(tel)}" aria-label="اتصل بنا">📞
       { path: 'index.html', text: html },
       { path: 'site.css', text: CSS },
       { path: 'site.js', text: JS },
-      { path: 'content.json', text: JSON.stringify(s, null, 1) }
+      /* مفيش ملف بيانات بيتنشر مع الموقع عن قصد: إعدادات الطلبات فيها
+         توكن البوت، وأي حاجة بتتحط على الموقع بيقدر أي حد يفتحها. */
     ];
   }
 

@@ -573,6 +573,14 @@ Modules.site = (() => {
             ? '✅ الطلبات متوصّلة — أول ما الزبون يدوس «إتمام الشراء» الطلب هيوصلك على تليجرام والإيميل في نفس اللحظة.'
             : '⚠️ لسه ما ظبطناش وصول الطلبات. دلوقتي الزبون هيدوس «إتمام الشراء» وهيشوف إن طلبه اتسجل — بس مش هيوصلك إشعار. حطّ اللينك تحت وهي تشتغل.'}
         </div>
+        <div class="field-row">
+          ${field('توكن البوت (من BotFather)', 'order.tgToken', { ph: '8813...:AAF...' })}
+          ${field('رقم محادثتك على تليجرام', 'order.tgChat', { ph: '1437...' })}
+          ${field('الإيميل اللي يوصله الطلب', 'order.email', { ph: 'you@gmail.com' })}
+        </div>
+        <div class="hint" style="margin:-8px 0 14px;">
+          البيانات دي بتتحط جوه الكود اللي تحت عشان تلزقه جاهز — وعمرها ما بتتنشر على الموقع.
+        </div>
         ${field('لينك استقبال الطلبات', 'order.relayUrl', { ph: 'https://script.google.com/macros/s/.../exec' })}
         ${field('كلمة للزبون بعد الطلب', 'order.note', { area: true, rows: 2 })}
         ${field('مناطق التوصيل (اختياري)', 'order.areas', { ph: 'مثلاً: المنطقة والعزب المجاورة' })}
@@ -589,7 +597,8 @@ Modules.site = (() => {
               عشان يبقى مسموحله يكلمك.</li>
             <li><strong>افتح <a href="https://script.google.com" target="_blank" rel="noopener">script.google.com</a></strong>
               بحسابك على جوجل ← <strong>New project</strong> ← امسح اللي مكتوب والصق الكود اللي تحت.</li>
-            <li>غيّر أول ٣ سطور بس: التوكن، ورقمك، وإيميلك.</li>
+            <li>لو كاتب التوكن ورقمك وإيميلك في الخانات اللي فوق، الكود تحت
+              <strong>جاهز بيهم</strong> — انسخه والصقه زي ما هو من غير ما تعدّل فيه حاجة.</li>
             <li>دوس <strong>Deploy ← New deployment ← Web app</strong>، وفي
               <strong>Who has access</strong> اختار <strong>Anyone</strong>، وبعدين
               <strong>Deploy</strong> (هيطلب إذن — وافق).</li>
@@ -600,13 +609,13 @@ Modules.site = (() => {
             <strong>الكود</strong>
             <button type="button" class="btn btn-ghost btn-sm" id="copyCode">انسخ الكود</button>
           </div>
-          <pre class="code">${esc(RELAY_CODE)}</pre>
+          <pre class="code">${esc(relayCode())}</pre>
         </details>
       </div>`;
     bindFields(body, () => drawOrder(container, body));
     const cc = body.querySelector('#copyCode');
     if (cc) cc.addEventListener('click', () => {
-      navigator.clipboard.writeText(RELAY_CODE).then(
+      navigator.clipboard.writeText(relayCode()).then(
         () => Utils.toast('الكود اتنسخ — الصقه في script.google.com', 'success'),
         () => Utils.toast('مقدرش ينسخ — علّم على الكود وانسخه بإيدك', 'error'));
     });
@@ -615,11 +624,22 @@ Modules.site = (() => {
   /* الوسيط اللي بيستلم الطلب من الموقع ويبعته على تليجرام والإيميل.
      بيتحط في حساب جوجل بتاع صاحب المحل — يعني توكن البوت مش مكتوب
      في الموقع نفسه، فمحدش يقدر يستعمله غيره. */
+  /* الكود بيتكتب وفيه التوكن ورقم المحادثة والإيميل اللي كاتبهم فوق،
+     عشان يلزقه في جوجل من غير ما يعدّل فيه حاجة ومن غير غلط كتابة. */
+  function relayCode() {
+    const o = (site && site.order) || {};
+    const q = v => "'" + String(v || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+    return RELAY_CODE
+      .replace("'__TOKEN__'", o.tgToken ? q(o.tgToken) : "'حط التوكن هنا'")
+      .replace("'__CHAT__'", o.tgChat ? q(o.tgChat) : "'حط رقمك هنا'")
+      .replace("'__EMAIL__'", o.email ? q(o.email) : "'حط إيميلك هنا'");
+  }
+
   const RELAY_CODE = [
-    "// ===== إعدادات: غيّر التلات سطور دول بس =====",
-    "var TELEGRAM_TOKEN = 'حط التوكن هنا';",
-    "var CHAT_ID        = 'حط رقمك هنا';",
-    "var EMAIL          = 'حط إيميلك هنا';",
+    "// ===== إعدادات =====",
+    "var TELEGRAM_TOKEN = '__TOKEN__';",
+    "var CHAT_ID        = '__CHAT__';",
+    "var EMAIL          = '__EMAIL__';",
     "",
     "function doPost(e) {",
     "  var o = JSON.parse(e.postData.contents);",
