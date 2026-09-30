@@ -43,8 +43,13 @@ const SiteGen = (() => {
         { icon: '✅', title: 'بضاعة مضمونة', text: 'ماركات معروفة، ولو فيها عيب بنستبدلها' }
       ],
       about: 'محل متخصص في الأدوات الكهربائية والحدايد، بنخدم البيوت والورش والفنيين. عندنا كل المستلزمات من اللمبة لحد لوحة الكهرباء، وبنساعدك تختار الصح لشغلك.',
+      /* الأقسام شجرة: القسم الرئيسي parent = null، واللي جواه
+         parent = رقم اللي فوقه. أي عمق مسموح. */
+      sections: [],
       products: [],
       offers: [],
+      bundles: [],
+      seq: 1,
       order: {
         relayUrl: '',
         note: 'هنكلّمك على التليفون نأكد الطلب والتوصيل.',
@@ -63,9 +68,54 @@ const SiteGen = (() => {
     s.order = Object.assign({}, d.order, (site && site.order) || {});
     s.seo = Object.assign({}, d.seo, (site && site.seo) || {});
     s.features = (site && site.features) || d.features;
+    s.sections = (site && site.sections) || [];
     s.products = (site && site.products) || [];
     s.offers = (site && site.offers) || [];
+    s.bundles = (site && site.bundles) || [];
+    s.seq = Number((site && site.seq) || 0) || 1;
     return s;
+  }
+
+  // ---------- شجرة الأقسام ----------
+  const secId = v => (v == null || v === '' ? null : Number(v));
+  function children(s, parent) {
+    return (s.sections || []).filter(x => secId(x.parent) === secId(parent));
+  }
+  function findSec(s, id) {
+    return (s.sections || []).find(x => Number(x.id) === Number(id)) || null;
+  }
+  // سلسلة الأقسام من فوق لتحت: كهرباء ← اي لوك
+  function secChain(s, id) {
+    const out = [];
+    let cur = findSec(s, id), guard = 0;
+    while (cur && guard++ < 20) { out.unshift(cur); cur = findSec(s, cur.parent); }
+    return out;
+  }
+  // "|1|2|" — عشان لو دوس على "كهرباء" يشوف كمان اللي جوه "اي لوك"
+  function secPath(s, id) {
+    const c = secChain(s, id);
+    return c.length ? '|' + c.map(x => x.id).join('|') + '|' : '';
+  }
+  function descendants(s, id) {
+    const out = [];
+    const walk = p => children(s, p).forEach(c => { out.push(c); walk(c.id); });
+    walk(id);
+    return out;
+  }
+  // كل الأقسام مرتبة زي الشجرة مع العمق — للقوايم في البرنامج
+  function flatSections(s) {
+    const out = [];
+    const walk = (parent, depth) => {
+      children(s, parent)
+        .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+        .forEach(c => { out.push({ sec: c, depth }); walk(c.id, depth + 1); });
+    };
+    walk(null, 0);
+    return out;
+  }
+  function countIn(s, id) {
+    const ids = [Number(id)].concat(descendants(s, id).map(x => Number(x.id)));
+    return (s.products || []).filter(p => ids.indexOf(Number(p.sectionId)) >= 0).length;
   }
 
   /* لوجو المحل: البيت اللي جواه عربية السوق — نفس اللي على الكارت
@@ -80,19 +130,66 @@ const SiteGen = (() => {
   </svg>`;
 
   // ---------- أجزاء الصفحة ----------
-  function productCard(p) {
+  /* كارت المنتج، وجواه تفاصيله كاملة مستخبية.
+     لما الزبون يدوس على الكارت، النافذة بتاخد التفاصيل دي وتعرضها —
+     فالكلام مكتوب في الصفحة نفسها (جوجل بيقراه) من غير ملفات زيادة. */
+  function productCard(p, s) {
     const price = Number(p.price || 0);
+    const specs = (p.specs || []).filter(x => (x.k || '').trim() || (x.v || '').trim());
+    const chain = secChain(s, p.sectionId);
+    const gallery = [p.image].concat(p.images || []).filter(Boolean);
     return `
       <article class="card" data-name="${esc(p.name)}" data-price="${price}">
-        <div class="card-img">${p.image
-          ? `<img src="img/${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">`
-          : `<div class="noimg">📦</div>`}</div>
-        <div class="card-body">
+        <button type="button" class="card-open" aria-label="تفاصيل ${esc(p.name)}">
+          <div class="card-img">${p.image
+            ? `<img src="img/${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">`
+            : `<div class="noimg">📦</div>`}</div>
+          <div class="card-body">
+            ${chain.length ? `<span class="card-sec">${esc(chain[chain.length - 1].name)}</span>` : ''}
+            <h3>${esc(p.name)}</h3>
+            ${p.desc ? `<p class="card-desc">${esc(p.desc)}</p>` : ''}
+            ${specs.length || p.about ? `<span class="more">اعرف أكتر ←</span>` : ''}
+          </div>
+        </button>
+        <div class="card-foot">
+          <span class="price">${money(price)} <small>ج.م${p.unit ? ' / ' + esc(p.unit) : ''}</small></span>
+          <button type="button" class="add" data-name="${esc(p.name)}" data-price="${price}">أضف للطلب</button>
+        </div>
+        <div class="pdet" hidden>
+          ${chain.length ? `<div class="pd-path">${chain.map(c => esc(c.name)).join(' ← ')}</div>` : ''}
           <h3>${esc(p.name)}</h3>
-          ${p.desc ? `<p class="card-desc">${esc(p.desc)}</p>` : ''}
-          <div class="card-foot">
-            <span class="price">${money(price)} <small>ج.م${p.unit ? ' / ' + esc(p.unit) : ''}</small></span>
-            <button type="button" class="add" data-name="${esc(p.name)}" data-price="${price}">أضف للطلب</button>
+          <div class="pd-price">${money(price)} <small>ج.م${p.unit ? ' / ' + esc(p.unit) : ''}</small></div>
+          ${gallery.length ? `<div class="pd-imgs">${gallery.map(g =>
+            `<img src="img/${esc(g)}" alt="${esc(p.name)}" loading="lazy">`).join('')}</div>` : ''}
+          ${p.about ? `<p class="pd-about">${esc(p.about)}</p>`
+                    : (p.desc ? `<p class="pd-about">${esc(p.desc)}</p>` : '')}
+          ${specs.length ? `<table class="pd-specs">${specs.map(x =>
+            `<tr><th>${esc(x.k)}</th><td>${esc(x.v)}</td></tr>`).join('')}</table>` : ''}
+        </div>
+      </article>`;
+  }
+
+  /* الباكدچ: كذا منتج مع بعض بسعر أقل من مجموعهم */
+  function bundleCard(bn) {
+    const price = Number(bn.price || 0);
+    const lines = (bn.lines || []).filter(l => (l.name || '').trim());
+    const full = lines.reduce((t, l) => t + Number(l.qty || 1) * Number(l.price || 0), 0);
+    const save = full > price && price > 0 ? Math.round((full - price) * 100) / 100 : 0;
+    return `
+      <article class="bundle">
+        ${save > 0 ? `<span class="badge-off">توفير ${money(save)} ج.م</span>` : ''}
+        <div class="offer-img">${bn.image
+          ? `<img src="img/${esc(bn.image)}" alt="${esc(bn.title)}" loading="lazy">`
+          : `<div class="noimg">🎁</div>`}</div>
+        <div class="offer-body">
+          <h3>${esc(bn.title)}</h3>
+          ${bn.desc ? `<p>${esc(bn.desc)}</p>` : ''}
+          ${lines.length ? `<ul class="bn-list">${lines.map(l =>
+            `<li><span>${esc(l.name)}</span><b>×${Number(l.qty || 1)}</b></li>`).join('')}</ul>` : ''}
+          <div class="offer-foot">
+            ${price > 0 ? `<span class="price">${money(price)} <small>ج.م</small></span>` : ''}
+            ${save > 0 ? `<span class="old">${money(full)}</span>` : ''}
+            ${price > 0 ? `<button type="button" class="add" data-name="${esc(bn.title)} (باكدچ)" data-price="${price}">أضف للطلب</button>` : ''}
           </div>
         </div>
       </article>`;
@@ -123,7 +220,10 @@ const SiteGen = (() => {
   function build(siteRaw, company) {
     const s = normalize(siteRaw, company);
     const b = s.brand;
-    const cats = [...new Set(s.products.map(p => String(p.category || '').trim()).filter(Boolean))];
+    const tops = children(s, null).sort((a, b2) => Number(a.order || 0) - Number(b2.order || 0));
+    /* الأصناف اللي لسه ما اتحطتش في قسم بتظهر تحت "باقي الأصناف"
+       بدل ما تختفي — عشان ما يضيعش منه حاجة وهو بيرتّب. */
+    const loose = s.products.filter(p => !findSec(s, p.sectionId)).length;
     const tel = digits(b.phone), tel2 = digits(b.phone2), wa = digits(b.whatsapp || b.phone);
     const title = s.seo.title || (b.name + (b.tagline ? ' — ' + b.tagline : ''));
     const desc = s.seo.description || s.hero.subtitle || b.tagline;
@@ -203,20 +303,62 @@ ${s.offers.length ? `
   </div>
 </section>` : ''}
 
-<section id="products" class="sec">
+${s.bundles.length ? `
+<section id="bundles" class="sec">
   <div class="wrap">
-    <div class="sec-head"><h2>المنتجات</h2><p>اختار اللي محتاجه وضيفه للطلب — وإحنا نكلمك نأكد</p></div>
-    ${cats.length > 1 ? `
-    <div class="cats">
-      <button type="button" class="cat on" data-cat="">الكل</button>
-      ${cats.map(c => `<button type="button" class="cat" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}
-    </div>` : ''}
+    <div class="sec-head"><h2>🎁 باكدچات</h2><p>كذا حاجة مع بعض بسعر أقل من ما تشتريهم فرادى</p></div>
+    <div class="offers">${s.bundles.map(bundleCard).join('')}</div>
+  </div>
+</section>` : ''}
+
+<section id="products" class="sec sec-grey">
+  <div class="wrap">
+    <div class="sec-head"><h2>المنتجات</h2><p>دوّر على اللي محتاجه أو اتفرّج على الأقسام — وضيفه للطلب</p></div>
+
+    <div class="find">
+      <input type="search" id="q" placeholder="دوّر على أي حاجة… مثلاً: مشترك" autocomplete="off">
+      <button type="button" id="qClear" hidden aria-label="امسح البحث">&times;</button>
+    </div>
+
+    ${tops.length ? `
+    <div class="cats" id="topCats">
+      <button type="button" class="cat on" data-sec="">كل الأقسام</button>
+      ${tops.map(t => `<button type="button" class="cat" data-sec="${t.id}">${esc(t.name)}
+        <i>${countIn(s, t.id)}</i></button>`).join('')}
+      ${loose ? `<button type="button" class="cat" data-sec="0">باقي الأصناف <i>${loose}</i></button>` : ''}
+    </div>
+    <div class="subcats" id="subCats" hidden data-tree="${esc(JSON.stringify(
+      tops.reduce((m, t) => {
+        const kids = children(s, t.id).sort((a, b2) => Number(a.order || 0) - Number(b2.order || 0));
+        if (kids.length) m[t.id] = kids.map(k => ({ id: k.id, name: k.name, n: countIn(s, k.id) }));
+        return m;
+      }, {})))}"></div>` : ''}
+
+    <div class="find-info" id="qInfo" hidden></div>
+
     ${s.products.length
       ? `<div class="grid" id="grid">${s.products.map(p =>
-          `<div class="cell" data-cat="${esc(p.category || '')}">${productCard(p)}</div>`).join('')}</div>`
+          `<div class="cell" data-path="${esc(secPath(s, p.sectionId) || '|0|')}"
+                data-find="${esc([p.name, p.desc, p.about,
+                                  (p.specs || []).map(x => x.k + ' ' + x.v).join(' '),
+                                  secChain(s, p.sectionId).map(c => c.name).join(' ')].join(' '))}"
+           >${productCard(p, s)}</div>`).join('')}</div>
+         <p class="empty" id="noHit" hidden>مفيش حاجة بالاسم ده — جرّب كلمة تانية أو كلّمنا وإحنا نشوفهالك.</p>`
       : `<p class="empty">لسه بنجهّز المنتجات — كلّمنا وإحنا نقولك على كل اللي عندنا.</p>`}
   </div>
 </section>
+
+<!-- تفاصيل المنتج -->
+<div id="pmodal" class="drawer" hidden>
+  <div class="drawer-bg" data-close></div>
+  <aside class="pm-box">
+    <button type="button" class="x pm-x" data-close>&times;</button>
+    <div class="pm-body" id="pmBody"></div>
+    <div class="pm-foot">
+      <button type="button" class="btn btn-amber block" id="pmAdd">أضف للطلب</button>
+    </div>
+  </aside>
+</div>
 
 <section id="about" class="sec sec-dark">
   <div class="wrap about-in">
@@ -413,7 +555,7 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .card-img{aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
 .card-img img{width:100%;height:100%;object-fit:cover;}
 .noimg{width:100%;height:100%;display:grid;place-items:center;font-size:40px;opacity:.35;}
-.card-body{padding:12px 14px 14px;display:flex;flex-direction:column;flex:1;gap:6px;}
+.card-body{padding:12px 14px 8px;display:flex;flex-direction:column;flex:1;gap:5px;align-items:flex-start;}
 .card-body h3{font-size:15.5px;font-weight:800;margin:0;}
 .card-desc{margin:0;font-size:12.5px;color:var(--soft);line-height:1.7;}
 /* السعر في سطر لوحده والزرار تحته على العرض — أسهل في الدوس على الموبايل */
@@ -452,6 +594,58 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .ab span{font-size:19px;}
 .ab strong{display:block;font-size:12.5px;color:var(--orange);font-weight:700;}
 .ab a{text-decoration:none;}
+
+/* ===== البحث والأقسام ===== */
+.sec-grey{background:var(--bg);}
+.find{position:relative;margin-bottom:18px;max-width:520px;}
+.find input{width:100%;padding:14px 46px 14px 16px;border:1.5px solid var(--line);border-radius:12px;
+  font:inherit;font-size:15.5px;background:#fff;color:var(--ink);}
+.find input:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 3px rgba(240,78,5,.18);}
+.find #qClear{position:absolute;inset-inline-start:10px;top:50%;transform:translateY(-50%);
+  background:none;border:none;font-size:24px;line-height:1;color:var(--soft);cursor:pointer;}
+.cat i{font-style:normal;background:var(--orange-soft);color:var(--orange-d);border-radius:999px;
+  padding:1px 7px;font-size:11.5px;font-weight:900;margin-inline-start:5px;}
+.cat.on i{background:rgba(255,255,255,.28);color:#fff;}
+.subcats{display:flex;gap:8px;flex-wrap:wrap;margin:-10px 0 20px;padding-inline-start:4px;}
+.subcat{background:#fff;border:1.5px dashed var(--line);border-radius:999px;padding:6px 15px;
+  font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;color:var(--soft);}
+.subcat:hover{border-color:var(--orange);color:var(--orange);}
+.subcat.on{background:var(--navy);color:#fff;border-style:solid;border-color:var(--navy);}
+.find-info{font-size:13.5px;color:var(--soft);margin-bottom:14px;font-weight:700;}
+
+/* ===== كارت المنتج ===== */
+.card-open{display:flex;flex-direction:column;flex:1;width:100%;text-align:inherit;
+  background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;}
+.card-sec{display:inline-block;background:var(--orange-soft);color:var(--orange-d);
+  border-radius:999px;padding:2px 9px;font-size:11px;font-weight:800;margin-bottom:2px;}
+.more{font-size:12.5px;font-weight:800;color:var(--orange);}
+.card-foot{padding:0 14px 14px;}
+
+/* ===== نافذة تفاصيل المنتج ===== */
+.pm-box{position:absolute;inset-inline-start:0;top:0;bottom:0;width:min(520px,100%);background:#fff;
+  display:flex;flex-direction:column;box-shadow:0 0 40px rgba(0,0,0,.3);}
+.pm-x{position:absolute;top:10px;inset-inline-end:14px;z-index:2;}
+.pm-body{padding:22px 20px 10px;overflow:auto;flex:1;}
+.pm-foot{padding:14px 20px 18px;border-top:1px solid var(--line);}
+.pd-path{font-size:12.5px;color:var(--orange);font-weight:800;margin-bottom:6px;}
+.pm-body h3{font-size:21px;font-weight:900;margin:0 0 8px;}
+.pd-price{font-size:24px;font-weight:900;color:var(--orange);font-variant-numeric:tabular-nums;margin-bottom:14px;}
+.pd-price small{font-size:13px;color:var(--soft);font-weight:700;}
+.pd-imgs{display:flex;gap:8px;overflow-x:auto;margin-bottom:14px;}
+.pd-imgs img{width:200px;height:150px;object-fit:cover;border-radius:11px;flex:none;background:var(--orange-soft);}
+.pd-about{font-size:14.5px;line-height:1.95;color:var(--ink);margin:0 0 14px;white-space:pre-line;}
+.pd-specs{width:100%;border-collapse:collapse;font-size:14px;}
+.pd-specs th,.pd-specs td{text-align:start;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;}
+.pd-specs th{color:var(--soft);font-weight:700;width:42%;background:var(--bg);}
+.pd-specs td{font-weight:700;}
+
+/* ===== الباكدچ ===== */
+.bundle{position:relative;background:#fff;border:1.5px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;display:flex;flex-direction:column;}
+.bn-list{list-style:none;margin:6px 0 4px;padding:10px 12px;background:var(--bg);border-radius:10px;
+  display:flex;flex-direction:column;gap:5px;}
+.bn-list li{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;}
+.bn-list b{color:var(--orange);font-variant-numeric:tabular-nums;}
 
 .contact-in{text-align:center;}
 .contact-in h2{font-size:clamp(21px,3vw,29px);font-weight:900;}
@@ -564,18 +758,107 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
       return;
     }
     var c=e.target.closest('.cat');
-    if(c){
-      document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x===c); });
-      var want=c.dataset.cat;
-      document.querySelectorAll('.cell').forEach(function(cell){
-        cell.hidden = !!want && cell.dataset.cat!==want;
-      });
+    if(c){ document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x===c); });
+           sel=c.dataset.sec||''; sub=''; drawSubs(); apply(); return; }
+    var sc=e.target.closest('.subcat');
+    if(sc){ sub = (sub===sc.dataset.sec) ? '' : sc.dataset.sec;
+            document.querySelectorAll('.subcat').forEach(function(x){ x.classList.toggle('on', x.dataset.sec===sub); });
+            apply(); return; }
+    var po=e.target.closest('.card-open');
+    if(po){ openProduct(po.closest('.card')); return; }
+  });
+
+  /* ===== الأقسام والبحث =====
+     القسم الرئيسي بيوري اللي جواه كله (الأقسام اللي تحته ومنتجاتها)،
+     والبحث بيدوّر في كل حاجة من غير ما يهتم بالأقسام. */
+  var sel='', sub='', q='';
+  var SUBS={};
+  try{ SUBS=JSON.parse(($('subCats')||{}).dataset ? ($('subCats').dataset.tree||'{}') : '{}'); }catch(e){ SUBS={}; }
+
+  function drawSubs(){
+    var box=$('subCats'); if(!box) return;
+    var kids=SUBS[sel]||[];
+    if(!sel || !kids.length){ box.hidden=true; box.innerHTML=''; return; }
+    box.hidden=false;
+    box.innerHTML=kids.map(function(k){
+      return '<button type="button" class="subcat" data-sec="'+k.id+'">'+k.name+' ('+k.n+')</button>';
+    }).join('');
+  }
+
+  function norm(t){
+    return String(t||'').toLowerCase()
+      .replace(/[\\u064B-\\u0652\\u0640]/g,'')
+      .replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه')
+      .replace(/[ؤئ]/g,'ء')
+      .replace(/[^0-9a-z\\u0621-\\u064A]+/g,' ').trim();
+  }
+
+  function apply(){
+    var words = q ? norm(q).split(' ').filter(Boolean) : [];
+    var want = sub || sel;
+    var shown=0;
+    document.querySelectorAll('.cell').forEach(function(cell){
+      var ok=true;
+      if(words.length){
+        var hay=norm(cell.dataset.find||'');
+        ok = words.every(function(w){ return hay.indexOf(w)>=0; });
+      } else if(want){
+        ok = (cell.dataset.path||'').indexOf('|'+want+'|')>=0;
+      }
+      cell.hidden=!ok;
+      if(ok) shown++;
+    });
+    var nh=$('noHit'); if(nh) nh.hidden = shown>0;
+    var info=$('qInfo');
+    if(info){
+      if(words.length){ info.hidden=false; info.textContent='نتايج البحث عن «'+q.trim()+'»: '+shown+' صنف'; }
+      else info.hidden=true;
     }
+    // وانت بتدوّر، الأقسام مالهاش لازمة
+    var tc=$('topCats'), sc2=$('subCats');
+    if(tc) tc.style.opacity = words.length ? '.45' : '';
+    if(sc2 && words.length) { sc2.hidden = true; }
+    else if(sc2) drawSubs();
+  }
+
+  var qi=$('q');
+  if(qi){
+    var t=null;
+    qi.addEventListener('input', function(){
+      q=qi.value;
+      $('qClear').hidden = !q;
+      /* البحث بيدوّر في كل المحل مش في القسم المفتوح — فأول ما يبدأ
+         يكتب بنسيب القسم، عشان لما يمسح البحث يرجع يشوف كل حاجة
+         مش يلاقي نفسه واقف في قسم هو ناسيه. */
+      if(q.trim()){
+        sel=''; sub='';
+        document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', !x.dataset.sec); });
+      }
+      clearTimeout(t); t=setTimeout(apply,120);
+    });
+    $('qClear').addEventListener('click', function(){ qi.value=''; q=''; $('qClear').hidden=true; apply(); qi.focus(); });
+  }
+
+  // ===== نافذة تفاصيل المنتج =====
+  var pmName='', pmPrice=0;
+  function openProduct(card){
+    if(!card) return;
+    var det=card.querySelector('.pdet');
+    $('pmBody').innerHTML = det ? det.innerHTML : '';
+    pmName=card.dataset.name; pmPrice=Number(card.dataset.price)||0;
+    var btn=$('pmAdd');
+    btn.textContent = cart[pmName] ? ('في الطلب ('+cart[pmName].qty+') — زوّد واحد') : 'أضف للطلب';
+    open('pmodal');
+  }
+  $('pmAdd').addEventListener('click', function(){
+    if(!pmName) return;
+    add(pmName,pmPrice);
+    closeAll(); open('drawer');
   });
 
   function open(id){ $(id).hidden=false; document.body.style.overflow='hidden'; }
   function closeAll(){
-    ['drawer','orderBox','done'].forEach(function(i){ $(i).hidden=true; });
+    ['drawer','orderBox','done','pmodal'].forEach(function(i){ var el=$(i); if(el) el.hidden=true; });
     document.body.style.overflow='';
   }
   $('cartBtn').addEventListener('click',function(){ open('drawer'); });
@@ -639,5 +922,6 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 })();
 `;
 
-  return { build, defaults, normalize, _css: CSS, _js: JS };
+  return { build, defaults, normalize, flatSections, secChain, children, findSec, countIn,
+           _css: CSS, _js: JS };
 })();

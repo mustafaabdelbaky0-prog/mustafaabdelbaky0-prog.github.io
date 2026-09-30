@@ -164,12 +164,14 @@ Modules.site = (() => {
       </div>
 
       <div class="site-tabs">
-        ${[['brand', '🏪 بيانات المحل'], ['hero', '🖼️ الواجهة'], ['products', '📦 المنتجات'],
-           ['offers', '🏷️ العروض'], ['about', '📝 من إحنا والمزايا'], ['order', '📬 الطلبات'],
-           ['images', '🗂️ الصور']]
+        ${[['brand', '🏪 بيانات المحل'], ['hero', '🖼️ الواجهة'], ['sections', '🗂️ الأقسام'],
+           ['products', '📦 المنتجات'], ['offers', '🏷️ العروض'], ['bundles', '🎁 الباكدچات'],
+           ['about', '📝 من إحنا والمزايا'], ['order', '📬 الطلبات'], ['images', '🖼️ الصور']]
           .map(([k, t]) => `<button type="button" class="site-tab ${tab === k ? 'on' : ''}" data-tab="${k}">${t}
+            ${k === 'sections' && site.sections.length ? `<span class="n">${site.sections.length}</span>` : ''}
             ${k === 'products' && site.products.length ? `<span class="n">${site.products.length}</span>` : ''}
-            ${k === 'offers' && site.offers.length ? `<span class="n">${site.offers.length}</span>` : ''}</button>`).join('')}
+            ${k === 'offers' && site.offers.length ? `<span class="n">${site.offers.length}</span>` : ''}
+            ${k === 'bundles' && site.bundles.length ? `<span class="n">${site.bundles.length}</span>` : ''}</button>`).join('')}
       </div>
 
       <div id="siteBody"></div>
@@ -241,8 +243,8 @@ Modules.site = (() => {
 
   function drawTab(container, body) {
     const T = {
-      brand: drawBrand, hero: drawHero, products: drawProducts,
-      offers: drawOffers, about: drawAbout, order: drawOrder, images: drawImages
+      brand: drawBrand, hero: drawHero, sections: drawSections, products: drawProducts,
+      offers: drawOffers, bundles: drawBundles, about: drawAbout, order: drawOrder, images: drawImages
     };
     (T[tab] || drawBrand)(container, body);
   }
@@ -300,6 +302,138 @@ Modules.site = (() => {
     if (c) c.addEventListener('click', async () => { await setV(''); });
   }
 
+  // ---------- الأقسام ----------
+  /* شجرة: قسم رئيسي (كهرباء) وجواه أقسام (اي لوك، اليوس) وجوّاهم
+     أقسام تاني لو حب. المنتج بيتربط بأصغر قسم، ولما الزبون يدوس على
+     القسم الكبير بيشوف كل اللي تحته. */
+  function nextSecId() {
+    const used = (site.sections || []).map(x => Number(x.id) || 0);
+    const n = Math.max(Number(site.seq || 1), used.length ? Math.max(...used) + 1 : 1);
+    site.seq = n + 1;
+    return n;
+  }
+  const flat = () => SiteGen.flatSections(site);
+  const kidsOf = id => site.sections.filter(x => Number(x.parent || 0) === Number(id || 0)
+                                             || (id == null && (x.parent == null || x.parent === '')));
+  function inSection(id) {   // المنتجات اللي في القسم ده أو أي قسم تحته
+    const ids = [Number(id)];
+    const walk = p => site.sections.filter(x => Number(x.parent) === Number(p))
+      .forEach(c => { ids.push(Number(c.id)); walk(c.id); });
+    walk(id);
+    return site.products.filter(p => ids.indexOf(Number(p.sectionId)) >= 0);
+  }
+
+  function drawSections(container, body) {
+    const rows = flat();
+    const loose = site.products.filter(p => !site.sections.some(x => Number(x.id) === Number(p.sectionId)));
+    body.innerHTML = `
+      <div class="card">
+        <div class="section-head">
+          <div><h3 class="mini-head">أقسام الموقع</h3>
+            <div class="hint">اعمل قسم رئيسي (كهرباء، حدايد) وجواه أقسام زي ما تحب (اي لوك، اليوس).
+              المنتج بيتحط في أصغر قسم، ولما الزبون يدوس على «كهرباء» هيشوف كل اللي تحتها.</div></div>
+          <button type="button" class="btn btn-amber" id="addTop">+ قسم رئيسي</button>
+        </div>
+
+        ${rows.length ? `<div class="tree" id="tree">
+          ${rows.map(({ sec, depth }) => {
+            const n = inSection(sec.id).length;
+            const own = site.products.filter(p => Number(p.sectionId) === Number(sec.id)).length;
+            const sibs = flat().filter(r => Number(r.sec.parent || 0) === Number(sec.parent || 0));
+            const pos = sibs.findIndex(r => Number(r.sec.id) === Number(sec.id));
+            return `
+            <div class="tr-row" data-id="${sec.id}" style="margin-inline-start:${depth * 26}px;">
+              <span class="tr-dash">${depth ? '↳' : '▪'}</span>
+              <input class="cell tr-name" value="${esc(sec.name)}">
+              <span class="tr-n" title="${own} في القسم ده نفسه">${n} صنف</span>
+              <button type="button" class="icon-btn tr-add" title="قسم جوّه ده">＋</button>
+              <button type="button" class="icon-btn tr-up" ${pos <= 0 ? 'disabled' : ''}>▲</button>
+              <button type="button" class="icon-btn tr-dn" ${pos < 0 || pos >= sibs.length - 1 ? 'disabled' : ''}>▼</button>
+              <button type="button" class="icon-btn tr-del" title="امسح القسم">🗑️</button>
+            </div>`;
+          }).join('')}
+        </div>` : `<p class="empty-note">لسه مفيش أقسام. ابدأ بـ «كهرباء» و«حدايد».</p>`}
+
+        ${loose.length ? `
+        <div class="notice notice-warn" style="margin-top:14px;">
+          فيه <strong>${loose.length}</strong> صنف لسه مش في أي قسم — هيظهروا على الموقع تحت «باقي الأصناف».
+          روح لقسم <strong>المنتجات</strong> وحطهم في أقسامهم.
+        </div>` : ''}
+      </div>`;
+
+    body.querySelector('#addTop').addEventListener('click', () => addSection(null, container, body));
+    const tree = body.querySelector('#tree');
+    if (!tree) return;
+    tree.addEventListener('click', async (e) => {
+      const row = e.target.closest('.tr-row'); if (!row) return;
+      const id = Number(row.dataset.id);
+      const sec = site.sections.find(x => Number(x.id) === id);
+      if (e.target.classList.contains('tr-add')) { addSection(id, container, body); return; }
+      if (e.target.classList.contains('tr-del')) {
+        const inside = inSection(id);
+        const subs = site.sections.filter(x => Number(x.parent) === id);
+        let msg = 'تمسح قسم «' + sec.name + '»؟';
+        if (subs.length) msg += '\nوجواه ' + subs.length + ' قسم هيتمسحوا كمان.';
+        if (inside.length) msg += '\nو' + inside.length + ' صنف هيرجعوا من غير قسم (مش هيتمسحوا).';
+        if (!(await Utils.confirmDialog(msg))) return;
+        const kill = [id].concat(SiteGen.flatSections(site)
+          .filter(r => secAncestors(r.sec.id).indexOf(id) >= 0).map(r => Number(r.sec.id)));
+        site.sections = site.sections.filter(x => kill.indexOf(Number(x.id)) < 0);
+        site.products.forEach(p => { if (kill.indexOf(Number(p.sectionId)) >= 0) p.sectionId = null; });
+        await save(); drawSections(container, body);
+        return;
+      }
+      if (e.target.classList.contains('tr-up') || e.target.classList.contains('tr-dn')) {
+        const dir = e.target.classList.contains('tr-up') ? -1 : 1;
+        const sibs = site.sections.filter(x => Number(x.parent || 0) === Number(sec.parent || 0))
+          .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+        const i = sibs.findIndex(x => Number(x.id) === id);
+        const j = i + dir;
+        if (j < 0 || j >= sibs.length) return;
+        const tmp = Number(sibs[i].order || 0);
+        sibs[i].order = Number(sibs[j].order || 0);
+        sibs[j].order = tmp;
+        if (sibs[i].order === sibs[j].order) { sibs.forEach((x, k) => x.order = k); const t2 = sibs[i].order; sibs[i].order = sibs[j].order; sibs[j].order = t2; }
+        await save(); drawSections(container, body);
+        return;
+      }
+    });
+    tree.addEventListener('change', async (e) => {
+      if (!e.target.classList.contains('tr-name')) return;
+      const id = Number(e.target.closest('.tr-row').dataset.id);
+      const sec = site.sections.find(x => Number(x.id) === id);
+      const v = e.target.value.trim();
+      if (!v) { e.target.value = sec.name; return; }
+      sec.name = v; await save();
+    });
+  }
+  function secAncestors(id) {
+    const out = [];
+    let cur = site.sections.find(x => Number(x.id) === Number(id)), g = 0;
+    while (cur && g++ < 20) { cur = site.sections.find(x => Number(x.id) === Number(cur.parent)); if (cur) out.push(Number(cur.id)); }
+    return out;
+  }
+  async function addSection(parent, container, body) {
+    const name = await Utils.promptDialog(parent ? 'اسم القسم الجديد جوّه' : 'اسم القسم الرئيسي',
+      { placeholder: parent ? 'مثلاً: اي لوك' : 'مثلاً: كهرباء' });
+    if (name == null) return;
+    const v = String(name).trim();
+    if (!v) return;
+    const sibs = site.sections.filter(x => Number(x.parent || 0) === Number(parent || 0));
+    site.sections.push({ id: nextSecId(), name: v, parent: parent == null ? null : Number(parent),
+                         order: sibs.length });
+    await save();
+    drawSections(container, body);
+  }
+
+  // قايمة الأقسام لاختيار قسم المنتج
+  function sectionOptions(current) {
+    return `<option value="">— من غير قسم —</option>` +
+      flat().map(({ sec, depth }) =>
+        `<option value="${sec.id}" ${Number(current) === Number(sec.id) ? 'selected' : ''}>${
+          esc('  '.repeat(depth) + (depth ? '↳ ' : '') + sec.name)}</option>`).join('');
+  }
+
   // ---------- المنتجات ----------
   function drawProducts(container, body) {
     // الأسعار بتتحدث من البرنامج مع كل رسم — فاللي على الموقع دايمًا سعرك الحالي
@@ -320,29 +454,34 @@ Modules.site = (() => {
         ${site.products.length ? `
         <div class="table-wrap">
           <table>
-            <thead><tr><th>الصورة</th><th>الاسم على الموقع</th><th>وصف صغير</th><th>التصنيف</th><th>السعر</th><th>الترتيب</th><th></th></tr></thead>
+            <thead><tr><th>الصورة</th><th>الاسم على الموقع</th><th>القسم</th><th>الشرح والمواصفات</th><th>السعر</th><th>الترتيب</th><th></th></tr></thead>
             <tbody id="prodBody">
-              ${site.products.map((p, i) => `
+              ${site.products.map((p, i) => {
+                const nSpecs = (p.specs || []).filter(x => (x.k || '').trim()).length;
+                return `
               <tr data-i="${i}">
                 <td class="pcell">${p.image
                   ? `<img class="pth" src="site-img/${esc(p.image)}" alt="">`
                   : '<span class="pth empty">📦</span>'}
                   <button type="button" class="link-btn p-img">${p.image ? 'غيّر' : 'ارفع صورة'}</button></td>
                 <td><input class="cell p-name" value="${esc(p.name)}"></td>
-                <td><input class="cell p-desc" value="${esc(p.desc || '')}" placeholder="اختياري"></td>
-                <td><input class="cell p-cat" value="${esc(p.category || '')}" list="siteCats"></td>
+                <td><select class="cell p-sec">${sectionOptions(p.sectionId)}</select></td>
+                <td>
+                  <button type="button" class="link-btn p-edit">${
+                    p.about || nSpecs
+                      ? '✏️ ' + (nSpecs ? nSpecs + ' مواصفة' : '') + (p.about ? (nSpecs ? ' + شرح' : 'فيه شرح') : '')
+                      : '➕ اكتب الشرح والمواصفات'}</button>
+                </td>
                 <td class="strong">${money(p.price)}</td>
                 <td style="white-space:nowrap;">
                   <button type="button" class="icon-btn p-up" ${i === 0 ? 'disabled' : ''}>▲</button>
                   <button type="button" class="icon-btn p-dn" ${i === site.products.length - 1 ? 'disabled' : ''}>▼</button>
                 </td>
                 <td><button type="button" class="icon-btn p-del" title="شيله من الموقع">🗑️</button></td>
-              </tr>`).join('')}
+              </tr>`; }).join('')}
             </tbody>
           </table>
-        </div>
-        <datalist id="siteCats">${[...new Set(AppState.items.map(i => i.category).filter(Boolean))]
-          .map(c => `<option value="${esc(c)}">`).join('')}</datalist>`
+        </div>`
         : `<p class="empty-note">لسه مفيش منتجات على الموقع. دوس «ضيف منتج من المخزن» واختار اللي عايز الناس تشوفه.</p>`}
       </div>`;
 
@@ -365,15 +504,278 @@ Modules.site = (() => {
         if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
         const n = await pickImage();
         if (n) { site.products[i].image = n; await save(); drawProducts(container, body); }
+      } else if (e.target.classList.contains('p-edit')) {
+        openProductEditor(i, container, body);
       }
     });
     tb.addEventListener('change', async (e) => {
       const tr = e.target.closest('tr'); if (!tr) return;
       const p = site.products[Number(tr.dataset.i)];
       if (e.target.classList.contains('p-name')) p.name = e.target.value.trim();
-      if (e.target.classList.contains('p-desc')) p.desc = e.target.value.trim();
-      if (e.target.classList.contains('p-cat')) p.category = e.target.value.trim();
+      if (e.target.classList.contains('p-sec')) p.sectionId = e.target.value ? Number(e.target.value) : null;
       await save();
+    });
+  }
+
+  /* محرر المنتج: الشرح الكامل والمواصفات (بيتحمل كام، الضمان، المقاس…)
+     وصور زيادة. ده اللي الزبون بيشوفه لما يدوس على المنتج. */
+  function openProductEditor(i, container, body) {
+    const p = site.products[i];
+    const specs = (p.specs || []).slice();
+    if (!specs.length) specs.push({ k: '', v: '' });
+    const extra = (p.images || []).slice();
+    const specRow = (x, n) => `
+      <div class="sp-row" data-n="${n}">
+        <input class="cell sp-k" value="${esc(x.k || '')}" placeholder="الخانة (مثلاً: بيتحمل)">
+        <input class="cell sp-v" value="${esc(x.v || '')}" placeholder="القيمة (مثلاً: ٢٥٠٠ وات)">
+        <button type="button" class="icon-btn sp-del">🗑️</button>
+      </div>`;
+
+    Utils.openModal({
+      title: 'تفاصيل: ' + p.name,
+      wide: true,
+      bodyHtml: `
+        <form id="pdForm" novalidate>
+          <div class="field"><label>الاسم على الموقع</label>
+            <input id="pdName" value="${esc(p.name)}"></div>
+          <div class="field-row">
+            <div class="field"><label>القسم</label>
+              <select id="pdSec">${sectionOptions(p.sectionId)}</select></div>
+            <div class="field"><label>سطر صغير تحت الاسم</label>
+              <input id="pdDesc" value="${esc(p.desc || '')}" placeholder="مثلاً: ضمان سنة"></div>
+          </div>
+          <div class="field"><label>الشرح الكامل (اللي الزبون يقراه لما يدوس على المنتج)</label>
+            <textarea id="pdAbout" rows="5" placeholder="اكتب براحتك: بيستعمل في إيه، بيتحمل لحد كام، الفرق بينه وبين غيره، أي نصيحة للزبون...">${esc(p.about || '')}</textarea></div>
+
+          <label class="lbl">المواصفات</label>
+          <div class="hint" style="margin:-2px 0 8px;">زي: بيتحمل / الضمان / الماركة / المقاس / اللون</div>
+          <div id="spList">${specs.map(specRow).join('')}</div>
+          <button type="button" class="btn btn-ghost btn-sm" id="spAdd" style="margin:6px 0 16px;">+ مواصفة</button>
+
+          <label class="lbl">صور زيادة (غير الصورة الأساسية)</label>
+          <div id="pdImgs" class="img-grid sm"></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="pdAddImg" style="margin-top:8px;">📷 ضيف صورة</button>
+
+          <div class="form-actions" style="margin-top:18px;">
+            <button type="button" class="btn btn-ghost" id="pdCancel">إلغاء</button>
+            <button type="submit" class="btn btn-amber">حفظ</button>
+          </div>
+        </form>`,
+      onMount: (mb, close) => {
+        let n = specs.length;
+        const list = mb.querySelector('#spList');
+        mb.querySelector('#spAdd').addEventListener('click', () => {
+          list.insertAdjacentHTML('beforeend', specRow({ k: '', v: '' }, n++));
+        });
+        list.addEventListener('click', (e) => {
+          if (!e.target.classList.contains('sp-del')) return;
+          const rows = list.querySelectorAll('.sp-row');
+          if (rows.length > 1) e.target.closest('.sp-row').remove();
+          else { e.target.closest('.sp-row').querySelectorAll('input').forEach(x => x.value = ''); }
+        });
+
+        const drawExtra = () => {
+          const box = mb.querySelector('#pdImgs');
+          box.innerHTML = extra.length ? extra.map((im, k) => `
+            <div class="img-cell" data-k="${k}">
+              <img src="site-img/${esc(im)}" alt="">
+              <button type="button" class="icon-btn ic-del">🗑️</button>
+            </div>`).join('') : '<p class="empty-note" style="padding:6px 0;">مفيش صور زيادة</p>';
+        };
+        drawExtra();
+        mb.querySelector('#pdImgs').addEventListener('click', (e) => {
+          if (!e.target.classList.contains('ic-del')) return;
+          extra.splice(Number(e.target.closest('.img-cell').dataset.k), 1);
+          drawExtra();
+        });
+        mb.querySelector('#pdAddImg').addEventListener('click', async () => {
+          if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
+          const nm = await pickImage();
+          if (nm) { extra.push(nm); drawExtra(); }
+        });
+
+        mb.querySelector('#pdCancel').addEventListener('click', close);
+        Utils.guardSubmit(mb.querySelector('#pdForm'), async (e) => {
+          e.preventDefault();
+          const nm = mb.querySelector('#pdName').value.trim();
+          if (!nm) { Utils.toast('الاسم مش ممكن يبقى فاضي', 'error'); return; }
+          p.name = nm;
+          p.desc = mb.querySelector('#pdDesc').value.trim();
+          p.about = mb.querySelector('#pdAbout').value.trim();
+          const sv = mb.querySelector('#pdSec').value;
+          p.sectionId = sv ? Number(sv) : null;
+          p.specs = [...list.querySelectorAll('.sp-row')]
+            .map(r => ({ k: r.querySelector('.sp-k').value.trim(), v: r.querySelector('.sp-v').value.trim() }))
+            .filter(x => x.k || x.v);
+          p.images = extra.slice();
+          await save();
+          close();
+          drawProducts(container, body);
+          Utils.toast('اتحفظ — دوس «انشر التعديلات» عشان يظهر على الموقع', 'success');
+        });
+      }
+    });
+  }
+
+  // ---------- الباكدچات ----------
+  function drawBundles(container, body) {
+    body.innerHTML = `
+      <div class="card">
+        <div class="section-head">
+          <div><h3 class="mini-head">الباكدچات</h3>
+            <div class="hint">كذا منتج مع بعض بسعر أقل من مجموعهم. البرنامج بيحسب التوفير ويوريه للزبون.</div></div>
+          <button type="button" class="btn btn-amber" id="addBn">+ باكدچ جديد</button>
+        </div>
+        ${site.bundles.length ? `<div class="off-list">${site.bundles.map((bn, i) => {
+          const lines = (bn.lines || []).filter(l => (l.name || '').trim());
+          const full = lines.reduce((t, l) => t + Number(l.qty || 1) * Number(l.price || 0), 0);
+          const save2 = full - Number(bn.price || 0);
+          return `
+          <div class="off-row" data-i="${i}">
+            <div class="off-th">${bn.image ? `<img src="site-img/${esc(bn.image)}" alt="">` : '🎁'}</div>
+            <div class="off-txt">
+              <strong>${esc(bn.title)}</strong>
+              <span>${lines.length} حاجة: ${esc(lines.map(l => l.name + ' ×' + (l.qty || 1)).join('، '))}</span>
+              <span class="off-p">${money(bn.price)} ج.م
+                ${save2 > 0 ? `<s>${money(full)}</s> <em style="color:var(--success);font-style:normal;">توفير ${money(save2)}</em>` : ''}</span>
+            </div>
+            <div class="off-btns">
+              <button type="button" class="icon-btn b-edit">✏️</button>
+              <button type="button" class="icon-btn b-del">🗑️</button>
+            </div>
+          </div>`; }).join('')}</div>`
+        : `<p class="empty-note">مفيش باكدچات. مثال: «طقم تأسيس شقة» فيه سلك ومفاتيح وبرايز بسعر مجمّع.</p>`}
+      </div>`;
+
+    body.querySelector('#addBn').addEventListener('click', () => openBundle(container, body, null));
+    const lst = body.querySelector('.off-list');
+    if (lst) lst.addEventListener('click', async (e) => {
+      const row = e.target.closest('.off-row'); if (!row) return;
+      const i = Number(row.dataset.i);
+      if (e.target.classList.contains('b-edit')) openBundle(container, body, i);
+      if (e.target.classList.contains('b-del')) {
+        if (!(await Utils.confirmDialog('تمسح الباكدچ ده؟'))) return;
+        site.bundles.splice(i, 1); await save(); drawBundles(container, body);
+      }
+    });
+  }
+
+  function openBundle(container, body, idx) {
+    const bn = idx == null
+      ? { title: '', desc: '', price: '', image: '', lines: [] }
+      : JSON.parse(JSON.stringify(site.bundles[idx]));
+    const lines = bn.lines || [];
+
+    Utils.openModal({
+      title: idx == null ? 'باكدچ جديد' : 'تعديل الباكدچ',
+      wide: true,
+      bodyHtml: `
+        <form id="bnForm" novalidate>
+          <div class="field"><label>اسم الباكدچ</label>
+            <input id="bnTitle" value="${esc(bn.title)}" placeholder="مثلاً: طقم تأسيس شقة" autofocus></div>
+          <div class="field"><label>وصف (اختياري)</label>
+            <textarea id="bnDesc" rows="2">${esc(bn.desc || '')}</textarea></div>
+
+          <label class="lbl">اللي جوّه الباكدچ</label>
+          <div id="bnList"></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="bnAddItem" style="margin:8px 0 14px;">+ ضيف منتج للباكدچ</button>
+
+          <div class="field-row">
+            <div class="field"><label>سعر الباكدچ كامل</label>
+              <input type="number" id="bnPrice" min="0" step="0.01" inputmode="decimal" value="${bn.price ?? ''}"></div>
+            <div class="field"><label>لو اتشرى فرادى</label>
+              <input id="bnFull" disabled></div>
+            <div class="field"><label>الزبون بيوفّر</label>
+              <input id="bnSave" disabled></div>
+          </div>
+
+          <label class="lbl">صورة الباكدچ</label>
+          <div id="bnImg">${imgBox(bn.image, 'ارفع صورة')}</div>
+
+          <div class="form-actions" style="margin-top:16px;">
+            <button type="button" class="btn btn-ghost" id="bnCancel">إلغاء</button>
+            <button type="submit" class="btn btn-amber">حفظ</button>
+          </div>
+        </form>`,
+      onMount: (mb, close) => {
+        const listBox = mb.querySelector('#bnList');
+        const draw = () => {
+          listBox.innerHTML = lines.length ? lines.map((l, k) => `
+            <div class="bn-edit" data-k="${k}">
+              <span class="bn-nm">${esc(l.name)}</span>
+              <span class="bn-pr">${money(l.price)} ج.م</span>
+              <input type="number" class="cell bn-q" min="1" step="1" value="${Number(l.qty || 1)}">
+              <button type="button" class="icon-btn bn-x">🗑️</button>
+            </div>`).join('') : '<p class="empty-note" style="padding:4px 0;">لسه فاضي — ضيف المنتجات</p>';
+          const full = lines.reduce((t, l) => t + Number(l.qty || 1) * Number(l.price || 0), 0);
+          mb.querySelector('#bnFull').value = money(full) + ' ج.م';
+          const pr = Number(mb.querySelector('#bnPrice').value || 0);
+          const sv = full - pr;
+          mb.querySelector('#bnSave').value = (pr > 0 && sv > 0) ? money(sv) + ' ج.م' : '—';
+        };
+        draw();
+        listBox.addEventListener('click', (e) => {
+          if (!e.target.classList.contains('bn-x')) return;
+          lines.splice(Number(e.target.closest('.bn-edit').dataset.k), 1); draw();
+        });
+        listBox.addEventListener('input', (e) => {
+          if (!e.target.classList.contains('bn-q')) return;
+          lines[Number(e.target.closest('.bn-edit').dataset.k)].qty = Math.max(1, Number(e.target.value || 1));
+          draw();
+        });
+        mb.querySelector('#bnPrice').addEventListener('input', draw);
+
+        mb.querySelector('#bnAddItem').addEventListener('click', () => {
+          // بيختار من منتجات الموقع — اللي مش عليه يضيفه من تبويب المنتجات الأول
+          Utils.openModal({
+            title: 'اختار منتج تحطه في الباكدچ',
+            bodyHtml: `<div class="pk-list">${site.products.length ? site.products.map((p, k) => `
+              <button type="button" class="pk-row" data-k="${k}">
+                <span class="pk-n">${esc(p.name)}</span>
+                <span class="pk-p">${money(p.price)}</span>
+                <span class="pk-a">+ ضيف</span>
+              </button>`).join('') : '<p class="empty-note">حط منتجات على الموقع الأول من تبويب «المنتجات»</p>'}</div>`,
+            onMount: (m2, close2) => {
+              m2.addEventListener('click', (e) => {
+                const b2 = e.target.closest('.pk-row'); if (!b2) return;
+                const p = site.products[Number(b2.dataset.k)];
+                const have = lines.find(l => l.name === p.name);
+                if (have) have.qty = Number(have.qty || 1) + 1;
+                else lines.push({ name: p.name, qty: 1, price: Number(p.price || 0), itemId: p.itemId || null });
+                draw();
+                close2();
+              });
+            }
+          });
+        });
+
+        const setImg = async (v) => {
+          bn.image = v;
+          const box = mb.querySelector('#bnImg');
+          box.innerHTML = imgBox(bn.image, 'ارفع صورة');
+          bindImg(box, () => bn.image, setImg);
+        };
+        bindImg(mb.querySelector('#bnImg'), () => bn.image, setImg);
+
+        mb.querySelector('#bnCancel').addEventListener('click', close);
+        Utils.guardSubmit(mb.querySelector('#bnForm'), async (e) => {
+          e.preventDefault();
+          const rec = {
+            title: mb.querySelector('#bnTitle').value.trim(),
+            desc: mb.querySelector('#bnDesc').value.trim(),
+            price: Number(mb.querySelector('#bnPrice').value || 0),
+            image: bn.image || '',
+            lines: lines.slice()
+          };
+          if (!rec.title) { Utils.toast('اكتب اسم الباكدچ', 'error'); return; }
+          if (!rec.lines.length) { Utils.toast('ضيف منتج واحد على الأقل جوّه الباكدچ', 'error'); return; }
+          if (!(rec.price > 0)) { Utils.toast('اكتب سعر الباكدچ', 'error'); return; }
+          if (idx == null) site.bundles.push(rec); else site.bundles[idx] = rec;
+          await save();
+          close();
+          drawBundles(container, body);
+        });
+      }
     });
   }
 
