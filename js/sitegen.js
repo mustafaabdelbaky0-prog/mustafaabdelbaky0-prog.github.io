@@ -327,12 +327,20 @@ ${s.bundles.length ? `
         <i>${countIn(s, t.id)}</i></button>`).join('')}
       ${loose ? `<button type="button" class="cat" data-sec="0">باقي الأصناف <i>${loose}</i></button>` : ''}
     </div>
-    <div class="subcats" id="subCats" hidden data-tree="${esc(JSON.stringify(
-      tops.reduce((m, t) => {
-        const kids = children(s, t.id).sort((a, b2) => Number(a.order || 0) - Number(b2.order || 0));
-        if (kids.length) m[t.id] = kids.map(k => ({ id: k.id, name: k.name, n: countIn(s, k.id) }));
+    <div class="secs" id="secGrid" data-tree="${esc(JSON.stringify(
+      (() => {
+        const m = {};
+        const put = (parent) => {
+          const kids = children(s, parent).sort((a, b2) => Number(a.order || 0) - Number(b2.order || 0));
+          if (kids.length) {
+            m[parent == null ? '' : String(parent)] =
+              kids.map(k => ({ id: k.id, name: k.name, n: countIn(s, k.id), img: k.image || '' }));
+          }
+          kids.forEach(k => put(k.id));
+        };
+        put(null);
         return m;
-      }, {})))}"></div>` : ''}
+      })()))}"></div>` : ''}
 
     <div class="find-info" id="qInfo" hidden></div>
 
@@ -606,11 +614,19 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .cat i{font-style:normal;background:var(--orange-soft);color:var(--orange-d);border-radius:999px;
   padding:1px 7px;font-size:11.5px;font-weight:900;margin-inline-start:5px;}
 .cat.on i{background:rgba(255,255,255,.28);color:#fff;}
-.subcats{display:flex;gap:8px;flex-wrap:wrap;margin:-10px 0 20px;padding-inline-start:4px;}
-.subcat{background:#fff;border:1.5px dashed var(--line);border-radius:999px;padding:6px 15px;
-  font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;color:var(--soft);}
-.subcat:hover{border-color:var(--orange);color:var(--orange);}
-.subcat.on{background:var(--navy);color:#fff;border-style:solid;border-color:var(--navy);}
+/* كروت الأقسام — صورة واسم وعدد الأصناف */
+.secs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:0 0 24px;}
+.seccard{background:#fff;border:1.5px solid var(--line);border-radius:12px;overflow:hidden;
+  cursor:pointer;padding:0;font:inherit;text-align:start;display:flex;flex-direction:column;
+  transition:box-shadow .15s, border-color .15s, transform .15s;}
+.seccard:hover{border-color:var(--orange);box-shadow:0 6px 18px rgba(240,78,5,.14);transform:translateY(-2px);}
+.seccard.on{border-color:var(--orange);box-shadow:0 0 0 2px rgba(240,78,5,.28);}
+.sc-img{display:block;aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
+.sc-img img{width:100%;height:100%;object-fit:cover;display:block;}
+.sc-ph{width:100%;height:100%;display:grid;place-items:center;font-size:30px;opacity:.4;}
+.sc-t{display:flex;flex-direction:column;gap:1px;padding:9px 12px 11px;}
+.sc-t b{font-size:14.5px;font-weight:800;}
+.sc-t i{font-style:normal;font-size:12px;color:var(--soft);font-weight:700;}
 .find-info{font-size:13.5px;color:var(--soft);margin-bottom:14px;font-weight:700;}
 
 /* ===== كارت المنتج ===== */
@@ -760,10 +776,15 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
     var c=e.target.closest('.cat');
     if(c){ document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x===c); });
            sel=c.dataset.sec||''; sub=''; drawSubs(); apply(); return; }
-    var sc=e.target.closest('.subcat');
-    if(sc){ sub = (sub===sc.dataset.sec) ? '' : sc.dataset.sec;
-            document.querySelectorAll('.subcat').forEach(function(x){ x.classList.toggle('on', x.dataset.sec===sub); });
-            apply(); return; }
+    var sc=e.target.closest('.seccard');
+    if(sc){
+      var id=sc.dataset.sec;
+      if(!sel){ sel=id; document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x.dataset.sec===id); }); }
+      else { sub = (sub===id) ? '' : id; }
+      drawSubs(); apply();
+      var g=$('grid'); if(g) g.scrollIntoView({behavior:'smooth',block:'start'});
+      return;
+    }
     var po=e.target.closest('.card-open');
     if(po){ openProduct(po.closest('.card')); return; }
   });
@@ -772,16 +793,24 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
      القسم الرئيسي بيوري اللي جواه كله (الأقسام اللي تحته ومنتجاتها)،
      والبحث بيدوّر في كل حاجة من غير ما يهتم بالأقسام. */
   var sel='', sub='', q='';
-  var SUBS={};
-  try{ SUBS=JSON.parse(($('subCats')||{}).dataset ? ($('subCats').dataset.tree||'{}') : '{}'); }catch(e){ SUBS={}; }
+  var TREE={};
+  try{ TREE=JSON.parse(($('secGrid')||{dataset:{}}).dataset.tree||'{}'); }catch(e){ TREE={}; }
 
+  /* كروت الأقسام: بتوري اللي جوه القسم المفتوح. لو واقف على "كل
+     الأقسام" بتوري الأقسام الرئيسية، ولو فتح "كهرباء" بتوري اللي
+     جواها (اي لوك، اليوس...). */
   function drawSubs(){
-    var box=$('subCats'); if(!box) return;
-    var kids=SUBS[sel]||[];
-    if(!sel || !kids.length){ box.hidden=true; box.innerHTML=''; return; }
+    var box=$('secGrid'); if(!box) return;
+    var kids=TREE[sub||sel||'']||[];
+    if(!kids.length){ box.hidden=true; box.innerHTML=''; return; }
     box.hidden=false;
     box.innerHTML=kids.map(function(k){
-      return '<button type="button" class="subcat" data-sec="'+k.id+'">'+k.name+' ('+k.n+')</button>';
+      var on = (sub||sel)===String(k.id);
+      return '<button type="button" class="seccard'+(on?' on':'')+'" data-sec="'+k.id+'">'+
+        '<span class="sc-img">'+(k.img
+          ? '<img src="img/'+k.img+'" alt="'+k.name+'" loading="lazy">'
+          : '<span class="sc-ph">🗂️</span>')+'</span>'+
+        '<span class="sc-t"><b>'+k.name+'</b><i>'+k.n+' صنف</i></span></button>';
     }).join('');
   }
 
@@ -815,7 +844,7 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
       else info.hidden=true;
     }
     // وانت بتدوّر، الأقسام مالهاش لازمة
-    var tc=$('topCats'), sc2=$('subCats');
+    var tc=$('topCats'), sc2=$('secGrid');
     if(tc) tc.style.opacity = words.length ? '.45' : '';
     if(sc2 && words.length) { sc2.hidden = true; }
     else if(sc2) drawSubs();
@@ -919,6 +948,7 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
   })();
 
   paint();
+  drawSubs();     // كروت الأقسام الرئيسية تبان من أول ما الصفحة تفتح
 })();
 `;
 

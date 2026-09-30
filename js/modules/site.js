@@ -73,7 +73,7 @@ Modules.site = (() => {
   }
   /* بيفتح اختيار صورة، يعدّيها على الاستوديو (تنضيف الخلفية والقص
      والإضاءة)، وبعد ما يوافق بيرفعها ويرجّع اسم الملف. */
-  function pickImage() {
+  function pickImage(studioOpts) {
     return new Promise((resolve) => {
       const inp = document.createElement('input');
       inp.type = 'file'; inp.accept = 'image/*';
@@ -89,7 +89,7 @@ Modules.site = (() => {
           } catch (e) { Utils.toast(e.message || 'الصورة ما اترفعتش', 'error'); resolve(null); }
         };
         if (typeof Photo !== 'undefined') {
-          const b64 = await Photo.open(f);
+          const b64 = await Photo.open(f, studioOpts);
           if (b64) await upload(b64); else resolve(null);
         } else {
           try { await upload(await shrink(f, 1000)); }
@@ -104,8 +104,13 @@ Modules.site = (() => {
   function imageUsers(name) {
     const who = [];
     if (site.hero.image === name) who.push('صورة الواجهة');
-    site.products.forEach(p => { if (p.image === name) who.push(p.name); });
+    (site.sections || []).forEach(x => { if (x.image === name) who.push('قسم ' + x.name); });
+    site.products.forEach(p => {
+      if (p.image === name) who.push(p.name);
+      if ((p.images || []).indexOf(name) >= 0) who.push(p.name + ' (صورة زيادة)');
+    });
     site.offers.forEach(o => { if (o.image === name) who.push(o.title); });
+    (site.bundles || []).forEach(b => { if (b.image === name) who.push(b.title); });
     return who;
   }
 
@@ -352,8 +357,11 @@ Modules.site = (() => {
             return `
             <div class="tr-row" data-id="${sec.id}" style="margin-inline-start:${depth * 26}px;">
               <span class="tr-dash">${depth ? '↳' : '▪'}</span>
+              <button type="button" class="tr-img ${sec.image ? 'has' : ''}" title="${sec.image ? 'غيّر صورة القسم' : 'حط صورة للقسم'}">
+                ${sec.image ? `<img src="site-img/${esc(sec.image)}" alt="">` : '🖼️'}</button>
               <input class="cell tr-name" value="${esc(sec.name)}">
               <span class="tr-n" title="${own} في القسم ده نفسه">${n} صنف</span>
+              ${sec.image ? `<button type="button" class="icon-btn tr-noimg" title="شيل الصورة">✕</button>` : ''}
               <button type="button" class="icon-btn tr-add" title="قسم جوّه ده">＋</button>
               <button type="button" class="icon-btn tr-up" ${pos <= 0 ? 'disabled' : ''}>▲</button>
               <button type="button" class="icon-btn tr-dn" ${pos < 0 || pos >= sibs.length - 1 ? 'disabled' : ''}>▼</button>
@@ -377,6 +385,17 @@ Modules.site = (() => {
       const id = Number(row.dataset.id);
       const sec = site.sections.find(x => Number(x.id) === id);
       if (e.target.classList.contains('tr-add')) { addSection(id, container, body); return; }
+      if (e.target.closest('.tr-img')) {
+        if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
+        /* صورة القسم مش صورة منتج — دي صورة رف أو مجموعة، فالمفروض
+           تفضل بخلفيتها. عشان كده التنضيف مقفول من الأول. */
+        const nm = await pickImage({ clean: false, shadow: false, crop: false });
+        if (nm) { sec.image = nm; await save(); drawSections(container, body); }
+        return;
+      }
+      if (e.target.classList.contains('tr-noimg')) {
+        sec.image = ''; await save(); drawSections(container, body); return;
+      }
       if (e.target.classList.contains('tr-del')) {
         const inside = inSection(id);
         const subs = site.sections.filter(x => Number(x.parent) === id);
@@ -1134,8 +1153,13 @@ Modules.site = (() => {
       try {
         await api('api/site/delete', { paths: ['img/' + name] });
         if (site.hero.image === name) site.hero.image = '';
-        site.products.forEach(p => { if (p.image === name) p.image = ''; });
+        (site.sections || []).forEach(x => { if (x.image === name) x.image = ''; });
+        site.products.forEach(p => {
+          if (p.image === name) p.image = '';
+          if (p.images) p.images = p.images.filter(v => v !== name);
+        });
         site.offers.forEach(o => { if (o.image === name) o.image = ''; });
+        (site.bundles || []).forEach(b => { if (b.image === name) b.image = ''; });
         await save();
         await refreshInfo();
         drawImages(container, body);

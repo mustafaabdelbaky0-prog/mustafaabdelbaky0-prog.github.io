@@ -252,7 +252,11 @@ const Photo = (() => {
   // ---------- الشاشة ----------
   /* بيفتح الاستوديو على صورة. بيرجّع الصورة جاهزة (base64) لما يدوس
      "استعمل الصورة"، أو null لو قفل من غير ما ياخدها. */
-  async function open(file) {
+  /* opts بتظبط الزراير من الأول:
+     صورة منتج → تنضيف الخلفية شغال.
+     صورة قسم أو واجهة (رف بضاعة، واجهة المحل) → التنضيف مقفول،
+     لأن الصورة دي المفروض تبان بخلفيتها. */
+  async function open(file, opts) {
     let work;
     try {
       const img = await loadImage(file);
@@ -261,15 +265,21 @@ const Photo = (() => {
       Utils.toast(e.message || 'مقدرناش نفتح الصورة', 'error');
       return null;
     }
-    return new Promise((resolve) => openStudio(work, resolve));
+    return new Promise((resolve) => openStudio(work, resolve, opts || {}));
   }
 
-  function openStudio(work, resolve) {
+  function openStudio(work, resolve, opts) {
     let settled = false;
     const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
 
     const auto = autoTol(work);
-    const st = { clean: true, tol: auto.tol, light: 0.75, crop: true, shadow: true };
+    const st = {
+      clean: opts.clean !== undefined ? !!opts.clean : true,
+      tol: auto.tol,
+      light: opts.light !== undefined ? opts.light : 0.75,
+      crop: opts.crop !== undefined ? !!opts.crop : true,
+      shadow: opts.shadow !== undefined ? !!opts.shadow : true
+    };
     let src = work;
 
     const { close, overlay } = Utils.openModal({
@@ -283,18 +293,18 @@ const Photo = (() => {
             <button type="button" class="btn btn-ghost btn-sm ph-before" id="phBefore">اضغط مطوّل تشوف الأصلية</button>
           </div>
           <div class="ph-side">
-            <label class="ph-sw"><input type="checkbox" id="phClean" checked> نضّف الخلفية وخليها بيضا</label>
+            <label class="ph-sw"><input type="checkbox" id="phClean" ${st.clean?"checked":""}> نضّف الخلفية وخليها بيضا</label>
             <div class="ph-row" id="phTolRow">
               <span>قوة التنضيف</span>
               <input type="range" id="phTol" min="10" max="90" value="${auto.tol}">
             </div>
             <div class="hint" id="phWarn" hidden></div>
 
-            <label class="ph-sw"><input type="checkbox" id="phCrop" checked> قصّ حوالين المنتج</label>
-            <label class="ph-sw"><input type="checkbox" id="phShadow" checked> ظل خفيف تحته</label>
+            <label class="ph-sw"><input type="checkbox" id="phCrop" ${st.crop?"checked":""}> قصّ حوالين المنتج</label>
+            <label class="ph-sw"><input type="checkbox" id="phShadow" ${st.shadow?"checked":""}> ظل خفيف تحته</label>
             <div class="ph-row">
               <span>ظبط الإضاءة</span>
-              <input type="range" id="phLight" min="0" max="100" value="75">
+              <input type="range" id="phLight" min="0" max="100" value="${Math.round(st.light*100)}">
             </div>
             <button type="button" class="btn btn-ghost btn-sm" id="phRot">↻ لفّها ٩٠°</button>
 
