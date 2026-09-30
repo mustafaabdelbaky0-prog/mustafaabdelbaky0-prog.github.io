@@ -94,7 +94,7 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .card-img{aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
 .card-img img{width:100%;height:100%;object-fit:cover;}
 .noimg{width:100%;height:100%;display:grid;place-items:center;font-size:40px;opacity:.35;}
-.card-body{padding:12px 14px 14px;display:flex;flex-direction:column;flex:1;gap:6px;}
+.card-body{padding:12px 14px 8px;display:flex;flex-direction:column;flex:1;gap:5px;align-items:flex-start;}
 .card-body h3{font-size:15.5px;font-weight:800;margin:0;}
 .card-desc{margin:0;font-size:12.5px;color:var(--soft);line-height:1.7;}
 /* السعر في سطر لوحده والزرار تحته على العرض — أسهل في الدوس على الموبايل */
@@ -133,6 +133,58 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .ab span{font-size:19px;}
 .ab strong{display:block;font-size:12.5px;color:var(--orange);font-weight:700;}
 .ab a{text-decoration:none;}
+
+/* ===== البحث والأقسام ===== */
+.sec-grey{background:var(--bg);}
+.find{position:relative;margin-bottom:18px;max-width:520px;}
+.find input{width:100%;padding:14px 46px 14px 16px;border:1.5px solid var(--line);border-radius:12px;
+  font:inherit;font-size:15.5px;background:#fff;color:var(--ink);}
+.find input:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 3px rgba(240,78,5,.18);}
+.find #qClear{position:absolute;inset-inline-start:10px;top:50%;transform:translateY(-50%);
+  background:none;border:none;font-size:24px;line-height:1;color:var(--soft);cursor:pointer;}
+.cat i{font-style:normal;background:var(--orange-soft);color:var(--orange-d);border-radius:999px;
+  padding:1px 7px;font-size:11.5px;font-weight:900;margin-inline-start:5px;}
+.cat.on i{background:rgba(255,255,255,.28);color:#fff;}
+.subcats{display:flex;gap:8px;flex-wrap:wrap;margin:-10px 0 20px;padding-inline-start:4px;}
+.subcat{background:#fff;border:1.5px dashed var(--line);border-radius:999px;padding:6px 15px;
+  font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;color:var(--soft);}
+.subcat:hover{border-color:var(--orange);color:var(--orange);}
+.subcat.on{background:var(--navy);color:#fff;border-style:solid;border-color:var(--navy);}
+.find-info{font-size:13.5px;color:var(--soft);margin-bottom:14px;font-weight:700;}
+
+/* ===== كارت المنتج ===== */
+.card-open{display:flex;flex-direction:column;flex:1;width:100%;text-align:inherit;
+  background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;}
+.card-sec{display:inline-block;background:var(--orange-soft);color:var(--orange-d);
+  border-radius:999px;padding:2px 9px;font-size:11px;font-weight:800;margin-bottom:2px;}
+.more{font-size:12.5px;font-weight:800;color:var(--orange);}
+.card-foot{padding:0 14px 14px;}
+
+/* ===== نافذة تفاصيل المنتج ===== */
+.pm-box{position:absolute;inset-inline-start:0;top:0;bottom:0;width:min(520px,100%);background:#fff;
+  display:flex;flex-direction:column;box-shadow:0 0 40px rgba(0,0,0,.3);}
+.pm-x{position:absolute;top:10px;inset-inline-end:14px;z-index:2;}
+.pm-body{padding:22px 20px 10px;overflow:auto;flex:1;}
+.pm-foot{padding:14px 20px 18px;border-top:1px solid var(--line);}
+.pd-path{font-size:12.5px;color:var(--orange);font-weight:800;margin-bottom:6px;}
+.pm-body h3{font-size:21px;font-weight:900;margin:0 0 8px;}
+.pd-price{font-size:24px;font-weight:900;color:var(--orange);font-variant-numeric:tabular-nums;margin-bottom:14px;}
+.pd-price small{font-size:13px;color:var(--soft);font-weight:700;}
+.pd-imgs{display:flex;gap:8px;overflow-x:auto;margin-bottom:14px;}
+.pd-imgs img{width:200px;height:150px;object-fit:cover;border-radius:11px;flex:none;background:var(--orange-soft);}
+.pd-about{font-size:14.5px;line-height:1.95;color:var(--ink);margin:0 0 14px;white-space:pre-line;}
+.pd-specs{width:100%;border-collapse:collapse;font-size:14px;}
+.pd-specs th,.pd-specs td{text-align:start;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;}
+.pd-specs th{color:var(--soft);font-weight:700;width:42%;background:var(--bg);}
+.pd-specs td{font-weight:700;}
+
+/* ===== الباكدچ ===== */
+.bundle{position:relative;background:#fff;border:1.5px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;display:flex;flex-direction:column;}
+.bn-list{list-style:none;margin:6px 0 4px;padding:10px 12px;background:var(--bg);border-radius:10px;
+  display:flex;flex-direction:column;gap:5px;}
+.bn-list li{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;}
+.bn-list b{color:var(--orange);font-variant-numeric:tabular-nums;}
 
 .contact-in{text-align:center;}
 .contact-in h2{font-size:clamp(21px,3vw,29px);font-weight:900;}

@@ -48,18 +48,107 @@
       return;
     }
     var c=e.target.closest('.cat');
-    if(c){
-      document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x===c); });
-      var want=c.dataset.cat;
-      document.querySelectorAll('.cell').forEach(function(cell){
-        cell.hidden = !!want && cell.dataset.cat!==want;
-      });
+    if(c){ document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x===c); });
+           sel=c.dataset.sec||''; sub=''; drawSubs(); apply(); return; }
+    var sc=e.target.closest('.subcat');
+    if(sc){ sub = (sub===sc.dataset.sec) ? '' : sc.dataset.sec;
+            document.querySelectorAll('.subcat').forEach(function(x){ x.classList.toggle('on', x.dataset.sec===sub); });
+            apply(); return; }
+    var po=e.target.closest('.card-open');
+    if(po){ openProduct(po.closest('.card')); return; }
+  });
+
+  /* ===== الأقسام والبحث =====
+     القسم الرئيسي بيوري اللي جواه كله (الأقسام اللي تحته ومنتجاتها)،
+     والبحث بيدوّر في كل حاجة من غير ما يهتم بالأقسام. */
+  var sel='', sub='', q='';
+  var SUBS={};
+  try{ SUBS=JSON.parse(($('subCats')||{}).dataset ? ($('subCats').dataset.tree||'{}') : '{}'); }catch(e){ SUBS={}; }
+
+  function drawSubs(){
+    var box=$('subCats'); if(!box) return;
+    var kids=SUBS[sel]||[];
+    if(!sel || !kids.length){ box.hidden=true; box.innerHTML=''; return; }
+    box.hidden=false;
+    box.innerHTML=kids.map(function(k){
+      return '<button type="button" class="subcat" data-sec="'+k.id+'">'+k.name+' ('+k.n+')</button>';
+    }).join('');
+  }
+
+  function norm(t){
+    return String(t||'').toLowerCase()
+      .replace(/[\u064B-\u0652\u0640]/g,'')
+      .replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه')
+      .replace(/[ؤئ]/g,'ء')
+      .replace(/[^0-9a-z\u0621-\u064A]+/g,' ').trim();
+  }
+
+  function apply(){
+    var words = q ? norm(q).split(' ').filter(Boolean) : [];
+    var want = sub || sel;
+    var shown=0;
+    document.querySelectorAll('.cell').forEach(function(cell){
+      var ok=true;
+      if(words.length){
+        var hay=norm(cell.dataset.find||'');
+        ok = words.every(function(w){ return hay.indexOf(w)>=0; });
+      } else if(want){
+        ok = (cell.dataset.path||'').indexOf('|'+want+'|')>=0;
+      }
+      cell.hidden=!ok;
+      if(ok) shown++;
+    });
+    var nh=$('noHit'); if(nh) nh.hidden = shown>0;
+    var info=$('qInfo');
+    if(info){
+      if(words.length){ info.hidden=false; info.textContent='نتايج البحث عن «'+q.trim()+'»: '+shown+' صنف'; }
+      else info.hidden=true;
     }
+    // وانت بتدوّر، الأقسام مالهاش لازمة
+    var tc=$('topCats'), sc2=$('subCats');
+    if(tc) tc.style.opacity = words.length ? '.45' : '';
+    if(sc2 && words.length) { sc2.hidden = true; }
+    else if(sc2) drawSubs();
+  }
+
+  var qi=$('q');
+  if(qi){
+    var t=null;
+    qi.addEventListener('input', function(){
+      q=qi.value;
+      $('qClear').hidden = !q;
+      /* البحث بيدوّر في كل المحل مش في القسم المفتوح — فأول ما يبدأ
+         يكتب بنسيب القسم، عشان لما يمسح البحث يرجع يشوف كل حاجة
+         مش يلاقي نفسه واقف في قسم هو ناسيه. */
+      if(q.trim()){
+        sel=''; sub='';
+        document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', !x.dataset.sec); });
+      }
+      clearTimeout(t); t=setTimeout(apply,120);
+    });
+    $('qClear').addEventListener('click', function(){ qi.value=''; q=''; $('qClear').hidden=true; apply(); qi.focus(); });
+  }
+
+  // ===== نافذة تفاصيل المنتج =====
+  var pmName='', pmPrice=0;
+  function openProduct(card){
+    if(!card) return;
+    var det=card.querySelector('.pdet');
+    $('pmBody').innerHTML = det ? det.innerHTML : '';
+    pmName=card.dataset.name; pmPrice=Number(card.dataset.price)||0;
+    var btn=$('pmAdd');
+    btn.textContent = cart[pmName] ? ('في الطلب ('+cart[pmName].qty+') — زوّد واحد') : 'أضف للطلب';
+    open('pmodal');
+  }
+  $('pmAdd').addEventListener('click', function(){
+    if(!pmName) return;
+    add(pmName,pmPrice);
+    closeAll(); open('drawer');
   });
 
   function open(id){ $(id).hidden=false; document.body.style.overflow='hidden'; }
   function closeAll(){
-    ['drawer','orderBox','done'].forEach(function(i){ $(i).hidden=true; });
+    ['drawer','orderBox','done','pmodal'].forEach(function(i){ var el=$(i); if(el) el.hidden=true; });
     document.body.style.overflow='';
   }
   $('cartBtn').addEventListener('click',function(){ open('drawer'); });
