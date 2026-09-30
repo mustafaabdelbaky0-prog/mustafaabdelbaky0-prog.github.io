@@ -145,11 +145,19 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .cat i{font-style:normal;background:var(--orange-soft);color:var(--orange-d);border-radius:999px;
   padding:1px 7px;font-size:11.5px;font-weight:900;margin-inline-start:5px;}
 .cat.on i{background:rgba(255,255,255,.28);color:#fff;}
-.subcats{display:flex;gap:8px;flex-wrap:wrap;margin:-10px 0 20px;padding-inline-start:4px;}
-.subcat{background:#fff;border:1.5px dashed var(--line);border-radius:999px;padding:6px 15px;
-  font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;color:var(--soft);}
-.subcat:hover{border-color:var(--orange);color:var(--orange);}
-.subcat.on{background:var(--navy);color:#fff;border-style:solid;border-color:var(--navy);}
+/* كروت الأقسام — صورة واسم وعدد الأصناف */
+.secs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:0 0 24px;}
+.seccard{background:#fff;border:1.5px solid var(--line);border-radius:12px;overflow:hidden;
+  cursor:pointer;padding:0;font:inherit;text-align:start;display:flex;flex-direction:column;
+  transition:box-shadow .15s, border-color .15s, transform .15s;}
+.seccard:hover{border-color:var(--orange);box-shadow:0 6px 18px rgba(240,78,5,.14);transform:translateY(-2px);}
+.seccard.on{border-color:var(--orange);box-shadow:0 0 0 2px rgba(240,78,5,.28);}
+.sc-img{display:block;aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
+.sc-img img{width:100%;height:100%;object-fit:cover;display:block;}
+.sc-ph{width:100%;height:100%;display:grid;place-items:center;font-size:30px;opacity:.4;}
+.sc-t{display:flex;flex-direction:column;gap:1px;padding:9px 12px 11px;}
+.sc-t b{font-size:14.5px;font-weight:800;}
+.sc-t i{font-style:normal;font-size:12px;color:var(--soft);font-weight:700;}
 .find-info{font-size:13.5px;color:var(--soft);margin-bottom:14px;font-weight:700;}
 
 /* ===== كارت المنتج ===== */

@@ -50,10 +50,15 @@
     var c=e.target.closest('.cat');
     if(c){ document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x===c); });
            sel=c.dataset.sec||''; sub=''; drawSubs(); apply(); return; }
-    var sc=e.target.closest('.subcat');
-    if(sc){ sub = (sub===sc.dataset.sec) ? '' : sc.dataset.sec;
-            document.querySelectorAll('.subcat').forEach(function(x){ x.classList.toggle('on', x.dataset.sec===sub); });
-            apply(); return; }
+    var sc=e.target.closest('.seccard');
+    if(sc){
+      var id=sc.dataset.sec;
+      if(!sel){ sel=id; document.querySelectorAll('.cat').forEach(function(x){ x.classList.toggle('on', x.dataset.sec===id); }); }
+      else { sub = (sub===id) ? '' : id; }
+      drawSubs(); apply();
+      var g=$('grid'); if(g) g.scrollIntoView({behavior:'smooth',block:'start'});
+      return;
+    }
     var po=e.target.closest('.card-open');
     if(po){ openProduct(po.closest('.card')); return; }
   });
@@ -62,16 +67,24 @@
      القسم الرئيسي بيوري اللي جواه كله (الأقسام اللي تحته ومنتجاتها)،
      والبحث بيدوّر في كل حاجة من غير ما يهتم بالأقسام. */
   var sel='', sub='', q='';
-  var SUBS={};
-  try{ SUBS=JSON.parse(($('subCats')||{}).dataset ? ($('subCats').dataset.tree||'{}') : '{}'); }catch(e){ SUBS={}; }
+  var TREE={};
+  try{ TREE=JSON.parse(($('secGrid')||{dataset:{}}).dataset.tree||'{}'); }catch(e){ TREE={}; }
 
+  /* كروت الأقسام: بتوري اللي جوه القسم المفتوح. لو واقف على "كل
+     الأقسام" بتوري الأقسام الرئيسية، ولو فتح "كهرباء" بتوري اللي
+     جواها (اي لوك، اليوس...). */
   function drawSubs(){
-    var box=$('subCats'); if(!box) return;
-    var kids=SUBS[sel]||[];
-    if(!sel || !kids.length){ box.hidden=true; box.innerHTML=''; return; }
+    var box=$('secGrid'); if(!box) return;
+    var kids=TREE[sub||sel||'']||[];
+    if(!kids.length){ box.hidden=true; box.innerHTML=''; return; }
     box.hidden=false;
     box.innerHTML=kids.map(function(k){
-      return '<button type="button" class="subcat" data-sec="'+k.id+'">'+k.name+' ('+k.n+')</button>';
+      var on = (sub||sel)===String(k.id);
+      return '<button type="button" class="seccard'+(on?' on':'')+'" data-sec="'+k.id+'">'+
+        '<span class="sc-img">'+(k.img
+          ? '<img src="img/'+k.img+'" alt="'+k.name+'" loading="lazy">'
+          : '<span class="sc-ph">🗂️</span>')+'</span>'+
+        '<span class="sc-t"><b>'+k.name+'</b><i>'+k.n+' صنف</i></span></button>';
     }).join('');
   }
 
@@ -105,7 +118,7 @@
       else info.hidden=true;
     }
     // وانت بتدوّر، الأقسام مالهاش لازمة
-    var tc=$('topCats'), sc2=$('subCats');
+    var tc=$('topCats'), sc2=$('secGrid');
     if(tc) tc.style.opacity = words.length ? '.45' : '';
     if(sc2 && words.length) { sc2.hidden = true; }
     else if(sc2) drawSubs();
@@ -209,4 +222,5 @@
   })();
 
   paint();
+  drawSubs();     // كروت الأقسام الرئيسية تبان من أول ما الصفحة تفتح
 })();
