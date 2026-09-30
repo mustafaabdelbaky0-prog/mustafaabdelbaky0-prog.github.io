@@ -1,7 +1,7 @@
 ﻿/* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-09-20 · التصنيف من المخزون + الماكينات في فاتورة الشرا';
+const APP_VERSION = '2026-09-30 · موقع المحل على النت';
 
 const Modules = {};
 
@@ -105,6 +105,7 @@ const ROUTES = {
   employees: { title: 'الموظفين', mod: 'employees' },
   finance: { title: 'المركز المالي', mod: 'finance' },
   assets: { title: 'الأصول الثابتة', mod: 'assets' },
+  site: { title: 'موقع المحل على النت', mod: 'site' },
   connect: { title: 'توصيل الموبايل', mod: 'connect' },
   company: { title: 'بيانات المؤسسة', mod: 'company' }
 };
