@@ -71,7 +71,8 @@ Modules.site = (() => {
            p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) +
            String(Math.floor(Math.random() * 90) + 10) + '.jpg';
   }
-  // بيفتح اختيار صورة، يصغّرها، يرفعها، ويرجّع اسم الملف
+  /* بيفتح اختيار صورة، يعدّيها على الاستوديو (تنضيف الخلفية والقص
+     والإضاءة)، وبعد ما يوافق بيرفعها ويرجّع اسم الملف. */
   function pickImage() {
     return new Promise((resolve) => {
       const inp = document.createElement('input');
@@ -79,14 +80,21 @@ Modules.site = (() => {
       inp.addEventListener('change', async () => {
         const f = inp.files && inp.files[0];
         if (!f) { resolve(null); return; }
-        try {
-          Utils.toast('بيجهّز الصورة...', 'info');
-          const b64 = await shrink(f, 1000);
-          const name = newImageName();
-          await api('api/site/save', { files: [{ path: 'img/' + name, b64 }] });
-          dirty = true;
-          resolve(name);
-        } catch (e) { Utils.toast(e.message || 'الصورة ما اترفعتش', 'error'); resolve(null); }
+        const upload = async (b64) => {
+          try {
+            const name = newImageName();
+            await api('api/site/save', { files: [{ path: 'img/' + name, b64 }] });
+            dirty = true;
+            resolve(name);
+          } catch (e) { Utils.toast(e.message || 'الصورة ما اترفعتش', 'error'); resolve(null); }
+        };
+        if (typeof Photo !== 'undefined') {
+          const b64 = await Photo.open(f);
+          if (b64) await upload(b64); else resolve(null);
+        } else {
+          try { await upload(await shrink(f, 1000)); }
+          catch (e) { Utils.toast('الصورة ما اترفعتش', 'error'); resolve(null); }
+        }
       });
       inp.click();
     });
