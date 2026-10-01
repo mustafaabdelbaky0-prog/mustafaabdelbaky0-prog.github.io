@@ -1099,6 +1099,9 @@ tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}
 
 /* استوديو الصور */
 .modal-photo{width:1100px;}
+/* display:flex/grid بيغلب خاصية hidden، والاستوديو بيخفي صفوف كتير
+   حسب الأداة المختارة — فالقاعدة دي بتضمن إن المخفي يفضل مخفي */
+.ph-wrap [hidden]{display:none !important;}
 .ph-wrap{display:grid;grid-template-columns:1fr 322px;gap:18px;}
 .ph-view{background:#E9ECEF;border-radius:12px;padding:12px;display:flex;flex-direction:column;
   align-items:center;gap:9px;}
@@ -1133,7 +1136,7 @@ tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}
 .ph-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;
   padding-inline-end:5px;}
 .ph-act{margin:0;padding-top:10px;border-top:1px solid var(--line);}
-.ph-tools{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;}
+.ph-tools{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
 .ph-tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
   min-height:62px;padding:8px 3px;
   background:#fff;border:1.5px solid var(--line);border-radius:10px;cursor:pointer;
@@ -1169,7 +1172,19 @@ tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}
 .ph-grp>*:not(summary){margin-bottom:9px;}
 .ph-grp .btn{width:100%;}
 
+.ph-lbl{font-size:11.5px;font-weight:800;color:var(--ink-soft);margin-top:2px;}
+.ph-note{background:var(--warn-bg,#FFF6E5);border:1px solid #F2D9A0;border-radius:8px;
+  padding:7px 9px;font-size:11.5px;font-weight:700;color:#8A6200;line-height:1.6;}
 .ph-bgs{display:flex;gap:7px;flex-wrap:wrap;}
+/* خلفيات جاهزة — كل واحدة مرسومة بالحساب في مربع صغير */
+.ph-scenes{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+.ph-scene{display:flex;flex-direction:column;align-items:center;gap:3px;padding:3px;
+  background:#fff;border:1.5px solid var(--line);border-radius:9px;cursor:pointer;font:inherit;}
+.ph-scene canvas{width:100%;height:auto;aspect-ratio:1;border-radius:6px;display:block;}
+.ph-scene span{font-size:9.5px;font-weight:700;color:var(--ink-soft);line-height:1.2;text-align:center;}
+.ph-scene:hover{border-color:var(--amber);}
+.ph-scene.on{border-color:var(--amber);box-shadow:0 0 0 2px rgba(242,169,59,.35);}
+.ph-scene.on span{color:var(--navy-deep);}
 .ph-bg{width:34px;height:34px;border-radius:9px;border:2px solid var(--line);cursor:pointer;padding:0;
   position:relative;}
 .ph-bg.on{border-color:var(--amber);box-shadow:0 0 0 2px rgba(242,169,59,.35);}

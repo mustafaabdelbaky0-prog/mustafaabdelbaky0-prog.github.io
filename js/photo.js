@@ -55,6 +55,7 @@ const Photo = (() => {
     wand: svg('<path d="M5 19 16 8"/><path d="M14 6l4 4"/><path d="M18 3v3M21 5h-3M6 4v2M7 5H5M19 15v2M20 16h-2"/>'),
     back: svg('<path d="M4 13a8 8 0 1 0 2.3-5.6"/><path d="M4 4v5h5"/>'),
     box: svg('<path d="M3.5 8.5v-3a2 2 0 0 1 2-2h3M15.5 3.5h3a2 2 0 0 1 2 2v3M20.5 15.5v3a2 2 0 0 1-2 2h-3M8.5 20.5h-3a2 2 0 0 1-2-2v-3"/>'),
+    crop: svg('<path d="M6.5 2v15.5h15.5"/><path d="M2 6.5h15.5V22"/>'),
     undo: svg('<path d="M3 7h11a5 5 0 0 1 0 10H8"/><path d="M6 4 3 7l3 3"/>'),
     hand: svg('<path d="M8 12V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V12m0-1a1.5 1.5 0 0 1 3 0v4a5 5 0 0 1-5 5h-1.5a5 5 0 0 1-5-5v-3a1.5 1.5 0 0 1 3 0"/>'),
     zin: svg('<circle cx="11" cy="11" r="7"/><path d="M11 8v6M8 11h6M16.5 16.5 21 21"/>'),
@@ -186,10 +187,13 @@ const Photo = (() => {
      مبنخمّنش حاجة، عشان ماناكلش من المنتج. */
   function autoStart(src) {
     if (edgeUniform(src) < 0.85) return null;
+    /* الحد الأعلى ٩٨.٥٪ مش ٩٠٪: صورة الكتالوج اللي فيها منتج صغير وسط
+       خلفية بيضا واسعة، الخلفية فيها لوحدها ٩٥٪ — ومن حقه تتشال. اللي
+       بنحمي منه هو إن الصورة كلها تتمسح. */
     let best = null;
     for (const t of [12, 18, 26]) {
       const r = edgeRegion(src, t);
-      if (r.cover > 0.9) break;
+      if (r.cover > 0.985) break;
       if (r.cover > 0.25) best = r;
     }
     return best;
@@ -312,13 +316,109 @@ const Photo = (() => {
     return killed;
   }
 
+  // ---------- الخلفيات الجاهزة ----------
+  /* خلفيات مرسومة بالحساب — مش صور متخزّنة، عشان الملف يفضل خفيف
+     والبرنامج يشتغل من غير نت.
+
+     floor = مكان خط الأرضية (نسبة من ارتفاع المربع). الخلفيات اللي
+     ليها أرضية بيتحط عليها المنتج واقف على الخط وله انعكاس خفيف —
+     ده اللي بيدي إحساس إن الصورة متصوّرة في ستوديو مش مقصوصة. */
+  const rnd = (i) => { const v = Math.sin(i * 127.1) * 43758.5453; return v - Math.floor(v); };
+
+  const SCENES = [
+    { id: 'flat', name: 'لون سادة', draw: (x, S, bg) => { x.fillStyle = bg; x.fillRect(0, 0, S, S); } },
+
+    { id: 'studio', name: 'ستوديو أبيض', floor: 0.82, draw: (x, S) => {
+        const g = x.createLinearGradient(0, 0, 0, S);
+        g.addColorStop(0, '#ffffff'); g.addColorStop(0.58, '#fafafa');
+        g.addColorStop(0.82, '#ebe9e8'); g.addColorStop(1, '#dbd8d6');
+        x.fillStyle = g; x.fillRect(0, 0, S, S);
+        const r = x.createRadialGradient(S * 0.5, S * 0.40, S * 0.04, S * 0.5, S * 0.46, S * 0.66);
+        r.addColorStop(0, 'rgba(255,255,255,.9)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+        x.fillStyle = r; x.fillRect(0, 0, S, S);
+      } },
+
+    { id: 'spot', name: 'ضوء من فوق', draw: (x, S) => {
+        x.fillStyle = '#c9c7c6'; x.fillRect(0, 0, S, S);
+        const r = x.createRadialGradient(S * 0.5, S * 0.36, S * 0.03, S * 0.5, S * 0.44, S * 0.78);
+        r.addColorStop(0, '#ffffff'); r.addColorStop(0.45, '#f1efee'); r.addColorStop(1, '#bdbab8');
+        x.fillStyle = r; x.fillRect(0, 0, S, S);
+      } },
+
+    { id: 'wood', name: 'خشب', floor: 0.78, draw: (x, S) => {
+        const wall = x.createLinearGradient(0, 0, 0, S * 0.78);
+        wall.addColorStop(0, '#f3ede5'); wall.addColorStop(1, '#e0d6c9');
+        x.fillStyle = wall; x.fillRect(0, 0, S, S * 0.78);
+        const fl = x.createLinearGradient(0, S * 0.78, 0, S);
+        fl.addColorStop(0, '#b4833f'); fl.addColorStop(1, '#79511f');
+        x.fillStyle = fl; x.fillRect(0, S * 0.78, S, S * 0.22);
+        x.save();
+        x.beginPath(); x.rect(0, S * 0.78, S, S * 0.22); x.clip();
+        x.strokeStyle = '#48290a'; x.lineWidth = Math.max(1, S / 500);
+        x.globalAlpha = 0.22;
+        for (let i = 1; i < 6; i++) {
+          const y = S * 0.78 + S * 0.22 * (i / 6);
+          x.beginPath(); x.moveTo(0, y); x.lineTo(S, y); x.stroke();
+        }
+        x.globalAlpha = 0.10;                       // عروق الخشب
+        for (let i = 0; i < 22; i++) {
+          const y = S * 0.78 + rnd(i) * S * 0.22;
+          const x0 = rnd(i + 40) * S, len = S * (0.08 + rnd(i + 80) * 0.22);
+          x.beginPath(); x.moveTo(x0, y); x.lineTo(x0 + len, y + (rnd(i + 120) - 0.5) * S * 0.004); x.stroke();
+        }
+        x.restore();
+        const sh = x.createLinearGradient(0, S * 0.78, 0, S * 0.84);   // ظل الحيطة على الأرضية
+        sh.addColorStop(0, 'rgba(0,0,0,.28)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
+        x.fillStyle = sh; x.fillRect(0, S * 0.78, S, S * 0.10);
+      } },
+
+    { id: 'dark', name: 'كحلي فخم', floor: 0.82, draw: (x, S) => {
+        x.fillStyle = '#10151c'; x.fillRect(0, 0, S, S);
+        const r = x.createRadialGradient(S * 0.5, S * 0.40, S * 0.02, S * 0.5, S * 0.48, S * 0.78);
+        r.addColorStop(0, '#2d3c4e'); r.addColorStop(0.5, '#1b2530'); r.addColorStop(1, '#0c1016');
+        x.fillStyle = r; x.fillRect(0, 0, S, S);
+        const fl = x.createLinearGradient(0, S * 0.82, 0, S);
+        fl.addColorStop(0, 'rgba(255,255,255,.07)'); fl.addColorStop(1, 'rgba(255,255,255,0)');
+        x.fillStyle = fl; x.fillRect(0, S * 0.82, S, S * 0.18);
+      } },
+
+    { id: 'warm', name: 'برتقالي المحل', draw: (x, S) => {
+        x.fillStyle = '#FFF6F1'; x.fillRect(0, 0, S, S);
+        const r = x.createRadialGradient(S * 0.5, S * 0.46, S * 0.05, S * 0.5, S * 0.5, S * 0.76);
+        r.addColorStop(0, '#FFFFFF'); r.addColorStop(0.55, '#FFEFE5'); r.addColorStop(1, '#F7C9AE');
+        x.fillStyle = r; x.fillRect(0, 0, S, S);
+        const b = x.createLinearGradient(0, S * 0.88, 0, S);
+        b.addColorStop(0, 'rgba(240,78,5,0)'); b.addColorStop(1, 'rgba(240,78,5,.20)');
+        x.fillStyle = b; x.fillRect(0, S * 0.88, S, S * 0.12);
+      } }
+  ];
+  const getScene = (id) => SCENES.find(s => s.id === id) || SCENES[0];
+
+  // انعكاس خفيف تحت المنتج — بيبان بس على الخلفيات اللي ليها أرضية
+  function reflection(ox, work, px, py, kw, kh, baseY, S) {
+    const rf = canvasOf(S, S);
+    const rx = rf.getContext('2d');
+    rx.imageSmoothingQuality = 'high';
+    rx.save(); rx.translate(0, 2 * baseY); rx.scale(1, -1);
+    rx.drawImage(work, px, py, kw, kh);
+    rx.restore();
+    rx.globalCompositeOperation = 'destination-out';
+    rx.fillStyle = '#000'; rx.fillRect(0, 0, S, baseY);        // مفيش انعكاس فوق الخط
+    const g = rx.createLinearGradient(0, baseY, 0, Math.min(S, baseY + kh * 0.5));
+    g.addColorStop(0, 'rgba(0,0,0,.62)'); g.addColorStop(1, 'rgba(0,0,0,1)');
+    rx.fillStyle = g; rx.fillRect(0, baseY, S, S - baseY);
+    rx.globalCompositeOperation = 'source-over';
+    ox.save(); ox.globalAlpha = 0.34; ox.drawImage(rf, 0, 0); ox.restore();
+  }
+
   // ---------- التركيب النهائي ----------
   /* بياخد الصورة والقناع والإعدادات ويطلّع المربع النهائي.
      بيتنادى على نسخة الشغل للمعاينة، وعلى النسخة الكبيرة للتصدير. */
   function compose(srcCv, maskCv, opt) {
     const o = Object.assign({
       bg: '#ffffff', crop: true, shadow: 1, feather: 1.2, angle: 0,
-      wb: false, bright: 0, contrast: 0, sharp: 0, clean: true, adjusted: null
+      wb: false, bright: 0, contrast: 0, sharp: 0, clean: true, adjusted: null,
+      scene: 'flat', margin: MARGIN, cropBox: null, reflect: true
     }, opt || {});
 
     const base = o.adjusted || adjust(srcCv, o);
@@ -343,6 +443,21 @@ const Photo = (() => {
     if (mk) {
       cx.globalCompositeOperation = 'destination-in';
       cx.drawImage(mk, 0, 0);
+      cx.globalCompositeOperation = 'source-over';
+    }
+
+    /* إطار القص اليدوي — محفوظ بالنسبة (٠ لـ ١) مش بالبكسل، عشان
+       يشتغل على نسخة الشغل الصغيرة وعلى نسخة التصدير الكبيرة بنفس
+       النتيجة. اللي بره الإطار بيتشال، والإطار هو اللي بيحدد الكادر. */
+    let cbox = null;
+    if (o.cropBox) {
+      const c = o.cropBox;
+      cbox = { x: c.x * W, y: c.y * H, w: c.w * W, h: c.h * H };
+      const fr = canvasOf(W, H);
+      const fx = fr.getContext('2d');
+      fx.fillStyle = '#fff'; fx.fillRect(cbox.x, cbox.y, cbox.w, cbox.h);
+      cx.globalCompositeOperation = 'destination-in';
+      cx.drawImage(fr, 0, 0);
       cx.globalCompositeOperation = 'source-over';
     }
 
@@ -374,13 +489,49 @@ const Photo = (() => {
     let bx = x0, by = y0, bw = x1 - x0 + 1, bh = y1 - y0 + 1;
     if (!o.crop) { bx = 0; by = 0; bw = WW; bh = HH; }
 
+    /* لو هو قاص بإيده، الكادر هو إطاره بالظبط — مش حدود اللي فاضل.
+       (أركان الإطار بتتلف مع الصورة لو عدّل الميل.) */
+    if (cbox) {
+      const cs = Math.cos(ang), sn = Math.sin(ang);
+      const xs = [], ys = [];
+      [[cbox.x, cbox.y], [cbox.x + cbox.w, cbox.y],
+       [cbox.x + cbox.w, cbox.y + cbox.h], [cbox.x, cbox.y + cbox.h]].forEach(([X, Y]) => {
+        const u = X - W / 2, v = Y - H / 2;
+        xs.push(WW / 2 + u * cs - v * sn);
+        ys.push(HH / 2 + u * sn + v * cs);
+      });
+      bx = Math.min.apply(null, xs); by = Math.min.apply(null, ys);
+      bw = Math.max.apply(null, xs) - bx; bh = Math.max.apply(null, ys) - by;
+    }
+
+    const scene = getScene(o.scene);
     const out = canvasOf(OUT, OUT);
     const ox = out.getContext('2d');
-    ox.fillStyle = o.bg; ox.fillRect(0, 0, OUT, OUT);
+    scene.draw(ox, OUT, o.bg);
 
-    const side = Math.max(bw, bh) * (1 + MARGIN * 2);
-    const k = OUT / side;
-    const px = OUT / 2 - (bx + bw / 2) * k, py = OUT / 2 - (by + bh / 2) * k;
+    const margin = o.margin == null ? MARGIN : o.margin;
+    const side = Math.max(bw, bh) * (1 + margin * 2);
+    const baseY = scene.floor ? OUT * scene.floor : 0;
+
+    /* خلفية ليها أرضية: المنتج لازم يقف على الخط، فمساحته المتاحة
+       هي اللي فوق الخط بس — عشان كده بيصغّر شوية عن الخلفية السادة. */
+    let k = OUT / side;
+    if (scene.floor) {
+      const avail = baseY - OUT * 0.06;
+      k = Math.min(k, avail / (bh * (1 + margin)));
+    }
+    const px = OUT / 2 - (bx + bw / 2) * k;
+    let py = OUT / 2 - (by + bh / 2) * k;
+    if (scene.floor) {
+      py = baseY - (by + bh) * k;
+      const top = py + by * k;
+      if (top < OUT * 0.04) py += OUT * 0.04 - top;          // ما يخرجش من فوق
+    }
+
+    // الانعكاس تحت المنتج — بس لما الخلفية الأصلية تكون اتشالت فعلاً
+    if (scene.floor && o.reflect && any && any / (WW * HH) < 0.9) {
+      reflection(ox, work, px, py, WW * k, HH * k, baseY, OUT);
+    }
 
     if (o.shadow > 0 && any) {
       const sy = Math.min(OUT - 24, py + (by + bh) * k + 8);
@@ -444,6 +595,7 @@ const Photo = (() => {
       crop: opts.crop !== false, shadow: opts.shadow === false ? 0 : 1,
       feather: 1.2, clean: true,
       angle: 0, wb: false, bright: 0, contrast: 0, sharp: 0,
+      scene: 'flat', margin: MARGIN, cropBox: null, reflect: true,
       zoom: 1, panX: 0, panY: 0, hand: false
     };
     // جاي من لفّة ٩٠°؟ ياخد نفس الإعدادات اللي كان وصلها — ميبدأش من الأول
@@ -497,8 +649,10 @@ const Photo = (() => {
               <button type="button" class="ph-tool ${st.tool === 'wand' ? 'on' : ''}" data-tool="wand" title="دوسة تشيل الخلفية المتشابهة">${IC.wand}<span>عصا</span></button>
               <button type="button" class="ph-tool ${st.tool === 'erase' ? 'on' : ''}" data-tool="erase" title="امسح إيدك أو أي حاجة زيادة">${IC.erase}<span>امسح</span></button>
               <button type="button" class="ph-tool ${st.tool === 'back' ? 'on' : ''}" data-tool="back" title="رجّع اللي مسحته بالغلط">${IC.back}<span>رجّع</span></button>
+              <button type="button" class="ph-tool ${st.tool === 'crop' ? 'on' : ''}" data-tool="crop" title="حدّد الجزء اللي هيظهر في الصورة النهائية">${IC.crop}<span>قص</span></button>
               <button type="button" class="ph-tool" id="phUndo" title="تراجع عن آخر خطوة">${IC.undo}<span>تراجع</span></button>
             </div>
+            <button type="button" class="btn btn-ghost btn-sm" id="phUncrop" ${st.cropBox ? '' : 'hidden'}>شيل القص وارجع للكادر التلقائي</button>
 
             <div class="ph-row" id="phSizeRow" ${(st.tool === 'erase' || st.tool === 'back') ? '' : 'hidden'}>
               <span>حجم الفرشة</span>
@@ -523,14 +677,25 @@ const Photo = (() => {
 
             <details class="ph-grp" open>
               <summary>الخلفية والشكل</summary>
+              <div class="ph-lbl">ألوان سادة</div>
               <div class="ph-bgs" id="phBgs">
-                ${BGS.map(b => `<button type="button" class="ph-bg ${b.c === st.bg ? 'on' : ''}"
+                ${BGS.map(b => `<button type="button" class="ph-bg ${b.c === st.bg && st.scene === 'flat' ? 'on' : ''}"
                    data-c="${b.c}" title="${b.name}" style="background:${b.c}"></button>`).join('')}
                 <label class="ph-bg ph-pick" title="أي لون تاني"><input type="color" id="phColor" value="#ffffff"><span>🎨</span></label>
               </div>
+              <div class="ph-lbl">خلفيات جاهزة</div>
+              <div class="ph-scenes" id="phScenes">
+                ${SCENES.filter(s => s.id !== 'flat').map(s => `<button type="button"
+                   class="ph-scene ${st.scene === s.id ? 'on' : ''}" data-s="${s.id}" title="${s.name}">
+                   <canvas width="104" height="104" data-draw="${s.id}"></canvas><span>${s.name}</span></button>`).join('')}
+              </div>
+              <div class="ph-note" id="phSceneWarn" hidden>الخلفية دي بتبان أحلى لما تشيل خلفية الصورة الأصلية الأول — بـ«خلي ده بس» أو «العصا».</div>
+              <label class="ph-sw" id="phReflRow" ${getScene(st.scene).floor ? '' : 'hidden'}>
+                <input type="checkbox" id="phRefl" ${st.reflect ? 'checked' : ''}> انعكاس على الأرضية</label>
+              <div class="ph-row"><span>فراغ حوالين المنتج</span><input type="range" id="phMargin" min="0" max="25" value="${Math.round(st.margin * 100)}"></div>
               <div class="ph-row"><span>الظل</span><input type="range" id="phShadow" min="0" max="200" value="${Math.round(st.shadow * 100)}"></div>
               <div class="ph-row"><span>نعومة الحواف</span><input type="range" id="phFeather" min="0" max="40" value="${Math.round(st.feather * 10)}"></div>
-              <label class="ph-sw"><input type="checkbox" id="phCrop" ${st.crop ? 'checked' : ''}> قصّ حوالين المنتج</label>
+              <label class="ph-sw"><input type="checkbox" id="phCrop" ${st.crop ? 'checked' : ''}> قصّ تلقائي حوالين المنتج</label>
               <label class="ph-sw"><input type="checkbox" id="phClean" ${st.clean ? 'checked' : ''}> نضّف البقع الصغيرة</label>
             </details>
 
@@ -604,7 +769,7 @@ const Photo = (() => {
           x2.translate(c.x, c.y); x2.rotate(a); x2.scale(s, s);
         }
 
-        let prevTimer = null;
+        let prevTimer = null, curVX = null, curVY = null;
         function paint() {
           const base = adjNow();
           const tmp = canvasOf(VW, VH);
@@ -615,13 +780,16 @@ const Photo = (() => {
           tx.save(); place(tx); tx.drawImage(mask, -W / 2, -H / 2); tx.restore();
 
           ectx.clearRect(0, 0, VW, VH);
-          ectx.fillStyle = st.bg; ectx.fillRect(0, 0, VW, VH);
+          // شاشة الشغل بتفضل بسيطة — الخلفية الجاهزة بتبان في المعاينة الجنبية
+          ectx.fillStyle = st.scene === 'flat' ? st.bg : '#f1f0ef';
+          ectx.fillRect(0, 0, VW, VH);
           ectx.drawImage(tmp, 0, 0);
 
           hint.textContent = autoDone
             ? 'شلنا الخلفية اللي عرفناها — كمّل بالأدوات لو فاضل حاجة'
             : 'ابدأ بـ «خلي ده بس»: ارسم مربع حوالين المنتج';
 
+          cursor(curVX, curVY);          // إطار القص مرسوم على الطبقة اللي فوق
           clearTimeout(prevTimer);
           prevTimer = setTimeout(drawPrev, 280);
         }
@@ -635,6 +803,9 @@ const Photo = (() => {
           pctx.drawImage(r.canvas, 0, 0, prev.width, prev.height);
           const pc = Math.round(r.kept / (W * H) * 100);
           q('phPrevN').textContent = r.kept ? 'المنتج واخد ' + pc + '٪ من الصورة' : 'الصورة فاضية!';
+          /* خلفية جاهزة + الصورة الأصلية لسه كاملة = مستطيل أبيض ملزوق
+             على المنظر. بننبّهه بدل ما يطلّع صورة وحشة. */
+          q('phSceneWarn').hidden = !(st.scene !== 'flat' && pc > 90);
         }
 
         let band = null, gridTill = 0;
@@ -647,14 +818,31 @@ const Photo = (() => {
               cctx.beginPath(); cctx.moveTo(0, VH * i / 3); cctx.lineTo(VW, VH * i / 3); cctx.stroke();
             }
           }
+          /* إطار القص بيفضل ظاهر على الصورة واللي بره معتّم — عشان
+             يشوف الكادر اللي هيطلع قبل ما يدوس. */
+          if (st.cropBox && !(band && st.tool === 'crop')) {
+            const c = st.cropBox;
+            const X = c.x * W - W / 2, Y = c.y * H - H / 2;
+            cctx.save();
+            cctx.fillStyle = 'rgba(16,16,16,.45)';
+            cctx.fillRect(0, 0, VW, VH);
+            cctx.globalCompositeOperation = 'destination-out';
+            place(cctx); cctx.fillRect(X, Y, c.w * W, c.h * H);
+            cctx.restore();
+            cctx.save(); place(cctx);
+            cctx.strokeStyle = '#F04E05'; cctx.lineWidth = 2 / scale();
+            cctx.strokeRect(X, Y, c.w * W, c.h * H);
+            cctx.restore();
+          }
           if (band) {
             cctx.setLineDash([6, 4]);
-            cctx.strokeStyle = '#F04E05'; cctx.lineWidth = 2;
+            cctx.strokeStyle = st.tool === 'crop' ? '#1D6B3D' : '#F04E05';
+            cctx.lineWidth = 2;
             cctx.strokeRect(band.x0, band.y0, band.x1 - band.x0, band.y1 - band.y0);
             cctx.setLineDash([]);
             return;
           }
-          if (vx == null || st.hand || st.tool === 'wand' || st.tool === 'box') return;
+          if (vx == null || st.hand || st.tool === 'wand' || st.tool === 'box' || st.tool === 'crop') return;
           const r = st.size * scale() / 2;
           cctx.beginPath(); cctx.arc(vx, vy, r, 0, Math.PI * 2);
           cctx.strokeStyle = st.tool === 'back' ? '#1D6B3D' : '#B3261E';
@@ -686,7 +874,9 @@ const Photo = (() => {
             panning = true; panFrom = { x: e.clientX - st.panX, y: e.clientY - st.panY };
             return;
           }
-          if (st.tool === 'box') { band = { x0: p.vx, y0: p.vy, x1: p.vx, y1: p.vy, a: p }; drawing = true; return; }
+          if (st.tool === 'box' || st.tool === 'crop') {
+            band = { x0: p.vx, y0: p.vy, x1: p.vx, y1: p.vy, a: p }; drawing = true; return;
+          }
           if (!inImg(p)) return;
           snap();
           if (st.tool === 'wand') {
@@ -706,7 +896,8 @@ const Photo = (() => {
             clampPan(); paint(); return;
           }
           const p = toImg(e.clientX, e.clientY);
-          if (st.tool === 'box' && drawing && band) {
+          curVX = p.vx; curVY = p.vy;
+          if ((st.tool === 'box' || st.tool === 'crop') && drawing && band) {
             band.x1 = p.vx; band.y1 = p.vy; band.b = p; cursor(); return;
           }
           cursor(p.vx, p.vy);
@@ -715,19 +906,30 @@ const Photo = (() => {
         });
 
         const finishStroke = () => {
-          if (st.tool === 'box' && band && band.b) {
+          if ((st.tool === 'box' || st.tool === 'crop') && band && band.b) {
             const a = band.a, b = band.b;
             const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
             const w2 = Math.abs(b.x - a.x), h2 = Math.abs(b.y - a.y);
             if (w2 > 8 && h2 > 8) {
-              snap();
-              const keep = canvasOf(W, H);
-              const kx = keep.getContext('2d');
-              kx.fillStyle = '#fff'; kx.fillRect(x, y, w2, h2);
-              mctx.globalCompositeOperation = 'destination-in';
-              mctx.drawImage(keep, 0, 0);
-              mctx.globalCompositeOperation = 'source-over';
-              paint();
+              if (st.tool === 'crop') {
+                // إطار القص: مش بيمسح حاجة — بيحدد الكادر وبيفضل يتعدّل
+                const cx0 = Math.max(0, Math.min(1, x / W)), cy0 = Math.max(0, Math.min(1, y / H));
+                st.cropBox = {
+                  x: cx0, y: cy0,
+                  w: Math.min(1 - cx0, w2 / W), h: Math.min(1 - cy0, h2 / H)
+                };
+                q('phUncrop').hidden = false;
+                paint();
+              } else {
+                snap();
+                const keep = canvasOf(W, H);
+                const kx = keep.getContext('2d');
+                kx.fillStyle = '#fff'; kx.fillRect(x, y, w2, h2);
+                mctx.globalCompositeOperation = 'destination-in';
+                mctx.drawImage(keep, 0, 0);
+                mctx.globalCompositeOperation = 'source-over';
+                paint();
+              }
             }
           }
           band = null; drawing = false; last = null; panning = false;
@@ -810,21 +1012,52 @@ const Photo = (() => {
           paint();
         });
 
+        const pickFlat = () => {
+          st.scene = 'flat';
+          mb.querySelectorAll('.ph-scene').forEach(x => x.classList.remove('on'));
+          q('phReflRow').hidden = true;
+        };
         q('phBgs').addEventListener('click', (e) => {
           const b = e.target.closest('.ph-bg[data-c]'); if (!b) return;
           st.bg = b.dataset.c;
           mb.querySelectorAll('.ph-bg[data-c]').forEach(x => x.classList.toggle('on', x === b));
-          paint();
+          pickFlat(); paint();
         });
         on('phColor', 'input', e => {
           st.bg = e.target.value;
           mb.querySelectorAll('.ph-bg[data-c]').forEach(x => x.classList.remove('on'));
-          paint();
+          pickFlat(); paint();
         });
         on('phCrop', 'change', e => { st.crop = e.target.checked; paint(); });
         on('phClean', 'change', e => { st.clean = e.target.checked; paint(); });
         on('phShadow', 'input', e => { st.shadow = +e.target.value / 100; paint(); });
         on('phFeather', 'input', e => { st.feather = +e.target.value / 10; paint(); });
+        on('phMargin', 'input', e => { st.margin = +e.target.value / 100; paint(); });
+        on('phRefl', 'change', e => { st.reflect = e.target.checked; paint(); });
+        on('phUncrop', 'click', () => {
+          st.cropBox = null; q('phUncrop').hidden = true; paint();
+        });
+
+        /* صور مصغّرة للخلفيات — وفيها شكل منتج صغير، عشان الفرق بين
+           «ستوديو» و«ضوء» يبان، ويشوف مين فيها أرضية يقف عليها. */
+        mb.querySelectorAll('#phScenes canvas[data-draw]').forEach(cv => {
+          const s = getScene(cv.dataset.draw);
+          const x = cv.getContext('2d');
+          const S = cv.width;
+          s.draw(x, S, st.bg);
+          const bw = S * 0.24, bh = S * 0.40;
+          const by = (s.floor ? S * s.floor : S * 0.72) - bh;
+          x.fillStyle = 'rgba(70,70,70,.55)';
+          x.fillRect(S / 2 - bw / 2, by, bw, bh);
+        });
+        q('phScenes').addEventListener('click', (e) => {
+          const b = e.target.closest('.ph-scene'); if (!b) return;
+          st.scene = b.dataset.s;
+          mb.querySelectorAll('.ph-scene').forEach(x => x.classList.toggle('on', x === b));
+          mb.querySelectorAll('.ph-bg[data-c]').forEach(x => x.classList.remove('on'));
+          q('phReflRow').hidden = !getScene(st.scene).floor;
+          paint();
+        });
 
         on('phRot', 'click', () => {
           const rot = (cv) => {
@@ -834,16 +1067,22 @@ const Photo = (() => {
             x.drawImage(cv, -cv.width / 2, -cv.height / 2);
             return c;
           };
+          // إطار القص لازم يلف هو كمان مع الصورة
+          const c = st.cropBox;
+          const keep = Object.assign({}, st, {
+            cropBox: c ? { x: 1 - (c.y + c.h), y: c.x, w: c.h, h: c.w } : null
+          });
           handoff = true;                     // الوعد لسه مفتوح — الاستوديو الجديد هو اللي يردّ
           closeMe();
           studio(rot(src), rot(full), resolve, Object.assign({}, opts, {
-            mask: rot(mask), bg: st.bg, keep: st
+            mask: rot(mask), bg: st.bg, keep: keep
           }));
         });
         on('phReset', 'click', () => {
           snap();
           mctx.globalCompositeOperation = 'source-over';
           mctx.fillStyle = '#fff'; mctx.fillRect(0, 0, W, H);
+          st.cropBox = null; q('phUncrop').hidden = true;
           autoDone = false; paint();
         });
 
@@ -884,6 +1123,7 @@ const Photo = (() => {
 
   return {
     open, compose, adjust, sharpen, wandRegion, edgeRegion, edgeColor, edgeUniform,
-    autoStart, regionToCanvas, despeckle, whiteBalanceGains, BGS, OUT, WORK
+    autoStart, regionToCanvas, despeckle, whiteBalanceGains,
+    BGS, SCENES, getScene, OUT, WORK
   };
 })();
