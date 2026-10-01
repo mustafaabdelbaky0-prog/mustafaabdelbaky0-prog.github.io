@@ -1098,7 +1098,8 @@ tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}
 .pk-row.in .pk-a{color:var(--success);}
 
 /* استوديو الصور */
-.ph-wrap{display:grid;grid-template-columns:1fr 300px;gap:18px;}
+.modal-photo{width:1100px;}
+.ph-wrap{display:grid;grid-template-columns:1fr 322px;gap:18px;}
 .ph-view{background:#E9ECEF;border-radius:12px;padding:12px;display:flex;flex-direction:column;
   align-items:center;gap:9px;}
 /* الشطرنج بيخلي اللي اتمسح واضح إنه اتشال فعلاً */
@@ -1111,24 +1112,62 @@ tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}
 .ph-stage canvas:last-child{position:absolute;inset:0;cursor:crosshair;touch-action:none;}
 .ph-hint{font-size:12.5px;color:var(--ink-soft);font-weight:700;text-align:center;}
 
-.ph-side{display:flex;flex-direction:column;gap:10px;}
-.ph-tools{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
-.ph-tool{display:flex;flex-direction:column;align-items:center;gap:4px;padding:9px 4px;
+.ph-zoom{display:flex;align-items:center;gap:7px;width:100%;}
+.ph-zoom input[type=range]{flex:1;accent-color:var(--amber);min-width:60px;}
+.ph-zb{width:30px;height:30px;display:grid;place-items:center;background:#fff;cursor:pointer;
+  border:1.5px solid var(--line);border-radius:8px;color:var(--navy-deep);padding:0;flex:none;}
+.ph-zb:hover{border-color:var(--amber);}
+.ph-zb.on{background:var(--navy-deep);border-color:var(--navy-deep);color:#fff;}
+.ph-zb svg{width:17px;height:17px;}
+
+/* معاينة الناتج — هو ده بالظبط اللي هيشوفه الزبون على الموقع */
+.ph-prev{display:flex;align-items:center;gap:11px;background:#fff;border:1.5px solid var(--line);
+  border-radius:11px;padding:9px;}
+.ph-prev canvas{width:76px;height:76px;flex:none;border-radius:8px;border:1px solid var(--line);}
+.ph-prev-t{font-size:12.5px;font-weight:800;color:var(--navy-deep);line-height:1.6;}
+.ph-prev-t small{display:block;font-size:11.5px;font-weight:700;color:var(--ink-soft);}
+
+/* المعاينة فوق وزراير التأكيد تحت ثابتين، واللي بينهم بس هو اللي بيتزحلق —
+   عشان «استعمل الصورة» ميبقاش مستخبي تحت */
+.ph-side{display:flex;flex-direction:column;gap:10px;max-height:74vh;}
+.ph-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;
+  padding-inline-end:5px;}
+.ph-act{margin:0;padding-top:10px;border-top:1px solid var(--line);}
+.ph-tools{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;}
+.ph-tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  min-height:62px;padding:8px 3px;
   background:#fff;border:1.5px solid var(--line);border-radius:10px;cursor:pointer;
   font:inherit;line-height:1;color:var(--navy-deep);}
-.ph-tool svg{width:21px;height:21px;}
-.ph-tool span{font-size:11px;font-weight:700;color:var(--ink-soft);}
+.ph-tool svg{width:20px;height:20px;}
+.ph-tool span{font-size:10.5px;font-weight:700;color:var(--ink-soft);text-align:center;line-height:1.25;}
 .ph-tool.on{color:#fff;}
 .ph-tool:hover{border-color:var(--amber);}
 .ph-tool.on{background:var(--navy-deep);border-color:var(--navy-deep);}
 .ph-tool.on span{color:#fff;}
 
 .ph-sw{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13.5px;cursor:pointer;}
-.ph-sw input{width:17px;height:17px;accent-color:var(--amber);cursor:pointer;}
+.ph-sw input{width:17px;height:17px;accent-color:var(--amber);cursor:pointer;flex:none;}
+.ph-sw.sm{font-size:12px;color:var(--ink-soft);}
+.ph-sw.sm input{width:15px;height:15px;}
 .ph-row{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--ink-soft);font-weight:700;}
+/* لازمة: display:flex بيغلب خاصية hidden، فالصفوف المخفية كانت بتبان */
+.ph-row[hidden]{display:none;}
 .ph-row input[type=range]{width:100%;accent-color:var(--amber);}
+.ph-row>span{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+.ph-row b{color:var(--navy-deep);font-variant-numeric:tabular-nums;}
 .ph-row2{display:flex;gap:8px;}
 .ph-row2 .btn{flex:1;}
+
+/* مجموعات الإعدادات — مقفولة أو مفتوحة بمزاجه، مش كل حاجة في وشه مرة واحدة */
+.ph-grp{background:#fff;border:1.5px solid var(--line);border-radius:11px;padding:0 11px;}
+.ph-grp>summary{cursor:pointer;font-weight:800;font-size:13px;color:var(--navy-deep);
+  padding:9px 0;list-style:none;display:flex;align-items:center;gap:7px;}
+.ph-grp>summary::-webkit-details-marker{display:none;}
+.ph-grp>summary::before{content:'';width:6px;height:6px;border-inline-end:2px solid var(--amber);
+  border-block-end:2px solid var(--amber);transform:rotate(45deg);transition:transform .15s;flex:none;}
+.ph-grp[open]>summary::before{transform:rotate(-135deg);}
+.ph-grp>*:not(summary){margin-bottom:9px;}
+.ph-grp .btn{width:100%;}
 
 .ph-bgs{display:flex;gap:7px;flex-wrap:wrap;}
 .ph-bg{width:34px;height:34px;border-radius:9px;border:2px solid var(--line);cursor:pointer;padding:0;

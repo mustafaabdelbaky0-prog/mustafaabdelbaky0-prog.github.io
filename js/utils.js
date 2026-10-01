@@ -131,11 +131,12 @@ const Utils = (() => {
   }
 
   // ---------- Modal ----------
-  function openModal({ title, bodyHtml, onMount, wide }) {
+  // cls: كلاس زيادة على النافذة، لما تحتاج مقاس خاص (زي استوديو الصور)
+  function openModal({ title, bodyHtml, onMount, wide, cls }) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-      <div class="modal ${wide ? 'modal-wide' : ''}">
+      <div class="modal ${wide ? 'modal-wide' : ''} ${cls || ''}">
         <div class="modal-head">
           <h3>${escapeHtml(title)}</h3>
           <button class="modal-close" type="button">&times;</button>
