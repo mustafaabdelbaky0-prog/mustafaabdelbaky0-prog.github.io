@@ -440,7 +440,9 @@ const Photo = (() => {
     const st = {
       tool: 'box', size: Math.max(16, Math.round(W / 18)), wandTol: 30, wandAll: false,
       bg: opts.bg || '#ffffff',
-      crop: opts.crop !== false, shadow: 1, feather: 1.2, clean: true,
+      // صور الأقسام بتتفتح بـ shadow:false — صورة رف مالهاش ظل
+      crop: opts.crop !== false, shadow: opts.shadow === false ? 0 : 1,
+      feather: 1.2, clean: true,
       angle: 0, wb: false, bright: 0, contrast: 0, sharp: 0,
       zoom: 1, panX: 0, panY: 0, hand: false
     };
