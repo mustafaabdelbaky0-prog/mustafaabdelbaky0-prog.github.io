@@ -73,6 +73,8 @@ const SiteGen = (() => {
     s.offers = (site && site.offers) || [];
     s.bundles = (site && site.bundles) || [];
     s.seq = Number((site && site.seq) || 0) || 1;
+    // أسماء الصور عنده: { اسم الملف: الاسم اللي سمّاه } — للبحث عندنا، مش بيتنشر
+    s.imgNames = (site && site.imgNames) || {};
     return s;
   }
 

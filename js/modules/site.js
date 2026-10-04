@@ -15,6 +15,8 @@ Modules.site = (() => {
   let dirty = false;        // فيه تعديل لسه ما اتنشرش
   let tab = 'brand';
   let poll = null;
+  // آخر كلمة بحث في كل قايمة — بتفضل بعد ما الشاشة تترسم من تاني
+  const finds = { sections: '', products: '', offers: '', bundles: '', images: '' };
 
   const onPc = () => !(typeof window !== 'undefined' && window.DB_BACKEND);
   const esc = s => Utils.escapeHtml(s == null ? '' : String(s));
@@ -71,9 +73,24 @@ Modules.site = (() => {
            p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) +
            String(Math.floor(Math.random() * 90) + 10) + '.jpg';
   }
-  /* بيفتح اختيار صورة، يعدّيها على الاستوديو (تنضيف الخلفية والقص
-     والإضاءة)، وبعد ما يوافق بيرفعها ويرجّع اسم الملف. */
-  function pickImage(studioOpts) {
+  /* اسم الصورة اللي هو سمّاها. الاسم بيتخزن في إعدادات الموقع مش في
+     اسم الملف نفسه — عشان لو غيّر الاسم ما يبوّظش اللينكات. */
+  const imgLabel = (f) => (site.imgNames && site.imgNames[f]) || '';
+
+  async function nameImage(file, suggest) {
+    const v = await Utils.promptDialog('سمّي الصورة عشان تلاقيها بسهولة بعدين',
+      { placeholder: 'مثلاً: لمبة ٩ وات elios', value: suggest || '' });
+    if (v == null) return;                       // دوس إلغاء = سيبها من غير اسم
+    site.imgNames = site.imgNames || {};
+    const t = String(v).trim();
+    if (t) site.imgNames[file] = t; else delete site.imgNames[file];
+    await save();
+  }
+
+  /* صورة جديدة من الكمبيوتر: اختيار الملف ← الاستوديو (تنضيف الخلفية
+     والقص والإضاءة) ← الرفع ← تسميتها. */
+  function uploadImage(opts) {
+    const o = opts || {};
     return new Promise((resolve) => {
       const inp = document.createElement('input');
       inp.type = 'file'; inp.accept = 'image/*';
@@ -85,11 +102,12 @@ Modules.site = (() => {
             const name = newImageName();
             await api('api/site/save', { files: [{ path: 'img/' + name, b64 }] });
             dirty = true;
+            await nameImage(name, o.suggest);
             resolve(name);
           } catch (e) { Utils.toast(e.message || 'الصورة ما اترفعتش', 'error'); resolve(null); }
         };
         if (typeof Photo !== 'undefined') {
-          const b64 = await Photo.open(f, studioOpts);
+          const b64 = await Photo.open(f, o);
           if (b64) await upload(b64); else resolve(null);
         } else {
           try { await upload(await shrink(f, 1000)); }
@@ -98,6 +116,106 @@ Modules.site = (() => {
       });
       inp.click();
     });
+  }
+
+  /* اختيار صورة لأي حاجة (منتج، قسم، عرض…).
+     قبل كده كان بيفتح ملفات الكمبيوتر على طول، فاللي يرفع صورة
+     ويعدّلها من شاشة «الصور» ما كانش يعرف يحطها على منتج. دلوقتي
+     بيفتح صور الموقع الأول — ومنها زرار لصورة جديدة. */
+  function pickImage(opts) {
+    const o = opts || {};
+    if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return Promise.resolve(null); }
+    return new Promise(async (resolve) => {
+      await refreshInfo();
+      const imgs = (info && info.images) || [];
+      if (!imgs.length) { resolve(await uploadImage(o)); return; }   // مفيش صور أصلاً
+
+      let done = false;
+      const { overlay } = Utils.openModal({
+        title: '🖼️ اختار صورة',
+        wide: true,
+        bodyHtml: `
+          <div class="field">
+            <input type="search" id="ipFind" placeholder="دوّر باسم الصورة أو المنتج اللي متحطة عليه..." autocomplete="off">
+          </div>
+          <div class="img-grid pick" id="ipGrid">
+            ${imgs.map(im => {
+              const lab = imgLabel(im.name), us = imageUsers(im.name);
+              return `
+              <button type="button" class="img-cell pickable" data-n="${esc(im.name)}"
+                      data-q="${esc(lab + ' ' + im.name + ' ' + us.join(' '))}">
+                <img src="site-img/${esc(im.name)}" alt="" loading="lazy">
+                <div class="ic-name">${lab ? esc(lab) : '<em>من غير اسم</em>'}</div>
+                <div class="ic-use ${us.length ? 'on' : ''}">${us.length ? esc(us.slice(0, 2).join('، ')) : 'مش مستعملة'}</div>
+              </button>`;
+            }).join('')}
+          </div>
+          <p class="empty-note" id="ipNone" hidden>مفيش صورة بالاسم ده.</p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" id="ipCancel">إلغاء</button>
+            <button type="button" class="btn btn-amber" id="ipNew">📷 صورة جديدة من الكمبيوتر</button>
+          </div>`,
+        onMount: (mb, closeMe) => {
+          const grid = mb.querySelector('#ipGrid');
+          const fnd = mb.querySelector('#ipFind');
+          setTimeout(() => fnd.focus(), 40);
+          fnd.addEventListener('input', () => {
+            mb.querySelector('#ipNone').hidden = filterBy(grid, '.img-cell', fnd.value) > 0;
+          });
+          grid.addEventListener('click', (e) => {
+            const c = e.target.closest('.img-cell'); if (!c) return;
+            done = true; closeMe(); resolve(c.dataset.n);
+          });
+          mb.querySelector('#ipCancel').addEventListener('click', () => { done = true; closeMe(); resolve(null); });
+          mb.querySelector('#ipNew').addEventListener('click', async () => {
+            done = true; closeMe();
+            resolve(await uploadImage(o));
+          });
+        }
+      });
+      // قفلها من الـ × أو من بره
+      const watch = new MutationObserver(() => {
+        if (!document.body.contains(overlay)) {
+          watch.disconnect();
+          if (!done) { done = true; resolve(null); }
+        }
+      });
+      watch.observe(document.body, { childList: true });
+    });
+  }
+
+  // ---------- بحث جوّه أي قايمة ----------
+  /* بنخفي الصفوف اللي مش مطابقة بدل ما نعيد رسم الشاشة — كده الكتابة
+     في خانة البحث ما بتضيعش ولا بتهنج مع ٧٠٠ صنف. */
+  function filterBy(scope, sel, q) {
+    const t = String(q || '').trim();
+    let n = 0;
+    scope.querySelectorAll(sel).forEach(el => {
+      const ok = !t || Search.matches(el.dataset.q || '', t);
+      el.style.display = ok ? '' : 'none';
+      if (ok) n++;
+    });
+    return n;
+  }
+  function findRow(kind, ph) {
+    return `<div class="site-find">
+      <input type="search" class="find-in" data-k="${kind}" value="${esc(finds[kind] || '')}"
+             placeholder="${esc(ph)}" autocomplete="off">
+      <span class="find-n" data-k="${kind}"></span>
+    </div>`;
+  }
+  // run(q) بيرجّع عدد اللي ظهر — وبيتنادى كمان بعد أي إعادة رسم
+  function bindFind(body, kind, run) {
+    const el = body.querySelector('.find-in[data-k="' + kind + '"]');
+    if (!el) return;
+    const tag = body.querySelector('.find-n[data-k="' + kind + '"]');
+    const go = () => {
+      finds[kind] = el.value;
+      const n = run(el.value);
+      if (tag) tag.textContent = el.value.trim() ? (n ? n + ' نتيجة' : 'مفيش نتيجة') : '';
+    };
+    el.addEventListener('input', go);
+    go();
   }
 
   // الصورة دي مستعملة في حاجة؟ (عشان ما نمسحش صورة شغالة)
@@ -300,16 +418,15 @@ Modules.site = (() => {
     bindFields(body);
     bindImg(body.querySelector('#heroImg'), () => site.hero.image, async (v) => {
       site.hero.image = v; await save(); drawHero(container, body);
-    });
+    }, { clean: false, shadow: false, crop: false, suggest: 'واجهة الموقع' });
   }
 
-  function bindImg(box, getV, setV) {
+  function bindImg(box, getV, setV, opts) {
     if (!box) return;
     const s = box.querySelector('.im-set');
     const c = box.querySelector('.im-clr');
     if (s) s.addEventListener('click', async () => {
-      if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
-      const n = await pickImage();
+      const n = await pickImage(opts);
       if (n) await setV(n);
     });
     if (c) c.addEventListener('click', async () => { await setV(''); });
@@ -347,6 +464,7 @@ Modules.site = (() => {
               المنتج بيتحط في أصغر قسم، ولما الزبون يدوس على «كهرباء» هيشوف كل اللي تحتها.</div></div>
           <button type="button" class="btn btn-amber" id="addTop">+ قسم رئيسي</button>
         </div>
+        ${rows.length ? findRow('sections', 'دوّر على قسم بالاسم...') : ''}
 
         ${rows.length ? `<div class="tree" id="tree">
           ${rows.map(({ sec, depth }) => {
@@ -380,16 +498,36 @@ Modules.site = (() => {
     body.querySelector('#addTop').addEventListener('click', () => addSection(null, container, body));
     const tree = body.querySelector('#tree');
     if (!tree) return;
+    /* البحث في الشجرة: بنوري القسم اللي لقيناه، وكمان الأقسام اللي
+       فوقه — عشان يفضل عارف هو جوّه إيه. */
+    bindFind(body, 'sections', (q) => {
+      const t = String(q || '').trim();
+      const keep = new Set();
+      if (t) site.sections.forEach(x => {
+        if (Search.matches(x.name || '', t)) {
+          keep.add(Number(x.id));
+          secAncestors(x.id).forEach(a => keep.add(Number(a)));
+        }
+      });
+      let n = 0;
+      tree.querySelectorAll('.tr-row').forEach(el => {
+        const hit = !t || keep.has(Number(el.dataset.id));
+        el.style.display = hit ? '' : 'none';
+        el.classList.toggle('dim', !!t && !Search.matches(
+          (site.sections.find(x => Number(x.id) === Number(el.dataset.id)) || {}).name || '', t));
+        if (hit) n++;
+      });
+      return n;
+    });
     tree.addEventListener('click', async (e) => {
       const row = e.target.closest('.tr-row'); if (!row) return;
       const id = Number(row.dataset.id);
       const sec = site.sections.find(x => Number(x.id) === id);
       if (e.target.classList.contains('tr-add')) { addSection(id, container, body); return; }
       if (e.target.closest('.tr-img')) {
-        if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
         /* صورة القسم مش صورة منتج — دي صورة رف أو مجموعة، فالمفروض
            تفضل بخلفيتها. عشان كده التنضيف مقفول من الأول. */
-        const nm = await pickImage({ clean: false, shadow: false, crop: false });
+        const nm = await pickImage({ clean: false, shadow: false, crop: false, suggest: 'قسم ' + sec.name });
         if (nm) { sec.image = nm; await save(); drawSections(container, body); }
         return;
       }
@@ -478,6 +616,7 @@ Modules.site = (() => {
           </div>
           <button type="button" class="btn btn-amber" id="addProd">+ ضيف منتج من المخزن</button>
         </div>
+        ${site.products.length ? findRow('products', 'دوّر على منتج بالاسم أو بالقسم...') : ''}
         ${site.products.length ? `
         <div class="table-wrap">
           <table>
@@ -485,8 +624,9 @@ Modules.site = (() => {
             <tbody id="prodBody">
               ${site.products.map((p, i) => {
                 const nSpecs = (p.specs || []).filter(x => (x.k || '').trim()).length;
+                const secNm = (site.sections.find(x => Number(x.id) === Number(p.sectionId)) || {}).name || '';
                 return `
-              <tr data-i="${i}">
+              <tr data-i="${i}" data-q="${esc(p.name + ' ' + secNm + ' ' + (p.desc || '') + ' ' + imgLabel(p.image))}">
                 <td class="pcell">${p.image
                   ? `<img class="pth" src="site-img/${esc(p.image)}" alt="">`
                   : '<span class="pth empty">📦</span>'}
@@ -515,6 +655,7 @@ Modules.site = (() => {
     body.querySelector('#addProd').addEventListener('click', () => openPicker(container, body));
     const tb = body.querySelector('#prodBody');
     if (!tb) return;
+    bindFind(body, 'products', q => filterBy(tb, 'tr[data-i]', q));
     tb.addEventListener('click', async (e) => {
       const tr = e.target.closest('tr'); if (!tr) return;
       const i = Number(tr.dataset.i);
@@ -528,8 +669,7 @@ Modules.site = (() => {
         [site.products[i + 1], site.products[i]] = [site.products[i], site.products[i + 1]];
         await save(); drawProducts(container, body);
       } else if (e.target.classList.contains('p-img')) {
-        if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
-        const n = await pickImage();
+        const n = await pickImage({ suggest: site.products[i].name });
         if (n) { site.products[i].image = n; await save(); drawProducts(container, body); }
       } else if (e.target.classList.contains('p-edit')) {
         openProductEditor(i, container, body);
@@ -616,8 +756,7 @@ Modules.site = (() => {
           drawExtra();
         });
         mb.querySelector('#pdAddImg').addEventListener('click', async () => {
-          if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
-          const nm = await pickImage();
+          const nm = await pickImage({ suggest: p.name });
           if (nm) { extra.push(nm); drawExtra(); }
         });
 
@@ -653,12 +792,13 @@ Modules.site = (() => {
             <div class="hint">كذا منتج مع بعض بسعر أقل من مجموعهم. البرنامج بيحسب التوفير ويوريه للزبون.</div></div>
           <button type="button" class="btn btn-amber" id="addBn">+ باكدچ جديد</button>
         </div>
+        ${site.bundles.length ? findRow('bundles', 'دوّر على باكدچ أو حاجة جوّاه...') : ''}
         ${site.bundles.length ? `<div class="off-list">${site.bundles.map((bn, i) => {
           const lines = (bn.lines || []).filter(l => (l.name || '').trim());
           const full = lines.reduce((t, l) => t + Number(l.qty || 1) * Number(l.price || 0), 0);
           const save2 = full - Number(bn.price || 0);
           return `
-          <div class="off-row" data-i="${i}">
+          <div class="off-row" data-i="${i}" data-q="${esc((bn.title || '') + ' ' + (bn.desc || '') + ' ' + lines.map(l => l.name).join(' '))}">
             <div class="off-th">${bn.image ? `<img src="site-img/${esc(bn.image)}" alt="">` : '🎁'}</div>
             <div class="off-txt">
               <strong>${esc(bn.title)}</strong>
@@ -676,6 +816,7 @@ Modules.site = (() => {
 
     body.querySelector('#addBn').addEventListener('click', () => openBundle(container, body, null));
     const lst = body.querySelector('.off-list');
+    if (lst) bindFind(body, 'bundles', q => filterBy(lst, '.off-row', q));
     if (lst) lst.addEventListener('click', async (e) => {
       const row = e.target.closest('.off-row'); if (!row) return;
       const i = Number(row.dataset.i);
@@ -780,9 +921,10 @@ Modules.site = (() => {
           bn.image = v;
           const box = mb.querySelector('#bnImg');
           box.innerHTML = imgBox(bn.image, 'ارفع صورة');
-          bindImg(box, () => bn.image, setImg);
+          bindImg(box, () => bn.image, setImg, imgOpt());
         };
-        bindImg(mb.querySelector('#bnImg'), () => bn.image, setImg);
+        const imgOpt = () => ({ suggest: (mb.querySelector('#bnTitle') || {}).value || bn.title });
+        bindImg(mb.querySelector('#bnImg'), () => bn.image, setImg, imgOpt());
 
         mb.querySelector('#bnCancel').addEventListener('click', close);
         Utils.guardSubmit(mb.querySelector('#bnForm'), async (e) => {
@@ -864,8 +1006,9 @@ Modules.site = (() => {
             <div class="hint">العرض بيظهر فوق في مكان واضح بلونه. سيبه من غير سعر لو عايزه إعلان بس.</div></div>
           <button type="button" class="btn btn-amber" id="addOffer">+ اكتب عرض</button>
         </div>
+        ${site.offers.length ? findRow('offers', 'دوّر على عرض...') : ''}
         ${site.offers.length ? `<div class="off-list">${site.offers.map((o, i) => `
-          <div class="off-row" data-i="${i}">
+          <div class="off-row" data-i="${i}" data-q="${esc((o.title || '') + ' ' + (o.desc || ''))}">
             <div class="off-th">${o.image ? `<img src="site-img/${esc(o.image)}" alt="">` : '🏷️'}</div>
             <div class="off-txt">
               <strong>${esc(o.title)}</strong>
@@ -884,6 +1027,7 @@ Modules.site = (() => {
 
     body.querySelector('#addOffer').addEventListener('click', () => openOffer(container, body, null));
     const lst = body.querySelector('.off-list');
+    if (lst) bindFind(body, 'offers', q => filterBy(lst, '.off-row', q));
     if (lst) lst.addEventListener('click', async (e) => {
       const row = e.target.closest('.off-row'); if (!row) return;
       const i = Number(row.dataset.i);
@@ -929,9 +1073,10 @@ Modules.site = (() => {
           o.image = v;
           const box = mb.querySelector('#offImg');
           box.innerHTML = imgBox(o.image, 'ارفع صورة العرض');
-          bindImg(box, () => o.image, setImg);
+          bindImg(box, () => o.image, setImg, imgOpt());
         };
-        bindImg(mb.querySelector('#offImg'), () => o.image, setImg);
+        const imgOpt = () => ({ suggest: (mb.querySelector('#oTitle') || {}).value || o.title });
+        bindImg(mb.querySelector('#offImg'), () => o.image, setImg, imgOpt());
         mb.querySelector('#oCancel').addEventListener('click', close);
         Utils.guardSubmit(mb.querySelector('#offForm'), async (e) => {
           e.preventDefault();
@@ -1121,14 +1266,19 @@ Modules.site = (() => {
       <div class="card">
         <div class="section-head">
           <div><h3 class="mini-head">كل الصور اللي على الموقع</h3>
-            <div class="hint">الصورة اللي مش مستعملة في أي حاجة تقدر تمسحها عشان الموقع يفضل خفيف.</div></div>
+            <div class="hint">سمّي كل صورة عشان تلاقيها بسهولة وانت بتحطها على منتج.
+              والصورة اللي مش مستعملة في أي حاجة تقدر تمسحها عشان الموقع يفضل خفيف.</div></div>
           <button type="button" class="btn btn-ghost" id="upImg">📷 ارفع صورة</button>
         </div>
+        ${imgs.length ? findRow('images', 'دوّر باسم الصورة أو المنتج اللي متحطة عليه...') : ''}
         ${imgs.length ? `<div class="img-grid">${imgs.map(im => {
           const users = imageUsers(im.name);
+          const lab = imgLabel(im.name);
           return `
-          <div class="img-cell" data-n="${esc(im.name)}">
+          <div class="img-cell" data-n="${esc(im.name)}"
+               data-q="${esc(lab + ' ' + im.name + ' ' + users.join(' '))}">
             <img src="site-img/${esc(im.name)}" alt="" loading="lazy">
+            <input class="ic-nm" value="${esc(lab)}" placeholder="سمّي الصورة" title="اسم الصورة عندك">
             <div class="ic-meta">${Math.round(im.size / 1024)} ك.ب</div>
             <div class="ic-use ${users.length ? 'on' : ''}">${users.length ? esc(users.slice(0, 2).join('، ')) : 'مش مستعملة'}</div>
             <button type="button" class="icon-btn ic-del" title="امسح الصورة">🗑️</button>
@@ -1138,10 +1288,24 @@ Modules.site = (() => {
 
     body.querySelector('#upImg').addEventListener('click', async () => {
       if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
-      const n = await pickImage();
+      const n = await uploadImage();
       if (n) { await refreshInfo(); drawImages(container, body); }
     });
     const grid = body.querySelector('.img-grid');
+    if (grid) {
+      bindFind(body, 'images', q => filterBy(grid, '.img-cell', q));
+      grid.addEventListener('change', async (e) => {
+        if (!e.target.classList.contains('ic-nm')) return;
+        const cell = e.target.closest('.img-cell');
+        const file = cell.dataset.n;
+        const t = e.target.value.trim();
+        site.imgNames = site.imgNames || {};
+        if (t) site.imgNames[file] = t; else delete site.imgNames[file];
+        await save();
+        cell.dataset.q = t + ' ' + file + ' ' + imageUsers(file).join(' ');
+        Utils.toast(t ? 'اتسمّت «' + t + '»' : 'الاسم اتشال', 'success');
+      });
+    }
     if (grid) grid.addEventListener('click', async (e) => {
       if (!e.target.classList.contains('ic-del')) return;
       const name = e.target.closest('.img-cell').dataset.n;
@@ -1160,6 +1324,7 @@ Modules.site = (() => {
         });
         site.offers.forEach(o => { if (o.image === name) o.image = ''; });
         (site.bundles || []).forEach(b => { if (b.image === name) b.image = ''; });
+        if (site.imgNames) delete site.imgNames[name];
         await save();
         await refreshInfo();
         drawImages(container, body);
