@@ -591,6 +591,16 @@ Modules.site = (() => {
     drawSections(container, body);
   }
 
+  // الماركات اللي كتبها قبل كده — عشان يختار منها بدل ما يكتبها كل مرة
+  function brandsUsed() {
+    const out = [];
+    site.products.forEach(p => {
+      const b = String(p.brand || '').trim();
+      if (b && out.indexOf(b) < 0) out.push(b);
+    });
+    return out.sort();
+  }
+
   // قايمة الأقسام لاختيار قسم المنتج
   function sectionOptions(current) {
     return `<option value="">— من غير قسم —</option>` +
@@ -624,20 +634,24 @@ Modules.site = (() => {
             <tbody id="prodBody">
               ${site.products.map((p, i) => {
                 const nSpecs = (p.specs || []).filter(x => (x.k || '').trim()).length;
+                const nFeat = (p.features || []).filter(x => String(x || '').trim()).length;
                 const secNm = (site.sections.find(x => Number(x.id) === Number(p.sectionId)) || {}).name || '';
+                const bits = [];
+                if (nFeat) bits.push(nFeat + ' ميزة');
+                if (nSpecs) bits.push(nSpecs + ' مواصفة');
+                if (p.about) bits.push('شرح');
                 return `
-              <tr data-i="${i}" data-q="${esc(p.name + ' ' + secNm + ' ' + (p.desc || '') + ' ' + imgLabel(p.image))}">
+              <tr data-i="${i}" data-q="${esc(p.name + ' ' + secNm + ' ' + (p.brand || '') + ' ' + (p.desc || '') + ' ' + imgLabel(p.image))}">
                 <td class="pcell">${p.image
                   ? `<img class="pth" src="site-img/${esc(p.image)}" alt="">`
                   : '<span class="pth empty">📦</span>'}
                   <button type="button" class="link-btn p-img">${p.image ? 'غيّر' : 'ارفع صورة'}</button></td>
-                <td><input class="cell p-name" value="${esc(p.name)}"></td>
+                <td><input class="cell p-name" value="${esc(p.name)}">
+                  ${p.brand ? `<span class="p-brand">${esc(p.brand)}</span>` : ''}</td>
                 <td><select class="cell p-sec">${sectionOptions(p.sectionId)}</select></td>
                 <td>
                   <button type="button" class="link-btn p-edit">${
-                    p.about || nSpecs
-                      ? '✏️ ' + (nSpecs ? nSpecs + ' مواصفة' : '') + (p.about ? (nSpecs ? ' + شرح' : 'فيه شرح') : '')
-                      : '➕ اكتب الشرح والمواصفات'}</button>
+                    bits.length ? '✏️ ' + bits.join(' + ') : '➕ اكتب المميزات والمواصفات'}</button>
                 </td>
                 <td class="strong">${money(p.price)}</td>
                 <td style="white-space:nowrap;">
@@ -708,13 +722,23 @@ Modules.site = (() => {
           <div class="field-row">
             <div class="field"><label>القسم</label>
               <select id="pdSec">${sectionOptions(p.sectionId)}</select></div>
+            <div class="field"><label>الماركة</label>
+              <input id="pdBrand" value="${esc(p.brand || '')}" placeholder="مثلاً: iLOCK"
+                     list="brandList"></div>
             <div class="field"><label>سطر صغير تحت الاسم</label>
-              <input id="pdDesc" value="${esc(p.desc || '')}" placeholder="مثلاً: ضمان سنة"></div>
+              <input id="pdDesc" value="${esc(p.desc || '')}" placeholder="مثلاً: محول منفذ حائط ثلاثي"></div>
           </div>
-          <div class="field"><label>الشرح الكامل (اللي الزبون يقراه لما يدوس على المنتج)</label>
-            <textarea id="pdAbout" rows="5" placeholder="اكتب براحتك: بيستعمل في إيه، بيتحمل لحد كام، الفرق بينه وبين غيره، أي نصيحة للزبون...">${esc(p.about || '')}</textarea></div>
+          <datalist id="brandList">${brandsUsed().map(x => `<option value="${esc(x)}">`).join('')}</datalist>
 
-          <label class="lbl">المواصفات</label>
+          <label class="lbl">المميزات</label>
+          <div class="hint" style="margin:-2px 0 8px;">سطر لكل ميزة — بتظهر للزبون كنقط تحت بعض.
+            زي: بلاستيك مقاوم للهب · توصيلات نحاسية · مأخذ مقاومة للأطفال</div>
+          <textarea id="pdFeats" rows="5" placeholder="محول منفذ حائط ثلاثي الاتجاه&#10;16 أمبير - 250 فولت - 3500 وات&#10;بلاستيك مقاوم للهب بمواد عالية الجودة&#10;توصيلات نحاسية">${esc((p.features || []).join('\n'))}</textarea>
+
+          <label class="lbl" style="margin-top:14px;">الشرح الكامل (اختياري)</label>
+          <textarea id="pdAbout" rows="4" placeholder="كلام مفتوح: بيستعمل في إيه، الفرق بينه وبين غيره، أي نصيحة للزبون...">${esc(p.about || '')}</textarea>
+
+          <label class="lbl" style="margin-top:14px;">المواصفات</label>
           <div class="hint" style="margin:-2px 0 8px;">زي: بيتحمل / الضمان / الماركة / المقاس / اللون</div>
           <div id="spList">${specs.map(specRow).join('')}</div>
           <button type="button" class="btn btn-ghost btn-sm" id="spAdd" style="margin:6px 0 16px;">+ مواصفة</button>
@@ -767,7 +791,10 @@ Modules.site = (() => {
           if (!nm) { Utils.toast('الاسم مش ممكن يبقى فاضي', 'error'); return; }
           p.name = nm;
           p.desc = mb.querySelector('#pdDesc').value.trim();
+          p.brand = mb.querySelector('#pdBrand').value.trim();
           p.about = mb.querySelector('#pdAbout').value.trim();
+          p.features = mb.querySelector('#pdFeats').value.split('\n')
+            .map(x => x.replace(/^[-•·*\s]+/, '').trim()).filter(Boolean);
           const sv = mb.querySelector('#pdSec').value;
           p.sectionId = sv ? Number(sv) : null;
           p.specs = [...list.querySelectorAll('.sp-row')]

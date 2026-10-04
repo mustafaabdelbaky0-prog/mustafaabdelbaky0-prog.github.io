@@ -138,19 +138,24 @@ const SiteGen = (() => {
   function productCard(p, s) {
     const price = Number(p.price || 0);
     const specs = (p.specs || []).filter(x => (x.k || '').trim() || (x.v || '').trim());
+    const feats = (p.features || []).map(x => String(x || '').trim()).filter(Boolean);
     const chain = secChain(s, p.sectionId);
     const gallery = [p.image].concat(p.images || []).filter(Boolean);
+    const brand = String(p.brand || '').trim();
+    // فوق اسم المنتج: الماركة لو كاتبها، وإلا القسم
+    const tag = brand || (chain.length ? chain[chain.length - 1].name : '');
+    const hasMore = specs.length || feats.length || p.about || gallery.length > 1;
     return `
-      <article class="card" data-name="${esc(p.name)}" data-price="${price}">
+      <article class="card" data-name="${esc(p.name)}" data-price="${price}" data-brand="${esc(brand)}">
         <button type="button" class="card-open" aria-label="تفاصيل ${esc(p.name)}">
           <div class="card-img">${p.image
             ? `<img src="img/${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">`
             : `<div class="noimg">📦</div>`}</div>
           <div class="card-body">
-            ${chain.length ? `<span class="card-sec">${esc(chain[chain.length - 1].name)}</span>` : ''}
+            ${tag ? `<span class="card-sec${brand ? ' is-brand' : ''}">${esc(tag)}</span>` : ''}
             <h3>${esc(p.name)}</h3>
             ${p.desc ? `<p class="card-desc">${esc(p.desc)}</p>` : ''}
-            ${specs.length || p.about ? `<span class="more">اعرف أكتر ←</span>` : ''}
+            ${hasMore ? `<span class="more">اعرف أكتر ←</span>` : ''}
           </div>
         </button>
         <div class="card-foot">
@@ -158,15 +163,26 @@ const SiteGen = (() => {
           <button type="button" class="add" data-name="${esc(p.name)}" data-price="${price}">أضف للطلب</button>
         </div>
         <div class="pdet" hidden>
+          ${brand ? `<div class="pd-brand">${esc(brand)}</div>` : ''}
           ${chain.length ? `<div class="pd-path">${chain.map(c => esc(c.name)).join(' ← ')}</div>` : ''}
           <h3>${esc(p.name)}</h3>
           <div class="pd-price">${money(price)} <small>ج.م${p.unit ? ' / ' + esc(p.unit) : ''}</small></div>
-          ${gallery.length ? `<div class="pd-imgs">${gallery.map(g =>
-            `<img src="img/${esc(g)}" alt="${esc(p.name)}" loading="lazy">`).join('')}</div>` : ''}
-          ${p.about ? `<p class="pd-about">${esc(p.about)}</p>`
-                    : (p.desc ? `<p class="pd-about">${esc(p.desc)}</p>` : '')}
-          ${specs.length ? `<table class="pd-specs">${specs.map(x =>
-            `<tr><th>${esc(x.k)}</th><td>${esc(x.v)}</td></tr>`).join('')}</table>` : ''}
+          ${gallery.length ? `
+          <div class="pd-gal">
+            <div class="pd-main"><img src="img/${esc(gallery[0])}" alt="${esc(p.name)}"></div>
+            ${gallery.length > 1 ? `<div class="pd-thumbs">${gallery.map((g, k) =>
+              `<button type="button" class="pd-th${k ? '' : ' on'}" data-src="img/${esc(g)}"
+                       aria-label="صورة ${k + 1}"><img src="img/${esc(g)}" alt="" loading="lazy"></button>`
+              ).join('')}</div>` : ''}
+          </div>` : ''}
+          ${p.desc ? `<p class="pd-lead">${esc(p.desc)}</p>` : ''}
+          ${feats.length ? `<div class="pd-blk"><h4>المميزات</h4>
+            <ul class="pd-feats">${feats.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>` : ''}
+          ${specs.length ? `<div class="pd-blk"><h4>المواصفات</h4>
+            <table class="pd-specs">${specs.map(x =>
+              `<tr><th>${esc(x.k)}</th><td>${esc(x.v)}</td></tr>`).join('')}</table></div>` : ''}
+          ${p.about ? `<div class="pd-blk"><h4>الوصف</h4>
+            <p class="pd-about">${esc(p.about)}</p></div>` : ''}
         </div>
       </article>`;
   }
@@ -349,7 +365,8 @@ ${s.bundles.length ? `
     ${s.products.length
       ? `<div class="grid" id="grid">${s.products.map(p =>
           `<div class="cell" data-path="${esc(secPath(s, p.sectionId) || '|0|')}"
-                data-find="${esc([p.name, p.desc, p.about,
+                data-find="${esc([p.name, p.brand, p.desc, p.about,
+                                  (p.features || []).join(' '),
                                   (p.specs || []).map(x => x.k + ' ' + x.v).join(' '),
                                   secChain(s, p.sectionId).map(c => c.name).join(' ')].join(' '))}"
            >${productCard(p, s)}</div>`).join('')}</div>
@@ -365,6 +382,12 @@ ${s.bundles.length ? `
     <button type="button" class="x pm-x" data-close>&times;</button>
     <div class="pm-body" id="pmBody"></div>
     <div class="pm-foot">
+      <div class="pm-qty">
+        <span>الكمية</span>
+        <button type="button" id="pmMinus" aria-label="أقل">&minus;</button>
+        <b id="pmQ">1</b>
+        <button type="button" id="pmPlus" aria-label="أكتر">+</button>
+      </div>
       <button type="button" class="btn btn-amber block" id="pmAdd">أضف للطلب</button>
     </div>
   </aside>
@@ -636,6 +659,8 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
   background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;}
 .card-sec{display:inline-block;background:var(--orange-soft);color:var(--orange-d);
   border-radius:999px;padding:2px 9px;font-size:11px;font-weight:800;margin-bottom:2px;}
+/* الماركة بتبان بلون المحل الغامق عشان تفرق عن اسم القسم */
+.card-sec.is-brand{background:var(--navy);color:#fff;letter-spacing:.3px;}
 .more{font-size:12.5px;font-weight:800;color:var(--orange);}
 .card-foot{padding:0 14px 14px;}
 
@@ -645,13 +670,36 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .pm-x{position:absolute;top:10px;inset-inline-end:14px;z-index:2;}
 .pm-body{padding:22px 20px 10px;overflow:auto;flex:1;}
 .pm-foot{padding:14px 20px 18px;border-top:1px solid var(--line);}
+.pm-qty{display:flex;align-items:center;gap:10px;margin-bottom:11px;font-weight:800;font-size:14px;}
+.pm-qty span{color:var(--soft);}
+.pm-qty b{min-width:42px;text-align:center;font-size:17px;font-variant-numeric:tabular-nums;}
+.pm-qty button{width:38px;height:38px;border:1.5px solid var(--line);background:#fff;border-radius:10px;
+  font-size:20px;font-weight:800;color:var(--navy);cursor:pointer;line-height:1;}
+.pm-qty button:hover{border-color:var(--orange);color:var(--orange);}
 .pd-path{font-size:12.5px;color:var(--orange);font-weight:800;margin-bottom:6px;}
 .pm-body h3{font-size:21px;font-weight:900;margin:0 0 8px;}
 .pd-price{font-size:24px;font-weight:900;color:var(--orange);font-variant-numeric:tabular-nums;margin-bottom:14px;}
 .pd-price small{font-size:13px;color:var(--soft);font-weight:700;}
-.pd-imgs{display:flex;gap:8px;overflow-x:auto;margin-bottom:14px;}
-.pd-imgs img{width:200px;height:150px;object-fit:cover;border-radius:11px;flex:none;background:var(--orange-soft);}
-.pd-about{font-size:14.5px;line-height:1.95;color:var(--ink);margin:0 0 14px;white-space:pre-line;}
+.pd-brand{display:inline-block;background:var(--navy);color:#fff;font-size:11.5px;font-weight:900;
+  letter-spacing:.4px;padding:4px 10px;border-radius:999px;margin-bottom:8px;}
+/* معرض الصور: صورة كبيرة وتحتها الصور الصغيرة */
+.pd-gal{margin-bottom:16px;}
+.pd-main{background:var(--orange-soft);border-radius:14px;overflow:hidden;border:1px solid var(--line);}
+/* الصورة متسيبش المميزات تحت الشاشة — فطولها محدود */
+.pd-main img{width:100%;height:min(36vh,300px);object-fit:contain;display:block;background:#fff;}
+.pd-thumbs{display:flex;gap:8px;margin-top:9px;overflow-x:auto;padding-bottom:3px;}
+.pd-th{flex:none;width:68px;height:68px;padding:0;border:2px solid var(--line);border-radius:10px;
+  overflow:hidden;background:#fff;cursor:pointer;}
+.pd-th img{width:100%;height:100%;object-fit:cover;display:block;}
+.pd-th.on{border-color:var(--orange);}
+.pd-lead{font-size:14.5px;color:var(--soft);font-weight:700;margin:0 0 14px;line-height:1.8;}
+.pd-blk{margin-bottom:16px;}
+.pd-blk h4{font-size:15px;font-weight:900;margin:0 0 9px;padding-inline-start:11px;
+  border-inline-start:4px solid var(--orange);line-height:1.3;}
+.pd-feats{margin:0;padding-inline-start:20px;font-size:14.5px;line-height:2;color:var(--ink);}
+.pd-feats li{margin-bottom:2px;}
+.pd-feats li::marker{color:var(--orange);}
+.pd-about{font-size:14.5px;line-height:1.95;color:var(--ink);margin:0;white-space:pre-line;}
 .pd-specs{width:100%;border-collapse:collapse;font-size:14px;}
 .pd-specs th,.pd-specs td{text-align:start;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;}
 .pd-specs th{color:var(--soft);font-weight:700;width:42%;background:var(--bg);}
@@ -760,9 +808,10 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
     });
   }
 
-  function add(name,price){
+  function add(name,price,qty){
+    var n=Math.max(1,Number(qty)||1);
     if(!cart[name]) cart[name]={name:name,price:Number(price)||0,qty:0};
-    cart[name].qty++; save(); paint();
+    cart[name].qty+=n; save(); paint();
   }
 
   document.addEventListener('click',function(e){
@@ -871,20 +920,35 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
   }
 
   // ===== نافذة تفاصيل المنتج =====
-  var pmName='', pmPrice=0;
+  var pmName='', pmPrice=0, pmQty=1;
+  function setQ(n){
+    pmQty=Math.max(1,Math.min(999,n));
+    $('pmQ').textContent=pmQty;
+    $('pmAdd').textContent = pmQty>1 ? ('أضف '+pmQty+' للطلب') : 'أضف للطلب';
+  }
   function openProduct(card){
     if(!card) return;
     var det=card.querySelector('.pdet');
     $('pmBody').innerHTML = det ? det.innerHTML : '';
+    $('pmBody').scrollTop=0;
     pmName=card.dataset.name; pmPrice=Number(card.dataset.price)||0;
-    var btn=$('pmAdd');
-    btn.textContent = cart[pmName] ? ('في الطلب ('+cart[pmName].qty+') — زوّد واحد') : 'أضف للطلب';
+    setQ(1);
+    if(cart[pmName]) $('pmAdd').textContent='في الطلب ('+cart[pmName].qty+') — زوّد كمان';
     open('pmodal');
   }
+  $('pmMinus').addEventListener('click', function(){ setQ(pmQty-1); });
+  $('pmPlus').addEventListener('click', function(){ setQ(pmQty+1); });
   $('pmAdd').addEventListener('click', function(){
     if(!pmName) return;
-    add(pmName,pmPrice);
+    add(pmName,pmPrice,pmQty);
     closeAll(); open('drawer');
+  });
+  /* الصور: دوسة على صورة صغيرة بتكبّرها فوق — زي أي موقع منتجات */
+  $('pmBody').addEventListener('click', function(e){
+    var t=e.target.closest('.pd-th'); if(!t) return;
+    var main=$('pmBody').querySelector('.pd-main img');
+    if(main) main.src=t.dataset.src;
+    $('pmBody').querySelectorAll('.pd-th').forEach(function(x){ x.classList.toggle('on',x===t); });
   });
 
   function open(id){ $(id).hidden=false; document.body.style.overflow='hidden'; }
