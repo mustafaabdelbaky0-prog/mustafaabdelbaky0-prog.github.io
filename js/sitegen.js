@@ -169,7 +169,13 @@ const SiteGen = (() => {
           <div class="pd-price">${money(price)} <small>ج.م${p.unit ? ' / ' + esc(p.unit) : ''}</small></div>
           ${gallery.length ? `
           <div class="pd-gal">
-            <div class="pd-main"><img src="img/${esc(gallery[0])}" alt="${esc(p.name)}"></div>
+            <div class="pd-main">
+              <img src="img/${esc(gallery[0])}" alt="${esc(p.name)}">
+              ${gallery.length > 1 ? `
+              <button type="button" class="pd-nav pd-prev" data-d="-1" aria-label="الصورة اللي قبلها">‹</button>
+              <button type="button" class="pd-nav pd-next" data-d="1" aria-label="الصورة اللي بعدها">›</button>
+              <span class="pd-count"><b>1</b>/${gallery.length}</span>` : ''}
+            </div>
             ${gallery.length > 1 ? `<div class="pd-thumbs">${gallery.map((g, k) =>
               `<button type="button" class="pd-th${k ? '' : ' on'}" data-src="img/${esc(g)}"
                        aria-label="صورة ${k + 1}"><img src="img/${esc(g)}" alt="" loading="lazy"></button>`
@@ -684,7 +690,15 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
   letter-spacing:.4px;padding:4px 10px;border-radius:999px;margin-bottom:8px;}
 /* معرض الصور: صورة كبيرة وتحتها الصور الصغيرة */
 .pd-gal{margin-bottom:16px;}
-.pd-main{background:var(--orange-soft);border-radius:14px;overflow:hidden;border:1px solid var(--line);}
+.pd-main{position:relative;background:var(--orange-soft);border-radius:14px;overflow:hidden;
+  border:1px solid var(--line);}
+.pd-nav{position:absolute;top:50%;transform:translateY(-50%);width:36px;height:36px;border:0;
+  border-radius:50%;background:rgba(255,255,255,.92);box-shadow:0 2px 8px rgba(0,0,0,.18);
+  font-size:24px;line-height:1;color:var(--navy);cursor:pointer;padding:0;}
+.pd-prev{inset-inline-start:9px;} .pd-next{inset-inline-end:9px;}
+.pd-nav:hover{background:#fff;color:var(--orange);}
+.pd-count{position:absolute;bottom:9px;inset-inline-end:11px;background:rgba(20,20,20,.72);color:#fff;
+  font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px;}
 /* الصورة متسيبش المميزات تحت الشاشة — فطولها محدود */
 .pd-main img{width:100%;height:min(36vh,300px);object-fit:contain;display:block;background:#fff;}
 .pd-thumbs{display:flex;gap:8px;margin-top:9px;overflow-x:auto;padding-bottom:3px;}
@@ -920,7 +934,24 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
   }
 
   // ===== نافذة تفاصيل المنتج =====
-  var pmName='', pmPrice=0, pmQty=1;
+  var pmName='', pmPrice=0, pmQty=1, pmIdx=0, pmTimer=null;
+  /* الصور بتتقلب لوحدها كل ٣ ثواني عشان الزبون يشوف المنتج من كل
+     ناحية من غير ما يعمل حاجة. أول ما يمسك هو، بنوقف ونسيبه. */
+  function showImg(i){
+    var ths=$('pmBody').querySelectorAll('.pd-th');
+    if(ths.length<2) return;
+    pmIdx=(i%ths.length+ths.length)%ths.length;
+    var main=$('pmBody').querySelector('.pd-main img');
+    if(main) main.src=ths[pmIdx].dataset.src;
+    for(var k=0;k<ths.length;k++) ths[k].classList.toggle('on',k===pmIdx);
+    var c=$('pmBody').querySelector('.pd-count b');
+    if(c) c.textContent=pmIdx+1;
+  }
+  function autoPlay(on){
+    if(pmTimer){ clearInterval(pmTimer); pmTimer=null; }
+    if(on && $('pmBody').querySelectorAll('.pd-th').length>1)
+      pmTimer=setInterval(function(){ showImg(pmIdx+1); },3000);
+  }
   function setQ(n){
     pmQty=Math.max(1,Math.min(999,n));
     $('pmQ').textContent=pmQty;
@@ -932,7 +963,7 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
     $('pmBody').innerHTML = det ? det.innerHTML : '';
     $('pmBody').scrollTop=0;
     pmName=card.dataset.name; pmPrice=Number(card.dataset.price)||0;
-    setQ(1);
+    setQ(1); pmIdx=0; autoPlay(true);
     if(cart[pmName]) $('pmAdd').textContent='في الطلب ('+cart[pmName].qty+') — زوّد كمان';
     open('pmodal');
   }
@@ -943,16 +974,20 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
     add(pmName,pmPrice,pmQty);
     closeAll(); open('drawer');
   });
-  /* الصور: دوسة على صورة صغيرة بتكبّرها فوق — زي أي موقع منتجات */
+  /* الصور: دوسة على صورة صغيرة أو على السهم بتقلّبها — وبتوقف
+     التقليب التلقائي عشان الزبون يبقى هو اللي ماسك. */
   $('pmBody').addEventListener('click', function(e){
+    var nav=e.target.closest('.pd-nav');
+    if(nav){ autoPlay(false); showImg(pmIdx+Number(nav.dataset.d)); return; }
     var t=e.target.closest('.pd-th'); if(!t) return;
-    var main=$('pmBody').querySelector('.pd-main img');
-    if(main) main.src=t.dataset.src;
-    $('pmBody').querySelectorAll('.pd-th').forEach(function(x){ x.classList.toggle('on',x===t); });
+    autoPlay(false);
+    var ths=[].slice.call($('pmBody').querySelectorAll('.pd-th'));
+    showImg(ths.indexOf(t));
   });
 
   function open(id){ $(id).hidden=false; document.body.style.overflow='hidden'; }
   function closeAll(){
+    autoPlay(false);
     ['drawer','orderBox','done','pmodal'].forEach(function(i){ var el=$(i); if(el) el.hidden=true; });
     document.body.style.overflow='';
   }

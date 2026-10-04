@@ -636,6 +636,7 @@ Modules.site = (() => {
                 const nSpecs = (p.specs || []).filter(x => (x.k || '').trim()).length;
                 const nFeat = (p.features || []).filter(x => String(x || '').trim()).length;
                 const secNm = (site.sections.find(x => Number(x.id) === Number(p.sectionId)) || {}).name || '';
+                const nImgs = [p.image].concat(p.images || []).filter(Boolean).length;
                 const bits = [];
                 if (nFeat) bits.push(nFeat + ' ميزة');
                 if (nSpecs) bits.push(nSpecs + ' مواصفة');
@@ -645,7 +646,8 @@ Modules.site = (() => {
                 <td class="pcell">${p.image
                   ? `<img class="pth" src="site-img/${esc(p.image)}" alt="">`
                   : '<span class="pth empty">📦</span>'}
-                  <button type="button" class="link-btn p-img">${p.image ? 'غيّر' : 'ارفع صورة'}</button></td>
+                  <button type="button" class="link-btn p-img">${
+                    nImgs ? '🖼️ الصور (' + nImgs + ')' : '📷 ضيف صور'}</button></td>
                 <td><input class="cell p-name" value="${esc(p.name)}">
                   ${p.brand ? `<span class="p-brand">${esc(p.brand)}</span>` : ''}</td>
                 <td><select class="cell p-sec">${sectionOptions(p.sectionId)}</select></td>
@@ -683,8 +685,7 @@ Modules.site = (() => {
         [site.products[i + 1], site.products[i]] = [site.products[i], site.products[i + 1]];
         await save(); drawProducts(container, body);
       } else if (e.target.classList.contains('p-img')) {
-        const n = await pickImage({ suggest: site.products[i].name });
-        if (n) { site.products[i].image = n; await save(); drawProducts(container, body); }
+        openProductImages(i, container, body);
       } else if (e.target.classList.contains('p-edit')) {
         openProductEditor(i, container, body);
       }
@@ -698,13 +699,89 @@ Modules.site = (() => {
     });
   }
 
-  /* محرر المنتج: الشرح الكامل والمواصفات (بيتحمل كام، الضمان، المقاس…)
-     وصور زيادة. ده اللي الزبون بيشوفه لما يدوس على المنتج. */
+  /* صور المنتج: واحدة أساسية (اللي بتبان في القايمة) وتحتها صور
+     من زوايا تانية. الزبون بيشوفهم كلهم لما يدوس على المنتج.
+
+     كانت الصور الزيادة مستخبية جوه نافذة المواصفات، فصاحب المحل
+     افتكر إن المنتج مش بياخد غير صورة واحدة. بقت في الجدول قدامه. */
+  function openProductImages(i, container, body) {
+    const p = site.products[i];
+    const all = () => [p.image].concat(p.images || []).filter(Boolean);
+    const setAll = async (arr) => {
+      p.image = arr[0] || '';
+      p.images = arr.slice(1);
+      await save();
+    };
+
+    Utils.openModal({
+      title: '🖼️ صور: ' + p.name,
+      wide: true,
+      bodyHtml: `
+        <div class="hint" style="margin-bottom:12px;">
+          الصورة الأولى هي اللي بتبان في قايمة المنتجات. الباقي بيظهروا تحتها
+          لما الزبون يدوس على المنتج — صوّره من كذا ناحية عشان يشوفه كويس.
+        </div>
+        <div class="img-grid sm" id="piGrid"></div>
+        <button type="button" class="btn btn-ghost" id="piAdd" style="margin-top:12px;">📷 ضيف صورة</button>
+        <div class="form-actions" style="margin-top:18px;">
+          <button type="button" class="btn btn-amber" id="piDone">تمام</button>
+        </div>`,
+      onMount: (mb, close) => {
+        const grid = mb.querySelector('#piGrid');
+        const draw = () => {
+          const arr = all();
+          grid.innerHTML = arr.length ? arr.map((im, k) => `
+            <div class="img-cell" data-k="${k}">
+              <img src="site-img/${esc(im)}" alt="" loading="lazy">
+              ${k === 0 ? '<span class="ic-main">الأساسية</span>' : ''}
+              <div class="ic-name">${esc(imgLabel(im) || 'من غير اسم')}</div>
+              <div class="ic-row">
+                <button type="button" class="icon-btn pi-up" title="قدّمها" ${k === 0 ? 'disabled' : ''}>▲</button>
+                <button type="button" class="icon-btn pi-dn" title="أخّرها" ${k === arr.length - 1 ? 'disabled' : ''}>▼</button>
+                <button type="button" class="icon-btn pi-del" title="شيلها من المنتج">🗑️</button>
+              </div>
+            </div>`).join('')
+            : '<p class="empty-note">مفيش صور للمنتج ده لسه — دوس «ضيف صورة».</p>';
+        };
+        draw();
+
+        grid.addEventListener('click', async (e) => {
+          const cell = e.target.closest('.img-cell'); if (!cell) return;
+          const k = Number(cell.dataset.k);
+          const arr = all();
+          if (e.target.classList.contains('pi-up') && k > 0) {
+            [arr[k - 1], arr[k]] = [arr[k], arr[k - 1]];
+          } else if (e.target.classList.contains('pi-dn') && k < arr.length - 1) {
+            [arr[k + 1], arr[k]] = [arr[k], arr[k + 1]];
+          } else if (e.target.classList.contains('pi-del')) {
+            arr.splice(k, 1);
+          } else return;
+          await setAll(arr);
+          draw();
+          drawProducts(container, body);
+        });
+
+        mb.querySelector('#piAdd').addEventListener('click', async () => {
+          const n = await pickImage({ suggest: p.name });
+          if (!n) return;
+          const arr = all();
+          if (arr.indexOf(n) >= 0) { Utils.toast('الصورة دي موجودة على المنتج', 'info'); return; }
+          arr.push(n);
+          await setAll(arr);
+          draw();
+          drawProducts(container, body);
+        });
+        mb.querySelector('#piDone').addEventListener('click', close);
+      }
+    });
+  }
+
+  /* محرر المنتج: الشرح الكامل والمواصفات (بيتحمل كام، الضمان، المقاس…).
+     الصور ليها نافذتها لوحدها من الجدول. */
   function openProductEditor(i, container, body) {
     const p = site.products[i];
     const specs = (p.specs || []).slice();
     if (!specs.length) specs.push({ k: '', v: '' });
-    const extra = (p.images || []).slice();
     const specRow = (x, n) => `
       <div class="sp-row" data-n="${n}">
         <input class="cell sp-k" value="${esc(x.k || '')}" placeholder="الخانة (مثلاً: بيتحمل)">
@@ -743,9 +820,10 @@ Modules.site = (() => {
           <div id="spList">${specs.map(specRow).join('')}</div>
           <button type="button" class="btn btn-ghost btn-sm" id="spAdd" style="margin:6px 0 16px;">+ مواصفة</button>
 
-          <label class="lbl">صور زيادة (غير الصورة الأساسية)</label>
-          <div id="pdImgs" class="img-grid sm"></div>
-          <button type="button" class="btn btn-ghost btn-sm" id="pdAddImg" style="margin-top:8px;">📷 ضيف صورة</button>
+          <div class="notice notice-info" style="margin-top:4px;">
+            🖼️ صور المنتج بتتظبط من زرار <strong>«الصور»</strong> في الجدول — صورة أساسية وتحتها
+            صور من زوايا تانية.
+          </div>
 
           <div class="form-actions" style="margin-top:18px;">
             <button type="button" class="btn btn-ghost" id="pdCancel">إلغاء</button>
@@ -765,25 +843,6 @@ Modules.site = (() => {
           else { e.target.closest('.sp-row').querySelectorAll('input').forEach(x => x.value = ''); }
         });
 
-        const drawExtra = () => {
-          const box = mb.querySelector('#pdImgs');
-          box.innerHTML = extra.length ? extra.map((im, k) => `
-            <div class="img-cell" data-k="${k}">
-              <img src="site-img/${esc(im)}" alt="">
-              <button type="button" class="icon-btn ic-del">🗑️</button>
-            </div>`).join('') : '<p class="empty-note" style="padding:6px 0;">مفيش صور زيادة</p>';
-        };
-        drawExtra();
-        mb.querySelector('#pdImgs').addEventListener('click', (e) => {
-          if (!e.target.classList.contains('ic-del')) return;
-          extra.splice(Number(e.target.closest('.img-cell').dataset.k), 1);
-          drawExtra();
-        });
-        mb.querySelector('#pdAddImg').addEventListener('click', async () => {
-          const nm = await pickImage({ suggest: p.name });
-          if (nm) { extra.push(nm); drawExtra(); }
-        });
-
         mb.querySelector('#pdCancel').addEventListener('click', close);
         Utils.guardSubmit(mb.querySelector('#pdForm'), async (e) => {
           e.preventDefault();
@@ -800,7 +859,6 @@ Modules.site = (() => {
           p.specs = [...list.querySelectorAll('.sp-row')]
             .map(r => ({ k: r.querySelector('.sp-k').value.trim(), v: r.querySelector('.sp-v').value.trim() }))
             .filter(x => x.k || x.v);
-          p.images = extra.slice();
           await save();
           close();
           drawProducts(container, body);
