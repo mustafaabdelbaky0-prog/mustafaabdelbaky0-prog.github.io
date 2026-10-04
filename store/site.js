@@ -82,9 +82,9 @@
     box.innerHTML=kids.map(function(k){
       var on = (sub||sel)===String(k.id);
       return '<button type="button" class="seccard'+(on?' on':'')+'" data-sec="'+k.id+'">'+
-        '<span class="sc-img">'+(k.img
+        '<span class="sc-img'+(k.img?'':' is-empty')+'">'+(k.img
           ? '<img src="img/'+k.img+'" alt="'+k.name+'" loading="lazy">'
-          : '<span class="sc-ph">🗂️</span>')+'</span>'+
+          : '<span class="sc-ph">'+k.name.slice(0,2)+'</span>')+'</span>'+
         '<span class="sc-t"><b>'+k.name+'</b><i>'+k.n+' صنف</i></span></button>';
     }).join('');
   }

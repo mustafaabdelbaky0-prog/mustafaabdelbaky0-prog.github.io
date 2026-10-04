@@ -91,9 +91,13 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
   display:flex;flex-direction:column;height:100%;transition:box-shadow .15s, transform .15s;}
 .card:hover{box-shadow:0 8px 24px rgba(240,78,5,.16);border-color:var(--orange-line);transform:translateY(-2px);}
-.card-img{aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
-.card-img img{width:100%;height:100%;object-fit:cover;}
-.noimg{width:100%;height:100%;display:grid;place-items:center;font-size:40px;opacity:.35;}
+/* خلفية بيضا للصورة و«احتواء» مش «قص»: المنتج بيبان كامل زي ما هو
+   في الصورة، مش مقصوص من الجنب. */
+.card-img{aspect-ratio:4/3;background:#fff;overflow:hidden;border-bottom:1px solid var(--line);}
+.card-img img{width:100%;height:100%;object-fit:contain;padding:10px;}
+.card-img.is-empty{background:linear-gradient(135deg,#FBFAF9,#F1EFEC);}
+.noimg{width:100%;height:100%;display:grid;place-items:center;color:var(--orange);opacity:.18;}
+.noimg svg{width:54px;height:54px;}
 .card-body{padding:12px 14px 8px;display:flex;flex-direction:column;flex:1;gap:5px;align-items:flex-start;}
 .card-body h3{font-size:15.5px;font-weight:800;margin:0;}
 .card-desc{margin:0;font-size:12.5px;color:var(--soft);line-height:1.7;}
@@ -102,10 +106,12 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .card-foot .add{width:100%;padding:10px 14px;font-size:13.5px;}
 .price{font-weight:900;font-size:17px;color:var(--orange);font-variant-numeric:tabular-nums;}
 .price small{font-size:11.5px;font-weight:700;color:var(--soft);}
-.add{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:8px 14px;
-  font:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;}
-.add:hover{background:var(--orange);}
-.add.in{background:var(--ok);}
+/* زرار الطلب بلون المحل — هو أهم زرار في الصفحة */
+.add{background:var(--orange);color:#fff;border:none;border-radius:10px;padding:8px 14px;
+  font:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;
+  box-shadow:0 2px 7px rgba(240,78,5,.26);transition:background .15s, box-shadow .15s;}
+.add:hover{background:var(--orange-d);box-shadow:0 4px 13px rgba(240,78,5,.34);}
+.add.in{background:var(--ok);box-shadow:0 2px 7px rgba(29,107,61,.26);}
 .empty{color:var(--soft);font-size:15px;}
 
 .offers{display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:16px;}
@@ -154,7 +160,11 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .seccard.on{border-color:var(--orange);box-shadow:0 0 0 2px rgba(240,78,5,.28);}
 .sc-img{display:block;aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
 .sc-img img{width:100%;height:100%;object-fit:cover;display:block;}
-.sc-ph{width:100%;height:100%;display:grid;place-items:center;font-size:30px;opacity:.4;}
+/* القسم اللي لسه مالوش صورة: أول حرفين من اسمه بلون المحل —
+   أنضف بكتير من أيقونة رمادية مكررة في كل كرت */
+.sc-img.is-empty{background:linear-gradient(135deg,var(--orange-soft),#FFE2D2);}
+.sc-ph{width:100%;height:100%;display:grid;place-items:center;font-size:26px;font-weight:900;
+  color:var(--orange);opacity:.55;letter-spacing:1px;}
 .sc-t{display:flex;flex-direction:column;gap:1px;padding:9px 12px 11px;}
 .sc-t b{font-size:14.5px;font-weight:800;}
 .sc-t i{font-style:normal;font-size:12px;color:var(--soft);font-weight:700;}
