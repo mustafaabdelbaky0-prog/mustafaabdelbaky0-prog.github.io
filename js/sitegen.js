@@ -17,6 +17,12 @@ const SiteGen = (() => {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const digits = s => String(s || '').replace(/[^\d+]/g, '');
+  // بصمة قصيرة لمحتوى نصي — بنعلّم بيها نسخة الستايل والسكربت
+  function hash(t) {
+    let h = 5381;
+    for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+    return h.toString(36);
+  }
 
   // ---------- اللي بيتحط أول مرة عشان ما يبدأش من صفحة بيضا ----------
   function defaults(company) {
@@ -148,9 +154,9 @@ const SiteGen = (() => {
     return `
       <article class="card" data-name="${esc(p.name)}" data-price="${price}" data-brand="${esc(brand)}">
         <button type="button" class="card-open" aria-label="تفاصيل ${esc(p.name)}">
-          <div class="card-img">${p.image
+          <div class="card-img${p.image ? '' : ' is-empty'}">${p.image
             ? `<img src="img/${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">`
-            : `<div class="noimg">📦</div>`}</div>
+            : `<div class="noimg">${LOGO}</div>`}</div>
           <div class="card-body">
             ${tag ? `<span class="card-sec${brand ? ' is-brand' : ''}">${esc(tag)}</span>` : ''}
             <h3>${esc(p.name)}</h3>
@@ -253,7 +259,7 @@ const SiteGen = (() => {
     const desc = s.seo.description || s.hero.subtitle || b.tagline;
     const ogImg = s.hero.image || (s.products.find(p => p.image) || {}).image || '';
 
-    const html = `<!DOCTYPE html>
+    let html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -347,7 +353,8 @@ ${s.bundles.length ? `
     ${tops.length ? `
     <div class="cats" id="topCats">
       <button type="button" class="cat on" data-sec="">كل الأقسام</button>
-      ${tops.map(t => `<button type="button" class="cat" data-sec="${t.id}">${esc(t.name)}
+      ${/* القسم الفاضي مبيظهرش للزبون — مفيش فايدة من قسم يدوس عليه يلاقيه فاضي */''}
+      ${tops.filter(t => countIn(s, t.id) > 0).map(t => `<button type="button" class="cat" data-sec="${t.id}">${esc(t.name)}
         <i>${countIn(s, t.id)}</i></button>`).join('')}
       ${loose ? `<button type="button" class="cat" data-sec="0">باقي الأصناف <i>${loose}</i></button>` : ''}
     </div>
@@ -355,7 +362,9 @@ ${s.bundles.length ? `
       (() => {
         const m = {};
         const put = (parent) => {
-          const kids = children(s, parent).sort((a, b2) => Number(a.order || 0) - Number(b2.order || 0));
+          const kids = children(s, parent)
+            .sort((a, b2) => Number(a.order || 0) - Number(b2.order || 0))
+            .filter(k => countIn(s, k.id) > 0);
           if (kids.length) {
             m[parent == null ? '' : String(parent)] =
               kids.map(k => ({ id: k.id, name: k.name, n: countIn(s, k.id), img: k.image || '' }));
@@ -488,6 +497,16 @@ ${tel ? `<a class="fab" href="tel:${esc(tel)}" aria-label="اتصل بنا">📞
 </body>
 </html>`;
 
+    /* رقم نسخة للستايل والسكربت.
+
+       من غيره المتصفح بيفضل شغّال على نسخة قديمة محفوظة عنده: ينزّل
+       الصفحة الجديدة ويستعمل معاها ستايل قديم — فالشكل بيطلع مكسور
+       (الصور الصغيرة بتطلع بحجمها الكامل مثلاً). الرقم بيتحسب من
+       محتوى الملفين نفسهم، فمبيتغيّرش غير لما يتغيّروا فعلاً. */
+    const stamp = hash(CSS + JS);
+    html = html.replace('href="site.css"', 'href="site.css?v=' + stamp + '"')
+               .replace('src="site.js"', 'src="site.js?v=' + stamp + '"');
+
     return [
       { path: 'index.html', text: html },
       { path: 'site.css', text: CSS },
@@ -591,9 +610,13 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
   display:flex;flex-direction:column;height:100%;transition:box-shadow .15s, transform .15s;}
 .card:hover{box-shadow:0 8px 24px rgba(240,78,5,.16);border-color:var(--orange-line);transform:translateY(-2px);}
-.card-img{aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
-.card-img img{width:100%;height:100%;object-fit:cover;}
-.noimg{width:100%;height:100%;display:grid;place-items:center;font-size:40px;opacity:.35;}
+/* خلفية بيضا للصورة و«احتواء» مش «قص»: المنتج بيبان كامل زي ما هو
+   في الصورة، مش مقصوص من الجنب. */
+.card-img{aspect-ratio:4/3;background:#fff;overflow:hidden;border-bottom:1px solid var(--line);}
+.card-img img{width:100%;height:100%;object-fit:contain;padding:10px;}
+.card-img.is-empty{background:linear-gradient(135deg,#FBFAF9,#F1EFEC);}
+.noimg{width:100%;height:100%;display:grid;place-items:center;color:var(--orange);opacity:.18;}
+.noimg svg{width:54px;height:54px;}
 .card-body{padding:12px 14px 8px;display:flex;flex-direction:column;flex:1;gap:5px;align-items:flex-start;}
 .card-body h3{font-size:15.5px;font-weight:800;margin:0;}
 .card-desc{margin:0;font-size:12.5px;color:var(--soft);line-height:1.7;}
@@ -602,10 +625,12 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .card-foot .add{width:100%;padding:10px 14px;font-size:13.5px;}
 .price{font-weight:900;font-size:17px;color:var(--orange);font-variant-numeric:tabular-nums;}
 .price small{font-size:11.5px;font-weight:700;color:var(--soft);}
-.add{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:8px 14px;
-  font:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;}
-.add:hover{background:var(--orange);}
-.add.in{background:var(--ok);}
+/* زرار الطلب بلون المحل — هو أهم زرار في الصفحة */
+.add{background:var(--orange);color:#fff;border:none;border-radius:10px;padding:8px 14px;
+  font:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;
+  box-shadow:0 2px 7px rgba(240,78,5,.26);transition:background .15s, box-shadow .15s;}
+.add:hover{background:var(--orange-d);box-shadow:0 4px 13px rgba(240,78,5,.34);}
+.add.in{background:var(--ok);box-shadow:0 2px 7px rgba(29,107,61,.26);}
 .empty{color:var(--soft);font-size:15px;}
 
 .offers{display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:16px;}
@@ -654,7 +679,11 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .seccard.on{border-color:var(--orange);box-shadow:0 0 0 2px rgba(240,78,5,.28);}
 .sc-img{display:block;aspect-ratio:4/3;background:var(--orange-soft);overflow:hidden;}
 .sc-img img{width:100%;height:100%;object-fit:cover;display:block;}
-.sc-ph{width:100%;height:100%;display:grid;place-items:center;font-size:30px;opacity:.4;}
+/* القسم اللي لسه مالوش صورة: أول حرفين من اسمه بلون المحل —
+   أنضف بكتير من أيقونة رمادية مكررة في كل كرت */
+.sc-img.is-empty{background:linear-gradient(135deg,var(--orange-soft),#FFE2D2);}
+.sc-ph{width:100%;height:100%;display:grid;place-items:center;font-size:26px;font-weight:900;
+  color:var(--orange);opacity:.55;letter-spacing:1px;}
 .sc-t{display:flex;flex-direction:column;gap:1px;padding:9px 12px 11px;}
 .sc-t b{font-size:14.5px;font-weight:800;}
 .sc-t i{font-style:normal;font-size:12px;color:var(--soft);font-weight:700;}
@@ -872,9 +901,9 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
     box.innerHTML=kids.map(function(k){
       var on = (sub||sel)===String(k.id);
       return '<button type="button" class="seccard'+(on?' on':'')+'" data-sec="'+k.id+'">'+
-        '<span class="sc-img">'+(k.img
+        '<span class="sc-img'+(k.img?'':' is-empty')+'">'+(k.img
           ? '<img src="img/'+k.img+'" alt="'+k.name+'" loading="lazy">'
-          : '<span class="sc-ph">🗂️</span>')+'</span>'+
+          : '<span class="sc-ph">'+k.name.slice(0,2)+'</span>')+'</span>'+
         '<span class="sc-t"><b>'+k.name+'</b><i>'+k.n+' صنف</i></span></button>';
     }).join('');
   }
