@@ -66,12 +66,18 @@ Modules.site = (() => {
       img.src = url;
     });
   }
+  /* اسم ملف لكل صورة. العدّاد مهم: لما يرفع ٤ صور مرة واحدة بيبقوا
+     كلهم في نفس الثانية، والرقم العشوائي لوحده ممكن يتكرر فتروح
+     صورة فوق التانية. */
+  let imgSeq = 0;
   function newImageName() {
     const d = new Date();
     const p = n => String(n).padStart(2, '0');
+    imgSeq = (imgSeq + 1) % 1000;
     return 'p' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
            p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) +
-           String(Math.floor(Math.random() * 90) + 10) + '.jpg';
+           String(imgSeq).padStart(3, '0') +
+           String(Math.floor(Math.random() * 900) + 100) + '.jpg';
   }
   /* اسم الصورة اللي هو سمّاها. الاسم بيتخزن في إعدادات الموقع مش في
      اسم الملف نفسه — عشان لو غيّر الاسم ما يبوّظش اللينكات. */
@@ -113,6 +119,41 @@ Modules.site = (() => {
           try { await upload(await shrink(f, 1000)); }
           catch (e) { Utils.toast('الصورة ما اترفعتش', 'error'); resolve(null); }
         }
+      });
+      inp.click();
+    });
+  }
+
+  /* رفع كذا صورة مرة واحدة — للصور الجاهزة (ملف الصور بتاع المورّد
+     أو صور اتصوّرت كويس). مبتعدّيش على الاستوديو عشان ما يفضلش
+     يعدّل صورة صورة؛ بتتصغّر وبس. */
+  function uploadMany(suggest) {
+    if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return Promise.resolve([]); }
+    return new Promise((resolve) => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+      inp.addEventListener('change', async () => {
+        const fs = Array.prototype.slice.call(inp.files || []);
+        if (!fs.length) { resolve([]); return; }
+        Utils.toast('بيرفع ' + fs.length + ' صورة...', 'info');
+        const out = [];
+        for (let i = 0; i < fs.length; i++) {
+          try {
+            const b64 = await shrink(fs[i], 1200);
+            const name = newImageName();
+            await api('api/site/save', { files: [{ path: 'img/' + name, b64 }] });
+            if (suggest) {
+              site.imgNames = site.imgNames || {};
+              site.imgNames[name] = fs.length > 1 ? suggest + ' ' + (i + 1) : suggest;
+            }
+            out.push(name);
+          } catch (e) {
+            Utils.toast('صورة ما اترفعتش: ' + fs[i].name, 'error');
+          }
+        }
+        if (out.length) { dirty = true; await save(); }
+        Utils.toast('اترفعت ' + out.length + ' صورة', out.length ? 'success' : 'error');
+        resolve(out);
       });
       inp.click();
     });
@@ -591,6 +632,140 @@ Modules.site = (() => {
     drawSections(container, body);
   }
 
+  /* ---------- تعبئة سريعة ----------
+
+     أسامي المنتجات اللي هو كاتبها فيها معلومات كتير: الماركة والنوع
+     والمقاس. «مفتاح16امبير اليوس» فيها ٣ معلومات. الكود ده بيقراها
+     ويجهّز ماركة ووصف قصير ومواصفة — من كلامه هو، مش من عندنا.
+
+     مهم: مبنخترعش مواصفات. لو الاسم مفيهوش رقم ووحدة، بنسيب
+     المواصفة فاضية. دي حاجات كهربا، ورقم غلط يأذي حد. */
+  const BRANDS = [
+    { re: /ilook|اي\s*لوك|ايلوك/i, name: 'iLOCK' },
+    { re: /elios|اليوس|إليوس/i, name: 'اليوس' },
+    { re: /venus|فينوس/i, name: 'Venus' },
+    { re: /schneider|شنايدر/i, name: 'Schneider' },
+    { re: /sanchi|سانشي/i, name: 'Sanchi' },
+    { re: /sewedy|السويدي/i, name: 'السويدي' },
+    { re: /الشروق/i, name: 'الشروق' },
+    { re: /xpro/i, name: 'Xpro' }
+  ];
+  const TYPES = [
+    [/شريط\s*لحام/, 'شريط لحام'], [/بكره|بكرة/, 'بكرة سلك'], [/سلك/, 'سلك كهرباء'],
+    [/مشترك/, 'مشترك كهرباء'], [/ترانس/, 'ترانس'], [/لمبه|لمبة/, 'لمبة'],
+    [/مفتاحين/, 'مفتاحين'], [/مفتاح/, 'مفتاح'], [/بريزه|بريزة/, 'بريزة'],
+    [/فيشه|فيشة/, 'فيشة'], [/دوايه|دواية/, 'دواية'], [/كاسه|كاسة/, 'كاسة إضاءة'],
+    [/علبه|علبة/, 'علبة'], [/جرس/, 'جرس'], [/زر/, 'زر']
+  ];
+  const UNITS = [
+    [/(\d+(?:\.\d+)?)\s*ملي/, 'المقاس', n => n + ' ملي'],
+    [/(\d+(?:\.\d+)?)\s*وات/, 'القدرة', n => n + ' وات'],
+    [/(\d+(?:\.\d+)?)\s*(?:امبير|أمبير)/, 'الأمبير', n => n + ' أمبير'],
+    [/(\d+)\s*(?:عين|مخرج|مخارج|منافذ)/, 'عدد المخارج', n => n + ' مخارج'],
+    [/(\d+(?:\.\d+)?)\s*متر/, 'الطول', n => n + ' متر'],
+    [/(\d+)\s*(?:فتحه|فتحة)/, 'عدد الفتحات', n => n + ' فتحة']
+  ];
+
+  function suggestFor(p) {
+    const nm = String(p.name || '');
+    let brand = '';
+    for (const b of BRANDS) if (b.re.test(nm)) { brand = b.name; break; }
+    if (!brand) {                       // مش في الاسم؟ يبقى من اسم القسم
+      const chain = SiteGen.secChain(site, p.sectionId) || [];
+      for (let k = chain.length - 1; k >= 0 && !brand; k--) {
+        for (const b of BRANDS) if (b.re.test(chain[k].name || '')) { brand = b.name; break; }
+      }
+    }
+    let type = '';
+    for (const [re, t] of TYPES) if (re.test(nm)) { type = t; break; }
+    let spec = null, rating = '';
+    for (const [re, k, fmt] of UNITS) {
+      const m = nm.match(re);
+      if (m) { spec = { k: k, v: fmt(m[1]) }; rating = fmt(m[1]); break; }
+    }
+    const desc = type
+      ? [type, rating, brand ? 'من ' + brand : ''].filter(Boolean).join(' ')
+      : '';
+    return { brand, desc, spec };
+  }
+
+  function openBulkFill(container, body) {
+    const all = site.products.map((p, i) => ({ i, p, s: suggestFor(p) }))
+      .filter(r => r.s.brand || r.s.desc || r.s.spec);
+    if (!all.length) { Utils.toast('مفيش حاجة نقدر نستنتجها من الأسامي', 'info'); return; }
+
+    Utils.openModal({
+      title: '✨ تعبئة سريعة من أسامي المنتجات',
+      wide: true, cls: 'modal-photo',
+      bodyHtml: `
+        <div class="notice notice-info">
+          البرنامج قرا أسامي منتجاتك وجهّز لكل واحد <strong>ماركة</strong> و<strong>وصف قصير</strong>
+          و<strong>مواصفة</strong> — كله مستخرج من الاسم اللي انت كاتبه، مفيش حاجة من عندنا.
+          راجعهم وعدّل اللي عايزه، وشيل العلامة من اللي مش عاجبك.
+        </div>
+        <label class="ph-sw" style="margin:10px 0;">
+          <input type="checkbox" id="bfOver"> اكتب فوق اللي مكتوب قبل كده</label>
+        <div class="table-wrap" style="max-height:52vh;overflow:auto;">
+          <table>
+            <thead><tr>
+              <th style="width:34px;"><input type="checkbox" id="bfAll" checked></th>
+              <th style="width:24%;">المنتج</th><th style="width:118px;">الماركة</th>
+              <th style="width:42%;">الوصف القصير</th><th style="width:148px;">مواصفة</th>
+            </tr></thead>
+            <tbody id="bfBody">
+              ${all.map(r => `
+              <tr data-i="${r.i}">
+                <td><input type="checkbox" class="bf-ck" checked></td>
+                <td style="font-weight:700;">${esc(r.p.name)}</td>
+                <td><input class="cell bf-brand" value="${esc(r.s.brand)}"></td>
+                <td><input class="cell bf-desc" value="${esc(r.s.desc)}"></td>
+                <td class="bf-spec" data-k="${esc(r.s.spec ? r.s.spec.k : '')}"
+                    data-v="${esc(r.s.spec ? r.s.spec.v : '')}">${
+                      r.s.spec ? esc(r.s.spec.k + ': ' + r.s.spec.v) : '<span class="hint">—</span>'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="form-actions" style="margin-top:14px;">
+          <button type="button" class="btn btn-ghost" id="bfCancel">إلغاء</button>
+          <button type="button" class="btn btn-amber" id="bfGo">طبّق على المحدد</button>
+        </div>`,
+      onMount: (mb, close) => {
+        const rows = () => Array.prototype.slice.call(mb.querySelectorAll('#bfBody tr'));
+        mb.querySelector('#bfAll').addEventListener('change', (e) => {
+          rows().forEach(tr => { tr.querySelector('.bf-ck').checked = e.target.checked; });
+        });
+        mb.querySelector('#bfCancel').addEventListener('click', close);
+        mb.querySelector('#bfGo').addEventListener('click', async () => {
+          const over = mb.querySelector('#bfOver').checked;
+          let n = 0;
+          rows().forEach(tr => {
+            if (!tr.querySelector('.bf-ck').checked) return;
+            const p = site.products[Number(tr.dataset.i)];
+            const br = tr.querySelector('.bf-brand').value.trim();
+            const ds = tr.querySelector('.bf-desc').value.trim();
+            const sc = tr.querySelector('.bf-spec');
+            let hit = false;
+            if (br && (over || !p.brand)) { p.brand = br; hit = true; }
+            if (ds && (over || !p.desc)) { p.desc = ds; hit = true; }
+            const k = sc.dataset.k, v = sc.dataset.v;
+            if (k && v) {
+              p.specs = p.specs || [];
+              const old = p.specs.find(x => (x.k || '').trim() === k);
+              if (!old) { p.specs.push({ k: k, v: v }); hit = true; }
+              else if (over && old.v !== v) { old.v = v; hit = true; }
+            }
+            if (hit) n++;
+          });
+          await save();
+          close();
+          drawProducts(container, body);
+          Utils.toast(n ? 'اتظبط ' + n + ' منتج — راجعهم وبعدين انشر' : 'مفيش حاجة اتغيرت', n ? 'success' : 'info');
+        });
+      }
+    });
+  }
+
   // الماركات اللي كتبها قبل كده — عشان يختار منها بدل ما يكتبها كل مرة
   function brandsUsed() {
     const out = [];
@@ -624,7 +799,10 @@ Modules.site = (() => {
             <h3 class="mini-head">المنتجات اللي بتظهر على الموقع</h3>
             <div class="hint">الأسعار بتتحدث لوحدها من سعر البيع في البرنامج. رتّبهم بالسهمين — الأول بيظهر الأول.</div>
           </div>
-          <button type="button" class="btn btn-amber" id="addProd">+ ضيف منتج من المخزن</button>
+          <div class="ph-row2">
+            <button type="button" class="btn btn-ghost" id="bulkFill">✨ تعبئة سريعة</button>
+            <button type="button" class="btn btn-amber" id="addProd">+ ضيف منتج من المخزن</button>
+          </div>
         </div>
         ${site.products.length ? findRow('products', 'دوّر على منتج بالاسم أو بالقسم...') : ''}
         ${site.products.length ? `
@@ -669,6 +847,8 @@ Modules.site = (() => {
       </div>`;
 
     body.querySelector('#addProd').addEventListener('click', () => openPicker(container, body));
+    const bf = body.querySelector('#bulkFill');
+    if (bf) bf.addEventListener('click', () => openBulkFill(container, body));
     const tb = body.querySelector('#prodBody');
     if (!tb) return;
     bindFind(body, 'products', q => filterBy(tb, 'tr[data-i]', q));
@@ -722,7 +902,10 @@ Modules.site = (() => {
           لما الزبون يدوس على المنتج — صوّره من كذا ناحية عشان يشوفه كويس.
         </div>
         <div class="img-grid sm" id="piGrid"></div>
-        <button type="button" class="btn btn-ghost" id="piAdd" style="margin-top:12px;">📷 ضيف صورة</button>
+        <div class="ph-row2" style="margin-top:12px;">
+          <button type="button" class="btn btn-ghost" id="piAdd">🖼️ من صور الموقع</button>
+          <button type="button" class="btn btn-amber" id="piMany">📷 ارفع صور المنتج (تقدر تختار كذا صورة مرة واحدة)</button>
+        </div>
         <div class="form-actions" style="margin-top:18px;">
           <button type="button" class="btn btn-amber" id="piDone">تمام</button>
         </div>`,
@@ -767,6 +950,15 @@ Modules.site = (() => {
           const arr = all();
           if (arr.indexOf(n) >= 0) { Utils.toast('الصورة دي موجودة على المنتج', 'info'); return; }
           arr.push(n);
+          await setAll(arr);
+          draw();
+          drawProducts(container, body);
+        });
+        mb.querySelector('#piMany').addEventListener('click', async () => {
+          const got = await uploadMany(p.name);
+          if (!got.length) return;
+          const arr = all();
+          got.forEach(n => { if (arr.indexOf(n) < 0) arr.push(n); });
           await setAll(arr);
           draw();
           drawProducts(container, body);
@@ -1353,7 +1545,10 @@ Modules.site = (() => {
           <div><h3 class="mini-head">كل الصور اللي على الموقع</h3>
             <div class="hint">سمّي كل صورة عشان تلاقيها بسهولة وانت بتحطها على منتج.
               والصورة اللي مش مستعملة في أي حاجة تقدر تمسحها عشان الموقع يفضل خفيف.</div></div>
-          <button type="button" class="btn btn-ghost" id="upImg">📷 ارفع صورة</button>
+          <div class="ph-row2">
+            <button type="button" class="btn btn-ghost" id="upImg">📷 ارفع صورة وعدّلها</button>
+            <button type="button" class="btn btn-ghost" id="upMany">📁 ارفع صور كتير مرة واحدة</button>
+          </div>
         </div>
         ${imgs.length ? findRow('images', 'دوّر باسم الصورة أو المنتج اللي متحطة عليه...') : ''}
         ${imgs.length ? `<div class="img-grid">${imgs.map(im => {
@@ -1375,6 +1570,10 @@ Modules.site = (() => {
       if (!onPc()) { Utils.toast('رفع الصور من الكمبيوتر', 'error'); return; }
       const n = await uploadImage();
       if (n) { await refreshInfo(); drawImages(container, body); }
+    });
+    body.querySelector('#upMany').addEventListener('click', async () => {
+      const got = await uploadMany('');
+      if (got.length) { await refreshInfo(); drawImages(container, body); }
     });
     const grid = body.querySelector('.img-grid');
     if (grid) {
