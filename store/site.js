@@ -32,9 +32,10 @@
     });
   }
 
-  function add(name,price){
+  function add(name,price,qty){
+    var n=Math.max(1,Number(qty)||1);
     if(!cart[name]) cart[name]={name:name,price:Number(price)||0,qty:0};
-    cart[name].qty++; save(); paint();
+    cart[name].qty+=n; save(); paint();
   }
 
   document.addEventListener('click',function(e){
@@ -143,24 +144,60 @@
   }
 
   // ===== نافذة تفاصيل المنتج =====
-  var pmName='', pmPrice=0;
+  var pmName='', pmPrice=0, pmQty=1, pmIdx=0, pmTimer=null;
+  /* الصور بتتقلب لوحدها كل ٣ ثواني عشان الزبون يشوف المنتج من كل
+     ناحية من غير ما يعمل حاجة. أول ما يمسك هو، بنوقف ونسيبه. */
+  function showImg(i){
+    var ths=$('pmBody').querySelectorAll('.pd-th');
+    if(ths.length<2) return;
+    pmIdx=(i%ths.length+ths.length)%ths.length;
+    var main=$('pmBody').querySelector('.pd-main img');
+    if(main) main.src=ths[pmIdx].dataset.src;
+    for(var k=0;k<ths.length;k++) ths[k].classList.toggle('on',k===pmIdx);
+    var c=$('pmBody').querySelector('.pd-count b');
+    if(c) c.textContent=pmIdx+1;
+  }
+  function autoPlay(on){
+    if(pmTimer){ clearInterval(pmTimer); pmTimer=null; }
+    if(on && $('pmBody').querySelectorAll('.pd-th').length>1)
+      pmTimer=setInterval(function(){ showImg(pmIdx+1); },3000);
+  }
+  function setQ(n){
+    pmQty=Math.max(1,Math.min(999,n));
+    $('pmQ').textContent=pmQty;
+    $('pmAdd').textContent = pmQty>1 ? ('أضف '+pmQty+' للطلب') : 'أضف للطلب';
+  }
   function openProduct(card){
     if(!card) return;
     var det=card.querySelector('.pdet');
     $('pmBody').innerHTML = det ? det.innerHTML : '';
+    $('pmBody').scrollTop=0;
     pmName=card.dataset.name; pmPrice=Number(card.dataset.price)||0;
-    var btn=$('pmAdd');
-    btn.textContent = cart[pmName] ? ('في الطلب ('+cart[pmName].qty+') — زوّد واحد') : 'أضف للطلب';
+    setQ(1); pmIdx=0; autoPlay(true);
+    if(cart[pmName]) $('pmAdd').textContent='في الطلب ('+cart[pmName].qty+') — زوّد كمان';
     open('pmodal');
   }
+  $('pmMinus').addEventListener('click', function(){ setQ(pmQty-1); });
+  $('pmPlus').addEventListener('click', function(){ setQ(pmQty+1); });
   $('pmAdd').addEventListener('click', function(){
     if(!pmName) return;
-    add(pmName,pmPrice);
+    add(pmName,pmPrice,pmQty);
     closeAll(); open('drawer');
+  });
+  /* الصور: دوسة على صورة صغيرة أو على السهم بتقلّبها — وبتوقف
+     التقليب التلقائي عشان الزبون يبقى هو اللي ماسك. */
+  $('pmBody').addEventListener('click', function(e){
+    var nav=e.target.closest('.pd-nav');
+    if(nav){ autoPlay(false); showImg(pmIdx+Number(nav.dataset.d)); return; }
+    var t=e.target.closest('.pd-th'); if(!t) return;
+    autoPlay(false);
+    var ths=[].slice.call($('pmBody').querySelectorAll('.pd-th'));
+    showImg(ths.indexOf(t));
   });
 
   function open(id){ $(id).hidden=false; document.body.style.overflow='hidden'; }
   function closeAll(){
+    autoPlay(false);
     ['drawer','orderBox','done','pmodal'].forEach(function(i){ var el=$(i); if(el) el.hidden=true; });
     document.body.style.overflow='';
   }
