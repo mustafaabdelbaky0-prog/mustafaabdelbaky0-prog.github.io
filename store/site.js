@@ -167,15 +167,78 @@
     $('pmQ').textContent=pmQty;
     $('pmAdd').textContent = pmQty>1 ? ('أضف '+pmQty+' للطلب') : 'أضف للطلب';
   }
+  /* ===== باقي المنتجات والتفاصيل =====
+     الصفحة بتفتح بأول دفعة بس، والباقي بييجي بعد ما تبان. كده الموقع
+     بيفتح بنفس السرعة سواء فيه ٥٠ منتج أو ٨٠٠. */
+  var DETAILS=null, detailsWait=null;
+  function loadDetails(){
+    if(DETAILS) return Promise.resolve(DETAILS);
+    if(detailsWait) return detailsWait;
+    detailsWait = fetch('details.json?v='+(window.DATA_V||'1'))
+      .then(function(r){ return r.json(); })
+      .then(function(j){ DETAILS=j; return j; })
+      .catch(function(){ DETAILS={}; return DETAILS; });
+    return detailsWait;
+  }
+  function cardHtml(r){
+    // r = [اسم, سعر, وحدة, ماركة, وصف, صورة, مسار, بحث, قسم, له تفاصيل]
+    var nm=r[0], pr=r[1], un=r[2], br=r[3], ds=r[4], im=r[5], sec=r[8], more=r[9];
+    var tag = br || sec || '';
+    return '<article class="card" data-name="'+at(nm)+'" data-price="'+pr+'" data-brand="'+at(br)+'">'+
+      '<button type="button" class="card-open" aria-label="تفاصيل '+at(nm)+'">'+
+      '<div class="card-img'+(im?'':' is-empty')+'">'+(im
+        ? '<img src="img/'+at(im)+'" alt="'+at(nm)+'" loading="lazy">'
+        : '<div class="noimg">'+(document.querySelector('.noimg') ? document.querySelector('.noimg').innerHTML : '')+'</div>')+'</div>'+
+      '<div class="card-body">'+
+        (tag ? '<span class="card-sec'+(br?' is-brand':'')+'">'+at(tag)+'</span>' : '')+
+        '<h3>'+at(nm)+'</h3>'+
+        (ds ? '<p class="card-desc">'+at(ds)+'</p>' : '')+
+        (more ? '<span class="more">اعرف أكتر ←</span>' : '')+
+      '</div></button>'+
+      '<div class="card-foot"><span class="price">'+money(pr)+' <small>ج.م'+(un?' / '+at(un):'')+'</small></span>'+
+      '<button type="button" class="add" data-name="'+at(nm)+'" data-price="'+pr+'">أضف للطلب</button></div>'+
+      '</article>';
+  }
+  function at(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function money(n){ return Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function loadRest(){
+    var g=$('grid'); if(!g) return;
+    fetch('catalog.json?v='+(window.DATA_V||'1')).then(function(r){ return r.json(); }).then(function(j){
+      var rows=j.rows||[], out=[];
+      for(var k=0;k<rows.length;k++){
+        var r=rows[k];
+        out.push('<div class="cell" data-i="'+(j.from+k)+'" data-path="'+at(r[6])+'" data-find="'+at(r[7])+'">'
+          + cardHtml(r) + '</div>');
+      }
+      if(out.length) g.insertAdjacentHTML('beforeend', out.join(''));
+      var nt=$('moreNote'); if(nt) nt.remove();
+      paint(); apply();
+    }).catch(function(){
+      var nt=$('moreNote'); if(nt) nt.textContent='مقدرناش نجيب باقي المنتجات — حدّث الصفحة.';
+    });
+  }
+
   function openProduct(card){
     if(!card) return;
-    var det=card.querySelector('.pdet');
-    $('pmBody').innerHTML = det ? det.innerHTML : '';
-    $('pmBody').scrollTop=0;
+    var cell=card.closest('.cell');
+    var idx=cell?cell.dataset.i:null;
     pmName=card.dataset.name; pmPrice=Number(card.dataset.price)||0;
-    setQ(1); pmIdx=0; autoPlay(true);
+    setQ(1); pmIdx=0;
     if(cart[pmName]) $('pmAdd').textContent='في الطلب ('+cart[pmName].qty+') — زوّد كمان';
+    // رأس ثابت يبان على طول، والباقي بييجي من ملف التفاصيل
+    $('pmBody').innerHTML = '<h3>'+at(pmName)+'</h3>'+
+      '<div class="pd-price">'+money(pmPrice)+' <small>ج.م</small></div>'+
+      (card.dataset.brand ? '' : '')+
+      '<p class="pd-wait">بنجيب التفاصيل...</p>';
     open('pmodal');
+    var want=pmName;
+    loadDetails().then(function(d){
+      if(want!==pmName) return;                 // فتح منتج تاني في الوقت ده
+      var html = (idx!=null && d[idx]) ? d[idx] : '';
+      if(html){ $('pmBody').innerHTML=html; $('pmBody').scrollTop=0; autoPlay(true); }
+      else { var w=$('pmBody').querySelector('.pd-wait'); if(w) w.remove(); }
+    });
   }
   $('pmMinus').addEventListener('click', function(){ setQ(pmQty-1); });
   $('pmPlus').addEventListener('click', function(){ setQ(pmQty+1); });
@@ -260,4 +323,9 @@
 
   paint();
   drawSubs();     // كروت الأقسام الرئيسية تبان من أول ما الصفحة تفتح
+  // باقي المنتجات بعد ما الصفحة تبان — عشان متأخرش ظهورها
+  if ($('moreNote')) {
+    if (window.requestIdleCallback) requestIdleCallback(loadRest, { timeout: 1200 });
+    else setTimeout(loadRest, 250);
+  }
 })();
