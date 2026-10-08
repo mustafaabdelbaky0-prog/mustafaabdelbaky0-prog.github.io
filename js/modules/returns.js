@@ -68,9 +68,81 @@ Modules.returns = (() => {
   function grandTotal() { return rows.reduce((s, r) => s + calc(r).total, 0); }
   function filled() { return rows.filter(r => r.itemId && calc(r).qty > 0); }
 
+  /* ---------- المرتجع لمورد: الأصناف اللي فعلاً جات منه ----------
+
+     لما يكتب اسم المورد فوق، البحث لازم يجيب الأصناف اللي اشتراها
+     من المورد ده بس. من غير كده كان ممكن يرجّع لمورد صنف هو شاريه
+     من مورد تاني — والفلوس تنزل من حساب مورد مالوش علاقة.
+
+     لو المورد مالوش فواتير شرا متسجلة خالص (بضاعة قديمة من قبل
+     البرنامج)، مش بنحصر حاجة — بنقوله بس إن مفيش فواتير له. */
+  let purCache = [];        // فواتير الشرا، بتتحمّل مرة مع الشاشة
+  let supLimit = null;      // { id, name, ids:Set }  أو null = مفيش حصر
+  const normName = s => Search.norm(String(s || '').trim());
+
+  function itemsBoughtFrom(supplierId) {
+    const ids = new Set();
+    purCache.forEach(p => {
+      if (p.voided) return;
+      if (Number(p.supplierId) !== Number(supplierId)) return;
+      (p.lines || []).forEach(l => { if (l.itemId) ids.add(Number(l.itemId)); });
+    });
+    return ids;
+  }
+
+  // بنقرا اسم المورد المكتوب فوق ونبني الحصر منه
+  function refreshSupLimit(container) {
+    const before = supLimit ? supLimit.id : 0;
+    supLimit = null;
+    if (kind === 'supplier') {
+      const el = container.querySelector('#retParty');
+      const nm = el ? el.value : '';
+      if (String(nm).trim() && !Services.isCashName(nm)) {
+        const sup = AppState.suppliers.find(s => normName(s.name) === normName(nm));
+        if (sup) supLimit = { id: sup.id, name: sup.name, ids: itemsBoughtFrom(sup.id) };
+      }
+    }
+    return (supLimit ? supLimit.id : 0) !== before;
+  }
+
+  const limiting = () => !!(supLimit && supLimit.ids.size);
+  function allowedItem(id) { return !limiting() || supLimit.ids.has(Number(id)); }
+  function limitList(list) {
+    return limiting() ? (list || []).filter(i => supLimit.ids.has(Number(i.id))) : (list || []);
+  }
+  function refuseItem(name) {
+    Utils.beep('error');
+    Utils.toast('«' + (name || 'الصنف ده') + '» مش موجود في فواتير الشرا بتاعة ' +
+                supLimit.name + ' — مينفعش يترجّعله', 'error');
+  }
+
+  /* الليستة المنسدلة والرسالة اللي تحت اسم المورد بيتجدّدوا مع كل
+     تغيير في اسمه — عشان يلاقي أصنافه هو بس */
+  function paintPartyLimit(container) {
+    const dl = container.querySelector('#retItemList');
+    if (dl) {
+      dl.innerHTML = limitList(AppState.items)
+        .map(i => `<option value="${Utils.escapeHtml(i.name)}">`).join('');
+    }
+    const h = container.querySelector('#retPartyHint');
+    if (!h) return;
+    if (kind !== 'supplier' || !supLimit) { h.textContent = ''; h.className = 'hint'; return; }
+    if (!supLimit.ids.size) {
+      h.className = 'hint warn';
+      h.textContent = 'مفيش فواتير شرا متسجلة لـ' + supLimit.name +
+        ' — خد بالك، البرنامج مش قادر يتأكد إن البضاعة جات منه.';
+    } else {
+      h.className = 'hint';
+      h.textContent = 'البحث هيجيب أصناف ' + supLimit.name + ' بس — ' +
+        supLimit.ids.size + ' صنف اشتريتهم منه.';
+    }
+  }
+
   async function render(container) {
     await AppState.reloadItems();
     await AppState.reloadParties();
+    purCache = await DB.getAll('purchases');
+    supLimit = null;
     rows = [blankRow()];
     if (detachScanner) { detachScanner(); detachScanner = null; }
     if (Auth.isSeller() && kind === 'supplier') kind = 'customer';
@@ -95,6 +167,7 @@ Modules.returns = (() => {
             <datalist id="retPartyList">
               ${(isCust ? AppState.customers : AppState.suppliers).map(p => `<option value="${Utils.escapeHtml(p.name)}">`).join('')}
             </datalist>
+            <div class="hint" id="retPartyHint"></div>
           </div>
           <div class="field inv-field" style="flex:2;">
             <label>سبب المرتجع</label>
@@ -204,11 +277,33 @@ Modules.returns = (() => {
       render(container);
     });
     container.querySelector('#saveRet').addEventListener('click', () => doSave(container));
+
+    /* أول ما يكتب اسم المورد، الأصناف بتتحصر على اللي جه منه.
+       ولو كان كاتب سطور قبل كده بأصناف مش بتاعته، بنقوله عليها
+       فورًا بدل ما يكتشفها وهو بيحفظ. */
+    const party = container.querySelector('#retParty');
+    const onParty = () => {
+      refreshSupLimit(container);
+      paintPartyLimit(container);
+      if (limiting()) {
+        const bad = rows.filter(r => r.itemId && !allowedItem(r.itemId));
+        if (bad.length) {
+          Utils.beep('error');
+          Utils.toast(bad.length + (bad.length === 1 ? ' صنف في الفاتورة' : ' أصناف في الفاتورة') +
+            ' مش من ' + supLimit.name + ': ' +
+            bad.map(r => AppState.lineName(r)).slice(0, 3).join('، '), 'error');
+        }
+      }
+    };
+    party.addEventListener('input', onParty);
+    party.addEventListener('change', onParty);
+    paintPartyLimit(container);
   }
 
   function onScan(container, code) {
     const item = AppState.items.find(i => i.barcode === code);
     if (!item) { Utils.beep('error'); Utils.toast('الباركود ده مش متسجل', 'error'); return; }
+    if (!allowedItem(item.id)) { refuseItem(item.name); return; }
     let target = rows.find(r => !r.itemId && !r.name && !r.barcode);
     if (!target) { target = blankRow(); rows.push(target); }
     applyItem(target, item);
@@ -228,8 +323,12 @@ Modules.returns = (() => {
     row.packName = item.packName || Units.packLabel(row.unit);
     row.packPrice = Number(item.packPrice || 0);
     row.sellPack = false;   // الأصل بالوحدة، واللي راجع عبوة كاملة بيغيّر الوحدة
-    // المورد بيتملى لوحده من آخر مورد جبنا منه الصنف
-    const sup = AppState.suppliers.find(s => s.id === item.lastSupplierId);
+    /* المورد بيتملى لوحده من آخر مورد جبنا منه الصنف — إلا لو هو
+       كاتب اسم مورد فوق والصنف ده فعلاً جه منه، فالمكتوب أولى
+       (الصنف ممكن يكون متجاب من أكتر من مورد) */
+    const sup = (supLimit && supLimit.ids.has(Number(item.id)))
+      ? AppState.suppliers.find(s => s.id === supLimit.id)
+      : AppState.suppliers.find(s => s.id === item.lastSupplierId);
     row.supplierId = sup ? sup.id : null;
     row.supplierName = sup ? sup.name : '';
     if (!row.qty) row.qty = 1;
@@ -333,9 +432,10 @@ Modules.returns = (() => {
       applyItem(r, it);
       drawRows(container, id, 'qty');
     };
+    // مرتجع لمورد مكتوب اسمه؟ القايمة بتجيب أصنافه هو بس
     Picker.bind(container, {
-      '.f-barcode': { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take },
-      '.f-name':    { search: (q) => Picker.searchItems(q), render: Picker.itemRow, onPick: take }
+      '.f-barcode': { search: (q) => limitList(Picker.searchItems(q)), render: Picker.itemRow, onPick: take },
+      '.f-name':    { search: (q) => limitList(Picker.searchItems(q)), render: Picker.itemRow, onPick: take }
     });
   }
 
@@ -374,7 +474,7 @@ Modules.returns = (() => {
       /* المستخدم بيكتب هنا اسم صنف وهو متوقع إنها تدوّرله عليه.
          بدل ما نسيبه في طريق مسدود بنوريه الصنف ونخليه يضيفه. */
       const term = rowFilter.trim();
-      const hit = Picker.searchItems(term)[0];
+      const hit = limitList(Picker.searchItems(term))[0];
       msg.querySelector('td').innerHTML =
         '<div style="line-height:2;">مفيش سطر فيه "<strong>' + Utils.escapeHtml(term) +
         '</strong>" في الفاتورة المفتوحة دي — السطور الـ' + rows.length + ' كلها زي ما هي.' +
@@ -427,6 +527,7 @@ Modules.returns = (() => {
       });      $('.f-barcode').addEventListener('change', e => {
         r.barcode = e.target.value.trim();
         const it = AppState.items.find(i => i.barcode === r.barcode);
+        if (it && !allowedItem(it.id)) { refuseItem(it.name); r.barcode = ''; drawRows(container, id, 'barcode'); return; }
         if (it) { applyItem(r, it); drawRows(container, id, 'qty'); }
         else if (r.barcode) Utils.toast('الباركود ده مش متسجل', 'error');
       });
@@ -434,6 +535,7 @@ Modules.returns = (() => {
         const code = await Scanner.scan();
         if (!code) return;
         const it = AppState.items.find(i => i.barcode === code);
+        if (it && !allowedItem(it.id)) { refuseItem(it.name); return; }
         if (it) { applyItem(r, it); drawRows(container, id, 'qty'); }
         else Utils.toast('الباركود ده مش متسجل', 'error');
       });
@@ -442,6 +544,7 @@ Modules.returns = (() => {
       $('.f-name').addEventListener('change', e => {
         r.name = e.target.value;
         const it = AppState.items.find(i => (i.name || '').trim() === r.name.trim());
+        if (it && !allowedItem(it.id)) { refuseItem(it.name); r.name = ''; drawRows(container, id, 'name'); return; }
         if (it) { applyItem(r, it); drawRows(container, id, 'qty'); }
       });
 
@@ -544,6 +647,28 @@ Modules.returns = (() => {
     if (kind === 'supplier' && Services.isCashName(partyName)) {
       const withSup = valid.find(r => r.supplierName);
       if (withSup) partyName = withSup.supplierName;
+    }
+
+    /* آخر حاجز: مرتجع لمورد بأصناف مش في فواتيره.
+       بنقف ونوضّح، وهو اللي يقرر — لأن فيه بضاعة قديمة من قبل
+       البرنامج فواتيرها مش متسجلة، والحصر لوحده كان هيوقّفه. */
+    if (kind === 'supplier' && !Services.isCashName(partyName)) {
+      const sup = AppState.suppliers.find(s => normName(s.name) === normName(partyName));
+      if (sup) {
+        const own = itemsBoughtFrom(sup.id);
+        if (own.size) {
+          const bad = valid.filter(r => !own.has(Number(r.itemId)));
+          if (bad.length) {
+            Utils.beep('error');
+            const ok = await Utils.confirmDialog(
+              'الأصناف دي مش موجودة في أي فاتورة شرا من ' + sup.name + ':\n\n' +
+              bad.map(r => '• ' + AppState.lineName(r)).join('\n') +
+              '\n\nلو كمّلت، قيمتها هتنزل من حساب ' + sup.name +
+              ' وهو أصلاً ما باعهالكش.\n\nتكمّل؟');
+            if (!ok) return;
+          }
+        }
+      }
     }
 
     const total = grandTotal();
