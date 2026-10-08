@@ -34,7 +34,7 @@ Modules.sales = (() => {
     const it = AppState.items.find(i => i.id === l.itemId);
     r.itemId = l.itemId;
     r.barcode = it ? (it.barcode || '') : '';
-    r.name = l.name || (it ? it.name : '');
+    r.name = AppState.lineName(l);
     r.unit = l.unit || (it ? it.unit : 'قطعة');
     r.cost = l.cost || 0;
     if (it) {

@@ -146,6 +146,8 @@ Modules.items = (() => {
       <div class="field">
         <label>اسم الصنف</label>
         <input type="text" id="fName" value="${Utils.escapeHtml(item?.name || '')}" required autofocus>
+        ${item ? `<div class="hint">لو صحّحت الاسم هيتغيّر في كل البرنامج — في فواتير الشرا
+          والبيع والمرتجعات والتقارير — والكود والرصيد زي ما هما.</div>` : ''}
       </div>
       <div class="field-row">
         <div class="field">

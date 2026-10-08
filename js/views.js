@@ -44,7 +44,7 @@ const Views = (() => {
       return `
         <tr>
           <td>${i + 1}</td>
-          <td><div class="inv-item">${Utils.escapeHtml(l.name)}</div>${packNote}${retNote}</td>
+          <td><div class="inv-item">${Utils.escapeHtml(AppState.lineName(l))}</div>${packNote}${retNote}</td>
           <td>${Units.fmtQty(l.qty, l.unit)}</td>
           <td>${Utils.formatMoney(price)}</td>
           <td class="strong">${Utils.formatMoney(l.qty * price)}</td>
@@ -56,14 +56,14 @@ const Views = (() => {
        المورد زي ما هي. بنرتّب بالاسم بعد التطبيع (ة=ه...) وبالأرقام
        كأرقام (فرشه 2 قبل فرشه 10). */
     const sortedHtml = lines
-      .map((l, i) => ({ l, i, k: Search.norm(l.name) }))
+      .map((l, i) => ({ l, i, k: Search.norm(AppState.lineName(l)) }))
       .sort((a, b) => a.k.localeCompare(b.k, 'ar', { numeric: true }))
       .map(x => lineRow(x.l, x.i)).join('');
 
     const retHistory = (doc.returns || []).length
       ? `<div class="notice" style="margin-top:12px;">
            <strong>مرتجعات على الفاتورة دي:</strong><br>
-           ${doc.returns.map(r => `${Utils.formatDate(r.date)} — ${r.lines.map(l => Utils.escapeHtml(l.name) + ' (' + Units.fmtQty(l.qty, l.unit) + ')').join('، ')} بمبلغ ${Utils.formatMoney(r.amount)}`).join('<br>')}
+           ${doc.returns.map(r => `${Utils.formatDate(r.date)} — ${r.lines.map(l => Utils.escapeHtml(AppState.lineName(l)) + ' (' + Units.fmtQty(l.qty, l.unit) + ')').join('، ')} بمبلغ ${Utils.formatMoney(r.amount)}`).join('<br>')}
          </div>` : '';
 
     Utils.openModal({
@@ -131,7 +131,7 @@ const Views = (() => {
   // ---------- تسجيل مرتجع ----------
   function openReturnDialog(sale) {
     const avail = (sale.lines || []).map((l, i) => ({
-      i, name: l.name, unit: l.unit, price: l.price,
+      i, name: AppState.lineName(l), unit: l.unit, price: l.price,
       left: Math.round((l.qty - (l.returnedQty || 0)) * 1000) / 1000
     })).filter(l => l.left > 0);
 

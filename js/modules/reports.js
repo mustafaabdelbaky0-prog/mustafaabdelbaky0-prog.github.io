@@ -141,7 +141,7 @@ Modules.reports = (() => {
     salesInRange.forEach(sale => sale.lines.forEach(l => {
       const sold = Math.max(0, l.qty - (l.returnedQty || 0));   // المرتجع المربوط بالفاتورة
       if (!salesByItem[l.itemId]) {
-        salesByItem[l.itemId] = { name: l.name, unit: l.unit, qty: 0, total: 0, cost: 0 };
+        salesByItem[l.itemId] = { name: AppState.lineName(l), unit: l.unit, qty: 0, total: 0, cost: 0 };
       }
       const e = salesByItem[l.itemId];
       e.qty += sold;

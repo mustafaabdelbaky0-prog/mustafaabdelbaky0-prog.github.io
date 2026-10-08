@@ -33,9 +33,10 @@ Modules.pricecompare = (() => {
         const cost = Number(l.cost || 0);
         if (!id || !(cost > 0)) continue;      // السطر اللي سعره لسه ناقص مش بيدخل المقارنة
 
-        if (!byItem.has(id)) byItem.set(id, { id, name: l.name || '', unit: l.unit || '', sups: new Map() });
+        const nm = AppState.lineName(l);
+        if (!byItem.has(id)) byItem.set(id, { id, name: nm, unit: l.unit || '', sups: new Map() });
         const row = byItem.get(id);
-        if (l.name) row.name = l.name;
+        if (nm) row.name = nm;
         if (l.unit) row.unit = l.unit;
 
         const cur = row.sups.get(supId);
@@ -143,7 +144,7 @@ Modules.pricecompare = (() => {
       </div>` : `
       <div class="empty-state" style="padding:28px;">
         <div class="ic">🧮</div>
-        ${needle ? 'مفيش صنف بالاسم ده'
+        ${q.trim() ? 'مفيش صنف بالاسم ده'
           : (onlyMulti
             ? 'لسه مفيش صنف اشتريته من أكتر من مورد.<br><span class="muted">أول ما تشتري نفس الصنف من مورد تاني هيظهر هنا لوحده.</span>'
             : 'لسه مفيش فواتير شراء بأسعار.')}

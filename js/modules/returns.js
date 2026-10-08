@@ -620,7 +620,7 @@ Modules.returns = (() => {
                 <td><span class="badge ${d.kind === 'customer' ? 'badge-ok' : 'badge-warn'}">${d.kind === 'customer' ? 'من عميل' : 'لمورد'}</span></td>
                 <td>${Utils.escapeHtml(nameOf(d))}</td>
                 <td class="muted" style="font-size:12px;">
-                  ${d.lines.map(l => Utils.escapeHtml(l.name) + ' (' +
+                  ${d.lines.map(l => Utils.escapeHtml(AppState.lineName(l)) + ' (' +
                     (Number(l.packQty || 0) > 0
                       ? Units.fmtQty(l.packQty, l.packName || 'عبوة') + ' — ' + Units.fmtQty(l.qty, l.unit)
                       : Units.fmtQty(l.qty, l.unit)) +

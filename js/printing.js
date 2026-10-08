@@ -52,7 +52,7 @@ const Printing = (() => {
         ? `${Number(packOne).toFixed(2)}<div class="line-sub">ال${Utils.escapeHtml(l.unit || '')} ${price.toFixed(2)}</div>`
         : price.toFixed(2);
       return `<tr>
-        <td>${Utils.escapeHtml(l.name || '')}</td>
+        <td>${Utils.escapeHtml(AppState.lineName(l))}</td>
         <td>${qtyCell}</td>
         <td>${priceCell}</td>
         <td>${(Number(l.qty || 0) * price).toFixed(2)}</td>

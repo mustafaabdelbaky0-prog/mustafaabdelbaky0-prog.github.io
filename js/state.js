@@ -1,7 +1,7 @@
 ﻿/* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-10-08 · الشركة جوه التصنيف (فينوس، الأهرام...)';
+const APP_VERSION = '2026-10-08 · صح الاسم مرة واحدة يتصح في كل البرنامج + الشركة في المشتريات';
 
 const Modules = {};
 
@@ -13,8 +13,35 @@ const AppState = {
 
   async reloadItems() {
     this.items = await DB.getAll('items');
+    this._ix = null;
     this.refreshLowStockBadge();
     return this.items;
+  },
+
+  /* الصنف برقمه - بسرعة. الفواتير فيها سطور كتير، ولو دوّرنا على كل
+     سطر في الليستة كلها البرنامج يتقل، فبنبني فهرس مرة واحدة. */
+  _ix: null,
+  itemById(id) {
+    if (id === null || id === undefined || id === '') return null;
+    if (!this._ix || this._ix.n !== this.items.length) {
+      const m = new Map();
+      this.items.forEach(i => m.set(i.id, i));
+      this._ix = { m, n: this.items.length };
+    }
+    return this._ix.m.get(id) || this._ix.m.get(Number(id)) || null;
+  },
+
+  /* اسم الصنف اللي يتعرض في أي فاتورة أو تقرير.
+     الفاتورة بتحفظ الاسم زي ما كان وقت الشرا أو البيع، فلو صحّح
+     الاسم بعدين في شاشة الأصناف كانت الفاتورة القديمة تفضل بالاسم
+     الغلط. بنرجّع اسم الصنف الحالي طالما السطر لسه مربوط بصنف،
+     والاسم المحفوظ بس لو الصنف اتمسح أو السطر مش صنف أصلاً
+     (ماكينة / صيانة / سطر مكتوب بالإيد). */
+  lineName(line) {
+    if (!line) return '';
+    const it = this.itemById(line.itemId);
+    const live = it ? String(it.name || '').trim() : '';
+    return live || String(line.name || '');
   },
 
   /* الأصناف اللي خلصت أو قربت تخلص — بيظهر رقمها جنب "المخزون"

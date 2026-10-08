@@ -21,8 +21,11 @@ Modules.purchases = (() => {
     const it = AppState.items.find(i => i.id === l.itemId);
     r.itemId = l.itemId;
     r.barcode = it ? (it.barcode || '') : '';
-    r.name = l.name || (it ? it.name : '');
+    // الاسم الحالي للصنف، مش اللي كان وقت الشرا — لو صحّحه بعدين
+    // الفاتورة القديمة تبان بالاسم الصح
+    r.name = AppState.lineName(l);
     r.category = it ? (it.category || '') : '';
+    r.brand = it ? (it.brand || '') : (l.brand || '');
     // سطر ماكينة/صيانة: التصنيف هو اللي بيقول نوعه، ومفيش صنف وراه
     if (Services.isSpecialLine(l)) {
       r.category = (Services.LINE_KINDS[l.kind] || {}).label || '';
@@ -68,7 +71,7 @@ Modules.purchases = (() => {
 
   function blankRow() {
     return {
-      _id: ++rowSeq, itemId: null, barcode: '', name: '', category: '',
+      _id: ++rowSeq, itemId: null, barcode: '', name: '', category: '', brand: '',
       unit: 'قطعة', packType: 'قطعة', packSize: '', qty: '', price: '',
       salePrice: '', packSalePrice: '', assetId: null
     };
@@ -209,7 +212,7 @@ Modules.purchases = (() => {
 
   function rowMatches(r, q) {
     if (!q) return true;
-    return Search.matchesAny([r.name, r.barcode, r.category, r.packType, r.unit], q);
+    return Search.matchesAny([r.name, r.barcode, r.category, r.brand, r.packType, r.unit], q);
   }
 
   function applyRowFilter(container) {
@@ -235,7 +238,7 @@ Modules.purchases = (() => {
       if (!msg) {
         msg = document.createElement('tr');
         msg.className = 'empty-row rf-empty';
-        msg.innerHTML = `<td colspan="12"></td>`;
+        msg.innerHTML = `<td colspan="13"></td>`;
         body.appendChild(msg);
       }
       /* الخانة دي بتدوّر في سطور الفاتورة المفتوحة بس. بس المستخدم
@@ -246,7 +249,7 @@ Modules.purchases = (() => {
       const hit = Picker.searchItems(term)[0];
       const invHits = (recentCache || []).filter(p =>
         Search.matches(p.number, q) || Search.matches(supplierNameOf(p.supplierId), q) ||
-        (p.lines || []).some(l => Search.matches(l.name, q))).length;
+        (p.lines || []).some(l => Search.matches(AppState.lineName(l), q))).length;
 
       msg.querySelector('td').innerHTML =
         `<div style="line-height:2;">
@@ -564,6 +567,7 @@ Modules.purchases = (() => {
                 <th style="width:165px;">الباركود</th>
                 <th style="width:175px;">الصنف</th>
                 <th style="width:115px;">التصنيف</th>
+                <th style="width:110px;" title="الشركة بتاعة الصنف (فينوس، الأهرام...) — تكتبها هنا مرة واحدة وتتحفظ على الصنف">الشركة</th>
                 <th style="width:72px;">الكمية</th>
                 <th style="width:105px;">النوع</th>
                 <th style="width:160px;" title="${headerHint()}">فيها كام <span class="th-hint">؟</span></th>
@@ -635,6 +639,9 @@ Modules.purchases = (() => {
       </datalist>
       <datalist id="catList">
         ${AppState.categorySuggestions().concat(SPECIAL_CATS).map(v => `<option value="${Utils.escapeHtml(v)}">`).join('')}
+      </datalist>
+      <datalist id="brandList">
+        ${AppState.brandSuggestions().map(v => `<option value="${Utils.escapeHtml(v)}">`).join('')}
       </datalist>
       <datalist id="typeList">
         ${AppState._uniq(AppState.unitSuggestions().concat(AppState.packTypeSuggestions()))
@@ -816,6 +823,26 @@ Modules.purchases = (() => {
           }
           scheduleDraft(container);
         }
+      },
+      /* الشركات: بنقترح شركات نفس التصنيف الأول (لو كتب كهرباء
+         يقترح فينوس واليوس)، وباقي الشركات وراهم. */
+      '.f-brand': {
+        search: (q) => {
+          const tr = document.activeElement && document.activeElement.closest
+            ? document.activeElement.closest('tr') : null;
+          const r = tr ? rows.find(x => x._id === Number(tr.dataset.id)) : null;
+          const near = AppState.brandSuggestions(r ? r.category : '');
+          return Picker.searchText(q, AppState._uniq(near.concat(AppState.brandSuggestions())));
+        },
+        render: Picker.textRow,
+        onPick: (t, input) => {
+          const id = Number(input.closest('tr').dataset.id);
+          const r = rows.find(x => x._id === id);
+          if (!r) return;
+          r.brand = t;
+          input.value = t;
+          scheduleDraft(container);
+        }
       }
     });
 
@@ -885,6 +912,7 @@ Modules.purchases = (() => {
     row.name = item.name;
     row.barcode = item.barcode || row.barcode;
     row.category = item.category || '';
+    row.brand = item.brand || '';
     row.unit = item.unit || 'قطعة';
     if (!row.salePrice) row.salePrice = item.salePrice || '';
     if (item.packSize > 0) {
@@ -962,6 +990,11 @@ Modules.purchases = (() => {
         </td>
         <td data-label="التصنيف">
           <input type="text" class="cell f-category" value="${Utils.escapeHtml(r.category)}" placeholder="كهرباء..." autocomplete="off">
+        </td>
+        <td data-label="الشركة">
+          ${kind !== 'goods'
+            ? `<div class="cell-muted" title="ده مش صنف بضاعة">—</div>`
+            : `<input type="text" class="cell f-brand" value="${Utils.escapeHtml(r.brand || '')}" list="brandList" placeholder="فينوس..." autocomplete="off" title="الشركة بتتحفظ على الصنف — تكتبها هنا مرة واحدة وخلاص">`}
         </td>
         <td data-label="الكمية">
           <input type="number" class="cell f-qty num" value="${r.qty}" min="0"
@@ -1083,6 +1116,12 @@ Modules.purchases = (() => {
           drawRows(container, id, 'qty');
         }
       });
+      const brandIn = $('.f-brand');
+      if (brandIn) {
+        brandIn.addEventListener('input', (e) => { r.brand = e.target.value; });
+        brandIn.addEventListener('change', (e) => { r.brand = e.target.value.trim(); scheduleDraft(container); });
+      }
+
       const assetSel = $('.f-asset');
       if (assetSel) assetSel.addEventListener('change', (e) => { r.assetId = Number(e.target.value) || null; scheduleDraft(container); });
 
@@ -1406,6 +1445,7 @@ Modules.purchases = (() => {
           itemId = await DB.put('items', {
             barcode, name: r.name.trim(),
             category: (r.category || '').trim(),
+            brand: (r.brand || '').trim(),
             unit: u,
             packSize: c.pack ? c.size : null,
             packName: c.pack ? r.packType : null,
@@ -1420,12 +1460,14 @@ Modules.purchases = (() => {
         }
       }
       if (itemId) {
-        // بنحدّث الصنف بأي حاجة جديدة كتبها (تصنيف/سعر بيع/العبوة) عشان تتفتكر بعد كده
+        // بنحدّث الصنف بأي حاجة جديدة كتبها (تصنيف/شركة/سعر بيع/العبوة) عشان تتفتكر بعد كده
         const it = AppState.items.find(i => i.id === itemId);
         if (it) {
           let changed = false;
           const cat = (r.category || '').trim();
           if (cat && it.category !== cat) { it.category = cat; changed = true; }
+          const brd = (r.brand || '').trim();
+          if (brd && it.brand !== brd) { it.brand = brd; changed = true; }
           if (sale > 0 && it.salePrice !== sale) { it.salePrice = sale; changed = true; }
           if (c.pack && (it.packSize !== c.size || it.packName !== r.packType)) {
             it.packSize = c.size; it.packName = r.packType; changed = true;
@@ -1440,6 +1482,7 @@ Modules.purchases = (() => {
         itemId, name: r.name.trim(), unit: u,
         qty: c.totalUnits, cost: c.unitCost,
         category: (r.category || '').trim(),   // عشان المورد يتصنّف لوحده من فواتيره
+        brand: (r.brand || '').trim(),
         packQty: c.pack ? c.qty : null, packCost: c.pack ? c.price : null,
         packSize: c.pack ? c.size : null, packName: c.pack ? r.packType : null,
         // اللي لسه ناقص في السطر — عشان يبان أحمر في الفاتورة بعدين
@@ -1513,7 +1556,7 @@ Modules.purchases = (() => {
     if (q) {
       all = all.filter(p =>
         Search.matches(p.number, q) || Search.matches(supName(p.supplierId), q) ||
-        (p.lines || []).some(l => Search.matches(l.name, q)));
+        (p.lines || []).some(l => Search.matches(AppState.lineName(l), q)));
     }
 
     const list = searching ? all : all.slice(0, 12);

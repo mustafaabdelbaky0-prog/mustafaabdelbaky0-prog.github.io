@@ -78,7 +78,7 @@ Modules.saleslist = (() => {
       /* نفس البحث اللي بيفهم العربي (ه/ة، الأرقام اللازقة...) بتاع
          الأصناف — عشان "لمبة 9 وات" تلاقي "لمبه9وات" هنا كمان */
       all = all.filter(s =>
-        Search.matchesAny([s.number || '', custName(s.customerId), ...(s.lines || []).map(l => l.name || '')], q));
+        Search.matchesAny([s.number || '', custName(s.customerId), ...(s.lines || []).map(l => AppState.lineName(l))], q));
     }
 
     const total = all.length;

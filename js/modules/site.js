@@ -867,6 +867,32 @@ Modules.site = (() => {
           esc('  '.repeat(depth) + (depth ? '↳ ' : '') + sec.name)}</option>`).join('');
   }
 
+  /* الأسماء اللي اتصححت في المخزن والموقع لسه بالاسم القديم.
+     الاسم على الموقع سايبينه في إيده — ساعات بيكتبه للعميل بشكل
+     تاني — فمش بنغيّره لوحدنا، بنوريه وهو يدوس لو عايز. */
+  function renamedProducts() {
+    return site.products.filter(p => {
+      const it = AppState.itemById(p.itemId);
+      if (!it) return false;
+      const nm = String(it.name || '').trim();
+      return nm && nm !== String(p.name || '').trim();
+    });
+  }
+
+  function renamedNote() {
+    const ch = renamedProducts();
+    if (!ch.length) return '';
+    const sample = ch.slice(0, 3)
+      .map(p => '«' + esc(p.name) + '» ← «' + esc(AppState.itemById(p.itemId).name) + '»')
+      .join(' · ');
+    return `<div class="notice notice-info" style="margin:10px 0;">
+      <strong>${ch.length}</strong> ${ch.length === 1 ? 'منتج اسمه' : 'منتج أسماءهم'} اتغيّر في المخزن
+      والموقع لسه بالاسم القديم — ${sample}${ch.length > 3 ? ' ...' : ''}
+      <button type="button" class="btn btn-ghost btn-sm" id="syncNames"
+        style="margin-inline-start:8px;">طابق الأسماء مع المخزن</button>
+    </div>`;
+  }
+
   // ---------- المنتجات ----------
   function drawProducts(container, body) {
     // الأسعار بتتحدث من البرنامج مع كل رسم — فاللي على الموقع دايمًا سعرك الحالي
@@ -893,6 +919,7 @@ Modules.site = (() => {
             <button type="button" class="btn btn-amber" id="addProd">+ ضيف منتج من المخزن</button>
           </div>
         </div>
+        ${renamedNote()}
         ${site.products.length ? findRow('products', 'دوّر على منتج بالاسم أو بالقسم...') : ''}
         ${site.products.length ? `
         <div class="table-wrap">
@@ -940,6 +967,16 @@ Modules.site = (() => {
     if (bf) bf.addEventListener('click', () => openBulkFill(container, body));
     const sfs = body.querySelector('#secFromStock');
     if (sfs) sfs.addEventListener('click', () => sectionsFromStock(container, body));
+    const sn = body.querySelector('#syncNames');
+    if (sn) sn.addEventListener('click', async () => {
+      const ch = renamedProducts();
+      if (!(await Utils.confirmDialog(
+        `هيغيّر اسم ${ch.length} منتج على الموقع للاسم اللي في المخزن. تمام؟`))) return;
+      ch.forEach(p => { p.name = String(AppState.itemById(p.itemId).name || '').trim(); });
+      await save();
+      Utils.toast('اتطابقت ' + ch.length + ' اسم — افتكر تنشر الموقع', 'success');
+      drawProducts(container, body);
+    });
     const tb = body.querySelector('#prodBody');
     if (!tb) return;
     bindFind(body, 'products', q => filterBy(tb, 'tr[data-i]', q));
