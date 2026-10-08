@@ -223,6 +223,55 @@ const Services = (() => {
     });
   }
 
+  // تحديد شركة كذا صنف مرة واحدة من شاشة المخزون
+  async function setItemsBrand(ids, brand) {
+    const b = String(brand || '').trim();
+    const list = (ids || []).map(Number).filter(Boolean);
+    if (!list.length) return 0;
+    return DB.tx(['items'], 'readwrite', async (t) => {
+      const store = t.objectStore('items');
+      let n = 0;
+      for (const id of list) {
+        const it = await DB.reqToPromise(store.get(id));
+        if (!it || (it.brand || '') === b) continue;
+        it.brand = b;
+        await DB.reqToPromise(store.put(it));
+        n++;
+      }
+      return n;
+    });
+  }
+
+  /* الشركة من اسم الصنف — أغلب الأصناف اسمها فيه اسم الشركة أصلاً
+     («مفتاح16امبير اليوس»)، فبنقراها بدل ما يقعد يكتبها صنف صنف. */
+  const BRAND_PATTERNS = [
+    [/بيتشينو/i, 'بيتشينو'], [/elios|اليوس|إليوس/i, 'اليوس'], [/فينوس|venus/i, 'فينوس'],
+    [/ilook|اي\s*لوك|ايلوك/i, 'اي لوك'], [/sanchi|سانشي/i, 'سانشي'],
+    [/السويديه|السويدي|sewedy/i, 'السويدي'], [/الشروق/i, 'الشروق'],
+    [/ام\s*توب|amtop/i, 'ام توب'], [/ingco|inco|انكو/i, 'Ingco'], [/\bapt\b/i, 'APT'],
+    [/هلتي|hilti/i, 'هلتي'], [/\btotal\b/i, 'Total'], [/الوسام/i, 'الوسام'],
+    [/الفيل/i, 'الفيل'], [/هيرو/i, 'هيرو'], [/رؤيه|رؤية/i, 'رؤية'],
+    [/فليكس/i, 'فليكس'], [/سان\s*جي/i, 'سان جي'], [/بوراك/i, 'بوراك'],
+    [/فورجي/i, 'فورجيه'], [/اسبرينت/i, 'اسبرينت'], [/فليبس|فيليبس/i, 'Philips'],
+    [/نيازا/i, 'نيازا'], [/xpro/i, 'Xpro'], [/اهرام|أهرام/i, 'الأهرام'],
+    [/سيتي/i, 'سيتي'], [/جيرمن/i, 'جيرمن'], [/ماستر/i, 'ماستر']
+  ];
+  function brandFromName(name) {
+    const n = String(name || '');
+    for (const [re, b] of BRAND_PATTERNS) if (re.test(n)) return b;
+    return '';
+  }
+  // بيقترح شركة لكل صنف لسه من غير شركة — للمراجعة قبل التطبيق
+  function suggestBrands(items) {
+    const out = [];
+    (items || []).forEach(i => {
+      if (String(i.brand || '').trim()) return;
+      const b = brandFromName(i.name);
+      if (b) out.push({ id: i.id, name: i.name, brand: b });
+    });
+    return out;
+  }
+
   // ---------- المبيعات ----------
   // sale: { date, lines:[{itemId,name,barcode,qty,price,cost}], discount, paymentMethod, customerId, paidNow }
   async function saveSale(sale) {
@@ -2597,6 +2646,7 @@ const Services = (() => {
     postDepreciation, voidDepreciation, DEFAULT_LIFE_YEARS,
     assetMaintenance, assetBurdens, assetBurdenByCategory, MAINT_CATEGORY,
     LINE_KINDS, lineKind, isSpecialLine, setItemsCategory,
+    setItemsBrand, brandFromName, suggestBrands,
     financialPosition, receivableAging,
     exportBackup, importBackup
   };

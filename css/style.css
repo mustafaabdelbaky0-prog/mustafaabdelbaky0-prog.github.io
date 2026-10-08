@@ -1203,6 +1203,21 @@ tr.voided .qr-qty,tr.voided .qr-cond{opacity:.4;}
 .ph-grp>*:not(summary){margin-bottom:9px;}
 .ph-grp .btn{width:100%;}
 
+/* شريط الشركات جوه التصنيف في المخزون */
+.brand-bar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-4px 0 14px;}
+.bb-lbl{font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-inline-end:2px;}
+.brand-chip{background:#fff;border:1.5px solid var(--line);border-radius:999px;padding:5px 13px;
+  font:inherit;font-size:13px;font-weight:700;color:var(--navy-deep);cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;}
+.brand-chip i{font-style:normal;font-size:11px;font-weight:800;color:var(--ink-soft);
+  background:var(--steel-light);border-radius:999px;padding:1px 7px;}
+.brand-chip:hover{border-color:var(--amber);}
+.brand-chip.on{background:var(--navy-deep);border-color:var(--navy-deep);color:#fff;}
+.brand-chip.on i{background:rgba(255,255,255,.22);color:#fff;}
+.brand-chip.nob{color:var(--ink-soft);}
+.cat-pick.brand{margin-top:4px;display:block;font-size:11.5px;}
+.brand-inline{min-width:130px;}
+
 /* الماركة تحت اسم المنتج في جدول الموقع */
 .p-brand{display:inline-block;margin-top:4px;background:var(--navy-deep);color:#fff;
   border-radius:999px;padding:2px 9px;font-size:10.5px;font-weight:800;letter-spacing:.3px;}

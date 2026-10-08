@@ -20,6 +20,8 @@ Modules.site = (() => {
 
   const onPc = () => !(typeof window !== 'undefined' && window.DB_BACKEND);
   const esc = s => Utils.escapeHtml(s == null ? '' : String(s));
+  // قايمة مضمونة — المصفوفة اللي فيها عنصر واحد بترجع من الـJSON كائن لوحده
+  const alist = v => Array.isArray(v) ? v : (v == null || v === "" ? [] : [v]);
   const money = n => Utils.formatMoney(n);
 
   // ---------- تخزين ----------
@@ -266,7 +268,7 @@ Modules.site = (() => {
     (site.sections || []).forEach(x => { if (x.image === name) who.push('قسم ' + x.name); });
     site.products.forEach(p => {
       if (p.image === name) who.push(p.name);
-      if ((p.images || []).indexOf(name) >= 0) who.push(p.name + ' (صورة زيادة)');
+      if (alist(p.images).indexOf(name) >= 0) who.push(p.name + ' (صورة زيادة)');
     });
     site.offers.forEach(o => { if (o.image === name) who.push(o.title); });
     (site.bundles || []).forEach(b => { if (b.image === name) who.push(b.title); });
@@ -632,6 +634,87 @@ Modules.site = (() => {
     drawSections(container, body);
   }
 
+  /* ---------- أقسام الموقع من المخزن ----------
+     التصنيف بيبقى قسم رئيسي والشركة قسم جواه. يعني يكتب الشركة مرة
+     واحدة في المخزن، والموقع بياخدها لوحده — بدل ما يرتّب الأقسام
+     بإيده هنا كل مرة يضيف فيها منتج. */
+  function sectionsFromStock(container, body) {
+    const rows = site.products.map(p => {
+      const it = AppState.items.find(i => i.id === p.itemId) || {};
+      return {
+        p,
+        cat: String(it.category || '').trim() || 'متنوع',
+        brand: String(it.brand || p.brand || '').trim()
+      };
+    });
+    const tree = {};
+    rows.forEach(r => {
+      const t = tree[r.cat] || (tree[r.cat] = { n: 0, brands: {} });
+      t.n++;
+      if (r.brand) t.brands[r.brand] = (t.brands[r.brand] || 0) + 1;
+    });
+    const cats = Object.keys(tree).sort((a, b) => tree[b].n - tree[a].n);
+    const nSec = cats.length + cats.reduce((s, c) => s + Object.keys(tree[c].brands).length, 0);
+
+    Utils.openModal({
+      title: '🗂️ أقسام الموقع من المخزن',
+      wide: true,
+      bodyHtml: `
+        <div class="notice notice-info">
+          هيعمل قسم لكل تصنيف، وجواه قسم لكل شركة، ويحط كل منتج في مكانه.
+          <strong>${nSec}</strong> قسم من <strong>${site.products.length}</strong> منتج.
+          <div class="hint" style="margin-top:6px;">
+            المنتج اللي شركته فاضية هيروح للتصنيف الرئيسي. الأقسام القديمة هتتشال.
+          </div>
+        </div>
+        <div class="table-wrap" style="max-height:46vh;overflow:auto;margin-top:10px;">
+          <table><thead><tr><th>التصنيف</th><th>الشركات جواه</th><th style="width:70px;">منتجات</th></tr></thead>
+          <tbody>${cats.map(c => `
+            <tr><td style="font-weight:800;">${esc(c)}</td>
+                <td class="hint">${Object.keys(tree[c].brands).length
+                  ? Object.keys(tree[c].brands).sort((a, b) => tree[c].brands[b] - tree[c].brands[a])
+                      .map(b => esc(b) + ' (' + tree[c].brands[b] + ')').join(' · ')
+                  : '<em>مفيش شركات — حدّدها من المخزن</em>'}</td>
+                <td class="strong">${tree[c].n}</td></tr>`).join('')}</tbody></table>
+        </div>
+        <div class="form-actions" style="margin-top:14px;">
+          <button type="button" class="btn btn-ghost" id="sfNo">إلغاء</button>
+          <button type="button" class="btn btn-amber" id="sfGo">اعمل الأقسام</button>
+        </div>`,
+      onMount: (mb, close) => {
+        mb.querySelector('#sfNo').addEventListener('click', close);
+        mb.querySelector('#sfGo').addEventListener('click', async () => {
+          const secs = [];
+          const idOf = {};
+          let id = 1;
+          cats.forEach(c => {
+            const cid = id++;
+            secs.push({ id: cid, name: c, parent: null, order: secs.length });
+            idOf[c] = { id: cid, brands: {} };
+            Object.keys(tree[c].brands)
+              .sort((a, b) => tree[c].brands[b] - tree[c].brands[a])
+              .forEach((b, k) => {
+                const bid = id++;
+                secs.push({ id: bid, name: b, parent: cid, order: k });
+                idOf[c].brands[b] = bid;
+              });
+          });
+          rows.forEach(r => {
+            const node = idOf[r.cat];
+            r.p.sectionId = (r.brand && node.brands[r.brand]) ? node.brands[r.brand] : node.id;
+            if (r.brand && !r.p.brand) r.p.brand = r.brand;
+          });
+          site.sections = secs;
+          site.seq = id;
+          await save();
+          close();
+          drawProducts(container, body);
+          Utils.toast('اتعملوا ' + secs.length + ' قسم — راجعهم وبعدين انشر', 'success');
+        });
+      }
+    });
+  }
+
   /* ---------- تعبئة سريعة ----------
 
      أسامي المنتجات اللي هو كاتبها فيها معلومات كتير: الماركة والنوع
@@ -750,7 +833,7 @@ Modules.site = (() => {
             if (ds && (over || !p.desc)) { p.desc = ds; hit = true; }
             const k = sc.dataset.k, v = sc.dataset.v;
             if (k && v) {
-              p.specs = p.specs || [];
+              p.specs = alist(p.specs);
               const old = p.specs.find(x => (x.k || '').trim() === k);
               if (!old) { p.specs.push({ k: k, v: v }); hit = true; }
               else if (over && old.v !== v) { old.v = v; hit = true; }
@@ -789,7 +872,12 @@ Modules.site = (() => {
     // الأسعار بتتحدث من البرنامج مع كل رسم — فاللي على الموقع دايمًا سعرك الحالي
     site.products.forEach(p => {
       const it = AppState.items.find(i => i.id === p.itemId);
-      if (it) { p.price = Number(it.salePrice || 0); p.unit = it.unit || p.unit; }
+      if (it) {
+        p.price = Number(it.salePrice || 0);
+        p.unit = it.unit || p.unit;
+        // الشركة اللي في المخزن هي المرجع — يكتبها مرة هناك وتوصل هنا
+        if (it.brand && !p.brand) p.brand = it.brand;
+      }
     });
 
     body.innerHTML = `
@@ -800,6 +888,7 @@ Modules.site = (() => {
             <div class="hint">الأسعار بتتحدث لوحدها من سعر البيع في البرنامج. رتّبهم بالسهمين — الأول بيظهر الأول.</div>
           </div>
           <div class="ph-row2">
+            <button type="button" class="btn btn-ghost" id="secFromStock" title="يعمل أقسام الموقع من التصنيف والشركة اللي في المخزن">🗂️ الأقسام من المخزن</button>
             <button type="button" class="btn btn-ghost" id="bulkFill">✨ تعبئة سريعة</button>
             <button type="button" class="btn btn-amber" id="addProd">+ ضيف منتج من المخزن</button>
           </div>
@@ -811,10 +900,10 @@ Modules.site = (() => {
             <thead><tr><th>الصورة</th><th>الاسم على الموقع</th><th>القسم</th><th>الشرح والمواصفات</th><th>السعر</th><th>الترتيب</th><th></th></tr></thead>
             <tbody id="prodBody">
               ${site.products.map((p, i) => {
-                const nSpecs = (p.specs || []).filter(x => (x.k || '').trim()).length;
-                const nFeat = (p.features || []).filter(x => String(x || '').trim()).length;
+                const nSpecs = alist(p.specs).filter(x => (x.k || '').trim()).length;
+                const nFeat = alist(p.features).filter(x => String(x || '').trim()).length;
                 const secNm = (site.sections.find(x => Number(x.id) === Number(p.sectionId)) || {}).name || '';
-                const nImgs = [p.image].concat(p.images || []).filter(Boolean).length;
+                const nImgs = [p.image].concat(alist(p.images)).filter(Boolean).length;
                 const bits = [];
                 if (nFeat) bits.push(nFeat + ' ميزة');
                 if (nSpecs) bits.push(nSpecs + ' مواصفة');
@@ -849,6 +938,8 @@ Modules.site = (() => {
     body.querySelector('#addProd').addEventListener('click', () => openPicker(container, body));
     const bf = body.querySelector('#bulkFill');
     if (bf) bf.addEventListener('click', () => openBulkFill(container, body));
+    const sfs = body.querySelector('#secFromStock');
+    if (sfs) sfs.addEventListener('click', () => sectionsFromStock(container, body));
     const tb = body.querySelector('#prodBody');
     if (!tb) return;
     bindFind(body, 'products', q => filterBy(tb, 'tr[data-i]', q));
@@ -886,7 +977,7 @@ Modules.site = (() => {
      افتكر إن المنتج مش بياخد غير صورة واحدة. بقت في الجدول قدامه. */
   function openProductImages(i, container, body) {
     const p = site.products[i];
-    const all = () => [p.image].concat(p.images || []).filter(Boolean);
+    const all = () => [p.image].concat(alist(p.images)).filter(Boolean);
     const setAll = async (arr) => {
       p.image = arr[0] || '';
       p.images = arr.slice(1);
@@ -972,7 +1063,7 @@ Modules.site = (() => {
      الصور ليها نافذتها لوحدها من الجدول. */
   function openProductEditor(i, container, body) {
     const p = site.products[i];
-    const specs = (p.specs || []).slice();
+    const specs = alist(p.specs).slice();
     if (!specs.length) specs.push({ k: '', v: '' });
     const specRow = (x, n) => `
       <div class="sp-row" data-n="${n}">
@@ -1002,7 +1093,7 @@ Modules.site = (() => {
           <label class="lbl">المميزات</label>
           <div class="hint" style="margin:-2px 0 8px;">سطر لكل ميزة — بتظهر للزبون كنقط تحت بعض.
             زي: بلاستيك مقاوم للهب · توصيلات نحاسية · مأخذ مقاومة للأطفال</div>
-          <textarea id="pdFeats" rows="5" placeholder="محول منفذ حائط ثلاثي الاتجاه&#10;16 أمبير - 250 فولت - 3500 وات&#10;بلاستيك مقاوم للهب بمواد عالية الجودة&#10;توصيلات نحاسية">${esc((p.features || []).join('\n'))}</textarea>
+          <textarea id="pdFeats" rows="5" placeholder="محول منفذ حائط ثلاثي الاتجاه&#10;16 أمبير - 250 فولت - 3500 وات&#10;بلاستيك مقاوم للهب بمواد عالية الجودة&#10;توصيلات نحاسية">${esc(alist(p.features).join('\n'))}</textarea>
 
           <label class="lbl" style="margin-top:14px;">الشرح الكامل (اختياري)</label>
           <textarea id="pdAbout" rows="4" placeholder="كلام مفتوح: بيستعمل في إيه، الفرق بينه وبين غيره، أي نصيحة للزبون...">${esc(p.about || '')}</textarea>
@@ -1263,7 +1354,8 @@ Modules.site = (() => {
             chosen.add(id);
             site.products.push({
               itemId: id, name: it.name, price: Number(it.salePrice || 0),
-              unit: it.unit || '', category: it.category || '', image: '', desc: ''
+              unit: it.unit || '', category: it.category || '',
+              brand: it.brand || '', image: '', desc: ''
             });
           }
           await save();
@@ -1604,7 +1696,7 @@ Modules.site = (() => {
         (site.sections || []).forEach(x => { if (x.image === name) x.image = ''; });
         site.products.forEach(p => {
           if (p.image === name) p.image = '';
-          if (p.images) p.images = p.images.filter(v => v !== name);
+          p.images = alist(p.images).filter(v => v !== name);
         });
         site.offers.forEach(o => { if (o.image === name) o.image = ''; });
         (site.bundles || []).forEach(b => { if (b.image === name) b.image = ''; });

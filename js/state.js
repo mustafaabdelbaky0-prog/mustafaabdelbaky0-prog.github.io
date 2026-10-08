@@ -1,7 +1,7 @@
-/* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
+﻿/* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-10-04 · تعبئة سريعة ورفع صور كتير مرة واحدة';
+const APP_VERSION = '2026-10-08 · الشركة جوه التصنيف (فينوس، الأهرام...)';
 
 const Modules = {};
 
@@ -75,6 +75,15 @@ const AppState = {
   categorySuggestions() {
     return this._uniq(['كهرباء', 'حدايد', 'مفاتيح', 'سباكة', 'أدوات', 'دهانات']
       .concat(this.items.map(i => i.category)));
+  },
+  /* الشركات اللي بيشتغل بيها. التصنيف بيقول الصنف ده إيه (كهرباء)،
+     والشركة بتقول بتاع مين (فينوس) — فيقدر يدوس على فينوس ويشوف
+     كل منتجاتها بدل ما يكتب اسمها جوه اسم كل صنف. */
+  brandSuggestions(category) {
+    const src = category
+      ? this.items.filter(i => String(i.category || '').trim() === String(category).trim())
+      : this.items;
+    return this._uniq(src.map(i => i.brand));
   },
   unitSuggestions() {
     return this._uniq(Units.LIST.map(u => u.name).concat(this.items.map(i => i.unit)));

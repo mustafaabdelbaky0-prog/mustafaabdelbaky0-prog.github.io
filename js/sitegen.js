@@ -17,6 +17,11 @@ const SiteGen = (() => {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const digits = s => String(s || '').replace(/[^\d+]/g, '');
+  /* قايمة مضمونة. السبب: البيانات بتعدّي على JSON في طريقها للسيرفر
+     وبتترجع، والمصفوفة اللي فيها عنصر واحد بترجع كائن لوحده مش
+     مصفوفة. من غير الحارس ده الصفحة كلها بتفشل على منتج واحد. */
+  const arr = v => Array.isArray(v) ? v : (v == null || v === '' ? [] : [v]);
+
   // بصمة قصيرة لمحتوى نصي — بنعلّم بيها نسخة الستايل والسكربت
   function hash(t) {
     let h = 5381;
@@ -141,12 +146,36 @@ const SiteGen = (() => {
   /* كارت المنتج، وجواه تفاصيله كاملة مستخبية.
      لما الزبون يدوس على الكارت، النافذة بتاخد التفاصيل دي وتعرضها —
      فالكلام مكتوب في الصفحة نفسها (جوجل بيقراه) من غير ملفات زيادة. */
+  /* عدد المنتجات اللي بتتكتب في الصفحة نفسها. الباقي بييجي من ملف
+     منفصل بعد ما الصفحة تبان — فالصفحة بتفضل خفيفة مهما كبر المحل. */
+  const FIRST_PAINT = 48;
+
+  // النص اللي البحث بيدوّر فيه
+  function findText(p, s) {
+    return [p.name, p.brand, p.desc, p.about,
+            arr(p.features).join(' '),
+            arr(p.specs).map(x => x.k + ' ' + x.v).join(' '),
+            secChain(s, p.sectionId).map(c => c.name).join(' ')].join(' ');
+  }
+  function cell(p, s, i) {
+    return `<div class="cell" data-i="${i}" data-path="${esc(secPath(s, p.sectionId) || '|0|')}"
+                 data-find="${esc(findText(p, s))}">${productCard(p, s)}</div>`;
+  }
+  // بيرجّع تفاصيل المنتج، أو فاضي لو مفيش حاجة تستاهل نافذة
+  function detailOf(p, s) {
+    const specs = arr(p.specs).filter(x => (x.k || '').trim() || (x.v || '').trim());
+    const feats = arr(p.features).map(x => String(x || '').trim()).filter(Boolean);
+    const gallery = [p.image].concat(arr(p.images)).filter(Boolean);
+    if (!specs.length && !feats.length && !p.about && gallery.length < 2) return '';
+    return productDetail(p, s);
+  }
+
   function productCard(p, s) {
     const price = Number(p.price || 0);
-    const specs = (p.specs || []).filter(x => (x.k || '').trim() || (x.v || '').trim());
-    const feats = (p.features || []).map(x => String(x || '').trim()).filter(Boolean);
+    const specs = arr(p.specs).filter(x => (x.k || '').trim() || (x.v || '').trim());
+    const feats = arr(p.features).map(x => String(x || '').trim()).filter(Boolean);
     const chain = secChain(s, p.sectionId);
-    const gallery = [p.image].concat(p.images || []).filter(Boolean);
+    const gallery = [p.image].concat(arr(p.images)).filter(Boolean);
     const brand = String(p.brand || '').trim();
     // فوق اسم المنتج: الماركة لو كاتبها، وإلا القسم
     const tag = brand || (chain.length ? chain[chain.length - 1].name : '');
@@ -168,7 +197,20 @@ const SiteGen = (() => {
           <span class="price">${money(price)} <small>ج.م${p.unit ? ' / ' + esc(p.unit) : ''}</small></span>
           <button type="button" class="add" data-name="${esc(p.name)}" data-price="${price}">أضف للطلب</button>
         </div>
-        <div class="pdet" hidden>
+      </article>`;
+  }
+
+  /* تفاصيل المنتج — بتتخزن في ملف لوحدها وبتتحمّل أول ما الزبون
+     يدوس على أي منتج. قبل كده كانت مكتوبة مخفية في الصفحة لكل
+     منتج، يعني ٤٠٪ من حجم الصفحة بيتنزّل ومحدش بيشوفه. */
+  function productDetail(p, s) {
+    const price = Number(p.price || 0);
+    const specs = arr(p.specs).filter(x => (x.k || '').trim() || (x.v || '').trim());
+    const feats = arr(p.features).map(x => String(x || '').trim()).filter(Boolean);
+    const chain = secChain(s, p.sectionId);
+    const gallery = [p.image].concat(arr(p.images)).filter(Boolean);
+    const brand = String(p.brand || '').trim();
+    return `
           ${brand ? `<div class="pd-brand">${esc(brand)}</div>` : ''}
           ${chain.length ? `<div class="pd-path">${chain.map(c => esc(c.name)).join(' ← ')}</div>` : ''}
           <h3>${esc(p.name)}</h3>
@@ -194,9 +236,7 @@ const SiteGen = (() => {
             <table class="pd-specs">${specs.map(x =>
               `<tr><th>${esc(x.k)}</th><td>${esc(x.v)}</td></tr>`).join('')}</table></div>` : ''}
           ${p.about ? `<div class="pd-blk"><h4>الوصف</h4>
-            <p class="pd-about">${esc(p.about)}</p></div>` : ''}
-        </div>
-      </article>`;
+            <p class="pd-about">${esc(p.about)}</p></div>` : ''}`;
   }
 
   /* الباكدچ: كذا منتج مع بعض بسعر أقل من مجموعهم */
@@ -377,14 +417,13 @@ ${s.bundles.length ? `
 
     <div class="find-info" id="qInfo" hidden></div>
 
+    ${/* أول دفعة بتتكتب في الصفحة نفسها عشان تفتح على طول وجوجل يقراها،
+          والباقي بييجي من catalog.json بعد ما الصفحة تبان. من غير كده
+          ٧٠٠ منتج كانوا هيبقوا صفحة ١.٣ ميجا على بيانات الموبايل. */''}
     ${s.products.length
-      ? `<div class="grid" id="grid">${s.products.map(p =>
-          `<div class="cell" data-path="${esc(secPath(s, p.sectionId) || '|0|')}"
-                data-find="${esc([p.name, p.brand, p.desc, p.about,
-                                  (p.features || []).join(' '),
-                                  (p.specs || []).map(x => x.k + ' ' + x.v).join(' '),
-                                  secChain(s, p.sectionId).map(c => c.name).join(' ')].join(' '))}"
-           >${productCard(p, s)}</div>`).join('')}</div>
+      ? `<div class="grid" id="grid">${s.products.slice(0, FIRST_PAINT).map((p, i) => cell(p, s, i)).join('')}</div>
+         ${s.products.length > FIRST_PAINT
+            ? `<p class="loading-more" id="moreNote">بنجيب باقي المنتجات (${s.products.length - FIRST_PAINT})...</p>` : ''}
          <p class="empty" id="noHit" hidden>مفيش حاجة بالاسم ده — جرّب كلمة تانية أو كلّمنا وإحنا نشوفهالك.</p>`
       : `<p class="empty">لسه بنجهّز المنتجات — كلّمنا وإحنا نقولك على كل اللي عندنا.</p>`}
   </div>
@@ -503,14 +542,35 @@ ${tel ? `<a class="fab" href="tel:${esc(tel)}" aria-label="اتصل بنا">📞
        الصفحة الجديدة ويستعمل معاها ستايل قديم — فالشكل بيطلع مكسور
        (الصور الصغيرة بتطلع بحجمها الكامل مثلاً). الرقم بيتحسب من
        محتوى الملفين نفسهم، فمبيتغيّرش غير لما يتغيّروا فعلاً. */
+    /* باقي المنتجات والتفاصيل في ملفين منفصلين:
+       catalog.json — كل المنتجات بشكل مختصر، بتتحمّل بعد ما الصفحة تبان.
+       details.json — المميزات والمواصفات والصور، بتتحمّل أول دوسة على منتج.
+       كده الصفحة بتفضل خفيفة سواء عنده ٥٠ منتج أو ٨٠٠. */
+    const rest = s.products.slice(FIRST_PAINT).map(p => [
+      p.name, Number(p.price || 0), p.unit || '', String(p.brand || '').trim(),
+      p.desc || '', p.image || '',
+      secPath(s, p.sectionId) || '|0|',
+      findText(p, s),
+      (secChain(s, p.sectionId).slice(-1)[0] || {}).name || '',
+      detailOf(p, s) ? 1 : 0
+    ]);
+    const catalog = JSON.stringify({ from: FIRST_PAINT, rows: rest });
+    const details = {};
+    s.products.forEach((p, i) => { const d = detailOf(p, s); if (d) details[i] = d; });
+    const detailsJson = JSON.stringify(details);
+
     const stamp = hash(CSS + JS);
+    const dstamp = hash(catalog + detailsJson);
     html = html.replace('href="site.css"', 'href="site.css?v=' + stamp + '"')
-               .replace('src="site.js"', 'src="site.js?v=' + stamp + '"');
+               .replace('src="site.js"', 'src="site.js?v=' + stamp + '"')
+               .replace('</body>', '<script>window.DATA_V="' + dstamp + '";</script></body>');
 
     return [
       { path: 'index.html', text: html },
       { path: 'site.css', text: CSS },
       { path: 'site.js', text: JS },
+      { path: 'catalog.json', text: catalog },
+      { path: 'details.json', text: detailsJson },
       /* مفيش ملف بيانات بيتنشر مع الموقع عن قصد: إعدادات الطلبات فيها
          توكن البوت، وأي حاجة بتتحط على الموقع بيقدر أي حد يفتحها. */
     ];
@@ -715,6 +775,8 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 .pm-body h3{font-size:21px;font-weight:900;margin:0 0 8px;}
 .pd-price{font-size:24px;font-weight:900;color:var(--orange);font-variant-numeric:tabular-nums;margin-bottom:14px;}
 .pd-price small{font-size:13px;color:var(--soft);font-weight:700;}
+.loading-more{text-align:center;color:var(--soft);font-size:13.5px;font-weight:700;padding:16px 0 0;}
+.pd-wait{color:var(--soft);font-size:14px;font-weight:700;padding:18px 0;}
 .pd-brand{display:inline-block;background:var(--navy);color:#fff;font-size:11.5px;font-weight:900;
   letter-spacing:.4px;padding:4px 10px;border-radius:999px;margin-bottom:8px;}
 /* معرض الصور: صورة كبيرة وتحتها الصور الصغيرة */
@@ -986,15 +1048,78 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
     $('pmQ').textContent=pmQty;
     $('pmAdd').textContent = pmQty>1 ? ('أضف '+pmQty+' للطلب') : 'أضف للطلب';
   }
+  /* ===== باقي المنتجات والتفاصيل =====
+     الصفحة بتفتح بأول دفعة بس، والباقي بييجي بعد ما تبان. كده الموقع
+     بيفتح بنفس السرعة سواء فيه ٥٠ منتج أو ٨٠٠. */
+  var DETAILS=null, detailsWait=null;
+  function loadDetails(){
+    if(DETAILS) return Promise.resolve(DETAILS);
+    if(detailsWait) return detailsWait;
+    detailsWait = fetch('details.json?v='+(window.DATA_V||'1'))
+      .then(function(r){ return r.json(); })
+      .then(function(j){ DETAILS=j; return j; })
+      .catch(function(){ DETAILS={}; return DETAILS; });
+    return detailsWait;
+  }
+  function cardHtml(r){
+    // r = [اسم, سعر, وحدة, ماركة, وصف, صورة, مسار, بحث, قسم, له تفاصيل]
+    var nm=r[0], pr=r[1], un=r[2], br=r[3], ds=r[4], im=r[5], sec=r[8], more=r[9];
+    var tag = br || sec || '';
+    return '<article class="card" data-name="'+at(nm)+'" data-price="'+pr+'" data-brand="'+at(br)+'">'+
+      '<button type="button" class="card-open" aria-label="تفاصيل '+at(nm)+'">'+
+      '<div class="card-img'+(im?'':' is-empty')+'">'+(im
+        ? '<img src="img/'+at(im)+'" alt="'+at(nm)+'" loading="lazy">'
+        : '<div class="noimg">'+(document.querySelector('.noimg') ? document.querySelector('.noimg').innerHTML : '')+'</div>')+'</div>'+
+      '<div class="card-body">'+
+        (tag ? '<span class="card-sec'+(br?' is-brand':'')+'">'+at(tag)+'</span>' : '')+
+        '<h3>'+at(nm)+'</h3>'+
+        (ds ? '<p class="card-desc">'+at(ds)+'</p>' : '')+
+        (more ? '<span class="more">اعرف أكتر ←</span>' : '')+
+      '</div></button>'+
+      '<div class="card-foot"><span class="price">'+money(pr)+' <small>ج.م'+(un?' / '+at(un):'')+'</small></span>'+
+      '<button type="button" class="add" data-name="'+at(nm)+'" data-price="'+pr+'">أضف للطلب</button></div>'+
+      '</article>';
+  }
+  function at(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function money(n){ return Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function loadRest(){
+    var g=$('grid'); if(!g) return;
+    fetch('catalog.json?v='+(window.DATA_V||'1')).then(function(r){ return r.json(); }).then(function(j){
+      var rows=j.rows||[], out=[];
+      for(var k=0;k<rows.length;k++){
+        var r=rows[k];
+        out.push('<div class="cell" data-i="'+(j.from+k)+'" data-path="'+at(r[6])+'" data-find="'+at(r[7])+'">'
+          + cardHtml(r) + '</div>');
+      }
+      if(out.length) g.insertAdjacentHTML('beforeend', out.join(''));
+      var nt=$('moreNote'); if(nt) nt.remove();
+      paint(); apply();
+    }).catch(function(){
+      var nt=$('moreNote'); if(nt) nt.textContent='مقدرناش نجيب باقي المنتجات — حدّث الصفحة.';
+    });
+  }
+
   function openProduct(card){
     if(!card) return;
-    var det=card.querySelector('.pdet');
-    $('pmBody').innerHTML = det ? det.innerHTML : '';
-    $('pmBody').scrollTop=0;
+    var cell=card.closest('.cell');
+    var idx=cell?cell.dataset.i:null;
     pmName=card.dataset.name; pmPrice=Number(card.dataset.price)||0;
-    setQ(1); pmIdx=0; autoPlay(true);
+    setQ(1); pmIdx=0;
     if(cart[pmName]) $('pmAdd').textContent='في الطلب ('+cart[pmName].qty+') — زوّد كمان';
+    // رأس ثابت يبان على طول، والباقي بييجي من ملف التفاصيل
+    $('pmBody').innerHTML = '<h3>'+at(pmName)+'</h3>'+
+      '<div class="pd-price">'+money(pmPrice)+' <small>ج.م</small></div>'+
+      (card.dataset.brand ? '' : '')+
+      '<p class="pd-wait">بنجيب التفاصيل...</p>';
     open('pmodal');
+    var want=pmName;
+    loadDetails().then(function(d){
+      if(want!==pmName) return;                 // فتح منتج تاني في الوقت ده
+      var html = (idx!=null && d[idx]) ? d[idx] : '';
+      if(html){ $('pmBody').innerHTML=html; $('pmBody').scrollTop=0; autoPlay(true); }
+      else { var w=$('pmBody').querySelector('.pd-wait'); if(w) w.remove(); }
+    });
   }
   $('pmMinus').addEventListener('click', function(){ setQ(pmQty-1); });
   $('pmPlus').addEventListener('click', function(){ setQ(pmQty+1); });
@@ -1079,6 +1204,11 @@ h1,h2,h3{margin:0 0 10px;line-height:1.35;text-wrap:balance;}
 
   paint();
   drawSubs();     // كروت الأقسام الرئيسية تبان من أول ما الصفحة تفتح
+  // باقي المنتجات بعد ما الصفحة تبان — عشان متأخرش ظهورها
+  if ($('moreNote')) {
+    if (window.requestIdleCallback) requestIdleCallback(loadRest, { timeout: 1200 });
+    else setTimeout(loadRest, 250);
+  }
 })();
 `;
 

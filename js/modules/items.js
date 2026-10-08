@@ -152,7 +152,14 @@ Modules.items = (() => {
           <label>التصنيف</label>
           <input type="text" id="fCategory" value="${Utils.escapeHtml(item?.category || '')}" placeholder="كهرباء / حدايد / مفاتيح..." list="catList">
           <datalist id="catList">
-            <option value="كهرباء"><option value="حدايد"><option value="مفاتيح"><option value="أدوات"><option value="سباكة">
+            ${AppState.categorySuggestions().map(c => `<option value="${Utils.escapeHtml(c)}">`).join('')}
+          </datalist>
+        </div>
+        <div class="field">
+          <label>الشركة</label>
+          <input type="text" id="fBrand" value="${Utils.escapeHtml(item?.brand || '')}" placeholder="فينوس / اليوس / الأهرام..." list="brandList">
+          <datalist id="brandList">
+            ${AppState.brandSuggestions().map(b => `<option value="${Utils.escapeHtml(b)}">`).join('')}
           </datalist>
         </div>
         <div class="field">
@@ -772,6 +779,7 @@ Modules.items = (() => {
             const payload = {
               barcode, name,
               category: body.querySelector('#fCategory').value.trim(),
+              brand: body.querySelector('#fBrand').value.trim(),
               unit: body.querySelector('#fUnit').value || 'قطعة',
               packSize: packSize > 0 ? packSize : null,
               packName: packSize > 0 ? (packName || Units.packLabel(body.querySelector('#fUnit').value)) : null,

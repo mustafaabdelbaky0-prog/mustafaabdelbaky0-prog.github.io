@@ -9,7 +9,65 @@ Modules.inventory = (() => {
   };
 
   let catFilter = '';   // التصنيف المختار (كهرباء / حدايد …) — بيفضل لما يرجع للشاشة
+  let brandFilter = '';  // الشركة المختارة جوه التصنيف
   let selected = new Set();   // الأصناف المعلّم عليها ✓ عشان يتصنّفوا مرة واحدة
+
+  /* ---------- املا الشركات من أسامي الأصناف ----------
+     «مفتاح16امبير اليوس» اسمها فيه الشركة أصلاً. بنقراها ونعرضها
+     للمراجعة — يشيل علامة اللي مش عاجبه وبعدين يطبّق. */
+  function openBrandFill(container) {
+    const rows = Services.suggestBrands(AppState.items);
+    if (!rows.length) {
+      Utils.toast('كل الأصناف اللي أسماءها فيها اسم شركة متحدّدة بالفعل', 'info');
+      return;
+    }
+    const byBrand = {};
+    rows.forEach(r => { (byBrand[r.brand] = byBrand[r.brand] || []).push(r); });
+    const brands = Object.keys(byBrand).sort((a, b) => byBrand[b].length - byBrand[a].length);
+    Utils.openModal({
+      title: '🏢 املا الشركات من أسامي الأصناف',
+      wide: true,
+      bodyHtml: `
+        <div class="notice notice-info">
+          البرنامج قرا أسامي أصنافك ولقى <strong>${rows.length}</strong> صنف اسمه فيه اسم شركة.
+          شيل العلامة عن أي شركة مش عايزها، وبعدين دوس «طبّق».
+          <div class="hint" style="margin-top:6px;">الأصناف اللي ليها شركة بالفعل مش هتتلمس.</div>
+        </div>
+        <div class="table-wrap" style="max-height:48vh;overflow:auto;margin-top:10px;">
+          <table><thead><tr><th style="width:34px;"><input type="checkbox" id="bfAllB" checked></th>
+            <th style="width:140px;">الشركة</th><th>الأصناف</th></tr></thead>
+          <tbody>${brands.map(b => `
+            <tr data-b="${Utils.escapeHtml(b)}">
+              <td><input type="checkbox" class="bf-b" checked></td>
+              <td style="font-weight:800;">${Utils.escapeHtml(b)} <span class="muted">(${byBrand[b].length})</span></td>
+              <td class="hint">${byBrand[b].slice(0, 4).map(r => Utils.escapeHtml(r.name)).join('، ')}${
+                byBrand[b].length > 4 ? ' …' : ''}</td>
+            </tr>`).join('')}</tbody></table>
+        </div>
+        <div class="form-actions" style="margin-top:14px;">
+          <button type="button" class="btn btn-ghost" id="bfNo">إلغاء</button>
+          <button type="button" class="btn btn-amber" id="bfGo">طبّق</button>
+        </div>`,
+      onMount: (mb, close) => {
+        mb.querySelector('#bfAllB').addEventListener('change', (e) => {
+          mb.querySelectorAll('.bf-b').forEach(c => { c.checked = e.target.checked; });
+        });
+        mb.querySelector('#bfNo').addEventListener('click', close);
+        mb.querySelector('#bfGo').addEventListener('click', async () => {
+          let total = 0;
+          for (const tr of mb.querySelectorAll('tbody tr')) {
+            if (!tr.querySelector('.bf-b').checked) continue;
+            const b = tr.dataset.b;
+            total += await Services.setItemsBrand(byBrand[b].map(r => r.id), b);
+          }
+          await AppState.reloadItems();
+          close();
+          render(container);
+          Utils.toast(total ? `اتحطّت الشركة على ${total} صنف` : 'مفيش حاجة اتغيرت', total ? 'success' : 'info');
+        });
+      }
+    });
+  }
 
   function printCountSheet(list, cat) {
     if (!list.length) { Utils.toast('مفيش أصناف تتطبع', 'info'); return; }
@@ -21,6 +79,7 @@ Modules.inventory = (() => {
     return AppState.categorySuggestions().filter(c => Services.lineKind(c) === 'goods');
   }
   const NEW_CAT = '__new__', NO_CAT = '__none__';
+  const NO_BRAND = '__nobrand__';
   // قايمة صنف واحد: التصنيف الحالي مختار و"من غير تصنيف" اختيار عادي.
   // قايمة التصنيف الجماعي: بتبدأ بـ "اختار…" عشان مايدوسش تطبيق بالغلط ويشيل التصنيف من الكل.
   function catOptions(current, bulk) {
@@ -66,6 +125,7 @@ Modules.inventory = (() => {
       </div>` : ''}
 
       <div id="invCats"></div>
+      <div id="invBrands" hidden></div>
 
       <div class="section-head">
         <div class="search-box" style="max-width:340px;">
@@ -74,6 +134,7 @@ Modules.inventory = (() => {
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-ghost" id="invSheetBtn" title="ورقة تطبعها وتلف بيها على الرف تعدّ">🖨️ ورقة جرد</button>
           <button class="btn btn-ghost" id="invLabelBtn">🏷️ طباعة ملصقات</button>
+          ${Auth.isSeller() ? '' : '<button class="btn btn-ghost" id="invBrandFill" title="يقرا أسامي الأصناف ويطلّع منها الشركات">🏢 املا الشركات</button>'}
         </div>
       </div>
 
@@ -82,6 +143,10 @@ Modules.inventory = (() => {
         <span id="bulkCount"></span>
         <label>صنّفهم كـ
           <select id="bulkCat">${catOptions('', true)}</select>
+        </label>
+        <label>الشركة
+          <input type="text" id="bulkBrand" placeholder="سيبها فاضية = ما تتغيرش" list="bulkBrandList">
+          <datalist id="bulkBrandList"></datalist>
         </label>
         <button type="button" class="btn btn-amber btn-sm" id="bulkApply">تطبيق</button>
         <button type="button" class="btn btn-ghost btn-sm" id="bulkClear">إلغاء التحديد</button>
@@ -137,14 +202,52 @@ Modules.inventory = (() => {
         <div class="hint" style="margin:-6px 0 12px;">علّم ✓ على الأصناف وصنّفهم مرة واحدة من الشريط تحت — أو دوس على «من غير تصنيف» جنب أي صنف وغيّره لوحده.</div>` : ''}`;
       box.querySelectorAll('.cat-chip').forEach(b => b.addEventListener('click', () => {
         catFilter = b.dataset.cat || '';
+        brandFilter = '';                 // تصنيف جديد = شركات جديدة
         drawCats(); redraw();
+      }));
+      drawBrands();
+    }
+
+    /* ---------- شريط الشركات ----------
+       تحت التصنيف: دوسة على «فينوس» بتوري كل منتجات فينوس في
+       التصنيف ده — بدل ما يكتب اسم الشركة جوه اسم كل صنف. */
+    function drawBrands() {
+      const box = container.querySelector('#invBrands');
+      if (!box) return;
+      const base = catFilter ? AppState.items.filter(i => catOf(i) === catFilter) : AppState.items;
+      const groups = {};
+      base.forEach(i => {
+        const b = String(i.brand || '').trim();
+        if (!b) return;
+        const g = groups[b] || (groups[b] = { n: 0 });
+        g.n++;
+      });
+      const names = Object.keys(groups).sort((a, b) => groups[b].n - groups[a].n);
+      const noBrand = base.filter(i => !String(i.brand || '').trim()).length;
+      if (!names.length) { box.innerHTML = ''; box.hidden = true; return; }
+      box.hidden = false;
+      box.innerHTML = `
+        <div class="brand-bar">
+          <span class="bb-lbl">الشركة</span>
+          <button type="button" class="brand-chip ${!brandFilter ? 'on' : ''}" data-brand="">الكل</button>
+          ${names.map(b => `
+          <button type="button" class="brand-chip ${brandFilter === b ? 'on' : ''}" data-brand="${Utils.escapeHtml(b)}">
+            ${Utils.escapeHtml(b)} <i>${groups[b].n}</i></button>`).join('')}
+          ${noBrand ? `<button type="button" class="brand-chip nob ${brandFilter === NO_BRAND ? 'on' : ''}" data-brand="${NO_BRAND}">
+            من غير شركة <i>${noBrand}</i></button>` : ''}
+        </div>`;
+      box.querySelectorAll('.brand-chip').forEach(b => b.addEventListener('click', () => {
+        brandFilter = b.dataset.brand || '';
+        drawBrands(); redraw();
       }));
     }
 
-    // اللي ظاهر دلوقتي = التصنيف المختار + كلمة البحث
+    // اللي ظاهر دلوقتي = التصنيف + الشركة + كلمة البحث
     function visible() {
       let list = AppState.items;
       if (catFilter) list = list.filter(i => catOf(i) === catFilter);
+      if (brandFilter === NO_BRAND) list = list.filter(i => !String(i.brand || '').trim());
+      else if (brandFilter) list = list.filter(i => String(i.brand || '').trim() === brandFilter);
       const q = (container.querySelector('#invSearch').value || '').trim();
       if (q) list = Search.items(q, list);
       return list;
@@ -162,6 +265,7 @@ Modules.inventory = (() => {
            بننوّر السطر أحمر ونقوله المطلوب يدخّله كام. */
         const neg = Number(i.stock || 0) < -0.0001;
         const cat = String(i.category || '').trim();
+        const brd = String(i.brand || '').trim();
         return `
         <tr data-id="${i.id}"${neg ? ' class="row-missing" title="اتباع ولسه ما اتسجلش — سجّل فاتورة الشراء والرقم هيتظبط لوحده"' : ''}>
           ${owner ? `<td class="sel-col"><input type="checkbox" class="sel-row" ${selected.has(i.id) ? 'checked' : ''}></td>` : ''}
@@ -169,7 +273,10 @@ Modules.inventory = (() => {
           <td style="font-weight:700;">${Utils.escapeHtml(i.name)}</td>
           <td>${owner
                 ? `<button type="button" class="cat-pick ${cat ? '' : 'empty'}" title="دوس عشان تغيّر التصنيف">${cat ? Utils.escapeHtml(cat) : 'من غير تصنيف'}</button>`
-                : (cat ? `<span class="badge badge-muted">${Utils.escapeHtml(cat)}</span>` : '<span class="muted">—</span>')}</td>
+                : (cat ? `<span class="badge badge-muted">${Utils.escapeHtml(cat)}</span>` : '<span class="muted">—</span>')}
+              ${owner
+                ? `<button type="button" class="cat-pick brand ${brd ? '' : 'empty'}" title="دوس عشان تغيّر الشركة">${brd ? Utils.escapeHtml(brd) : 'من غير شركة'}</button>`
+                : (brd ? `<span class="badge badge-muted">${Utils.escapeHtml(brd)}</span>` : '')}</td>
           <td>${neg
                 ? `<span class="badge badge-danger">ناقص ${Units.fmtQty(-i.stock, i.unit)}</span>
                    <div class="unit-cost-sub">اتباع ولسه ما اتسجلش</div>`
@@ -209,6 +316,37 @@ Modules.inventory = (() => {
       drawCats(); redraw();
       Utils.toast(cat ? `اتصنّف ${n} صنف كـ «${cat}»` : `اتشال التصنيف من ${n} صنف`, 'success');
     }
+    // تحديد شركة لمجموعة أصناف
+    async function applyBrand(ids, brand) {
+      const n = await Services.setItemsBrand(ids, brand);
+      await AppState.reloadItems();
+      selected = new Set();
+      drawCats(); redraw();
+      Utils.toast(brand ? `اتحطّت شركة «${brand}» على ${n} صنف` : `اتشالت الشركة من ${n} صنف`, 'success');
+    }
+    // دوسة على شركة صنف واحد → خانة كتابة مكانها
+    function openBrandPicker(btn, item) {
+      const cur = String(item.brand || '').trim();
+      const list = AppState.brandSuggestions();
+      btn.outerHTML = `<input class="cat-inline brand-inline" value="${Utils.escapeHtml(cur)}"
+        placeholder="اسم الشركة" list="inlineBrands">
+        <datalist id="inlineBrands">${list.map(b => `<option value="${Utils.escapeHtml(b)}">`).join('')}</datalist>`;
+      const inp = container.querySelector('.brand-inline');
+      if (!inp) return;
+      inp.focus(); inp.select();
+      let done = false;
+      const finish = async (save) => {
+        if (done) return; done = true;
+        const v = inp.value.trim();
+        if (!save || v === cur) { redraw(); return; }
+        await applyBrand([item.id], v);
+      };
+      inp.addEventListener('blur', () => finish(true));
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        if (e.key === 'Escape') { finish(false); }
+      });
+    }
     // دوسة على تصنيف صنف واحد → قايمة مكانه
     function openCatPicker(td, item) {
       const cur = String(item.category || '').trim();
@@ -230,6 +368,8 @@ Modules.inventory = (() => {
     redraw();
 
     container.querySelector('#invLabelBtn').addEventListener('click', () => Modules.items.openBulkLabels());
+    const bfBtn = container.querySelector('#invBrandFill');
+    if (bfBtn) bfBtn.addEventListener('click', () => openBrandFill(container));
     container.querySelector('#invSheetBtn').addEventListener('click', () => printCountSheet(visible(), catFilter));
 
     container.querySelector('#invSearch').addEventListener('input', Utils.debounce(redraw, 150));
@@ -245,10 +385,15 @@ Modules.inventory = (() => {
       container.querySelector('#bulkApply').addEventListener('click', async () => {
         if (!selected.size) return;
         const raw = container.querySelector('#bulkCat').value;
-        if (!raw) { Utils.toast('اختار التصنيف الأول', 'error'); return; }
-        const v = await resolveCatChoice(raw);
-        if (v == null) return;
-        await applyCategory([...selected], v);
+        const brd = (container.querySelector('#bulkBrand').value || '').trim();
+        if (!raw && !brd) { Utils.toast('اختار التصنيف أو اكتب الشركة', 'error'); return; }
+        const ids = [...selected];
+        if (brd) { await applyBrand(ids, brd); }
+        if (raw) {
+          const v = await resolveCatChoice(raw);
+          if (v == null) return;
+          await applyCategory(ids, v);
+        }
       });
       tbody.addEventListener('change', (e) => {
         if (!e.target.classList.contains('sel-row')) return;
@@ -262,6 +407,7 @@ Modules.inventory = (() => {
       const tr = e.target.closest('tr');
       if (!tr) return;
       const item = AppState.items.find(i => i.id === Number(tr.dataset.id));
+      if (e.target.classList.contains('brand')) { openBrandPicker(e.target, item); return; }
       if (e.target.classList.contains('cat-pick')) { openCatPicker(e.target.closest('td'), item); return; }
       if (e.target.classList.contains('adj-btn')) openAdjustModal(item, () => render(container));
       if (e.target.classList.contains('hist-btn')) openHistoryModal(item);
