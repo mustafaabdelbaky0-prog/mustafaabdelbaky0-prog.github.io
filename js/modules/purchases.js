@@ -10,6 +10,8 @@ Modules.purchases = (() => {
   let rows = [];
   let detachScanner = null;
   let rowSeq = 0;
+  // بيزيد مع كل إعادة رسم للجدول — بيه بنعرف السماعة قديمة ولا لأ
+  let drawSeq = 0;
   let saving = false;   // بيمنع إن دوستين سريعتين على "حفظ" يعملوا فاتورتين
   let editing = null;   // الفاتورة اللي بنعدّل فيها دلوقتي (null = فاتورة جديدة)
 
@@ -967,6 +969,7 @@ Modules.purchases = (() => {
   }
 
   function drawRows(container, focusRowId, focusField) {
+    drawSeq++;   // سماعات الرسمة اللي فاتت تسكت من هنا ورايح
     const body = container.querySelector('#invBody');
     body.innerHTML = rows.map((r, idx) => {
       const c = calc(r);
@@ -1074,13 +1077,16 @@ Modules.purchases = (() => {
   }
 
   function bindRows(container) {
+    // رقم الرسمة دي — أي حدث يوصل بعد إعادة الرسم بيتترمي
+    const gen = drawSeq;
+    const live = () => gen === drawSeq;
     container.querySelectorAll('#invBody tr').forEach(tr => {
       const id = Number(tr.dataset.id);
       const r = rows.find(x => x._id === id);
       if (!r) return;
       // الخانة القديمة ممكن يوصلها حدث متأخر بعد ما السطر يتعاد
       // رسمه — Utils.guardCell بتتجاهله (شوف الشرح في utils.js)
-      const $ = s => Utils.guardCell(tr.querySelector(s));
+      const $ = s => Utils.guardCell(tr.querySelector(s), live);
 
       $('.f-barcode').addEventListener('input', (e) => { r.barcode = e.target.value.trim(); });
       // إنتر في خانة الباركود بيدوّر على الصنف على طول،
