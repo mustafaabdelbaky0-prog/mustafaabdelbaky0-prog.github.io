@@ -588,7 +588,9 @@ Modules.sales = (() => {
       const id = Number(tr.dataset.id);
       const r = rows.find(x => x._id === id);
       if (!r) return;
-      const $ = s => tr.querySelector(s);
+      // الخانة القديمة ممكن يوصلها حدث متأخر بعد ما السطر يتعاد
+      // رسمه — Utils.guardCell بتتجاهله (شوف الشرح في utils.js)
+      const $ = s => Utils.guardCell(tr.querySelector(s));
 
       $('.f-barcode').addEventListener('input', e => { r.barcode = e.target.value.trim(); });
       // إنتر في خانة الباركود بيدوّر على الصنف على طول،

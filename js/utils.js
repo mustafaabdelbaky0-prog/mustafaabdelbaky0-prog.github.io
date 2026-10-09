@@ -240,9 +240,26 @@ const Utils = (() => {
     return m ? m[1] : 'barcode';
   }
 
+  /* خانة في سطر فاتورة: بنتجاهل أي حدث يوصلها بعد ما تتشال من الشاشة.
+
+     ليه: لما يختار صنف من قايمة البحث، البرنامج بيحط اسم الصنف
+     ويعيد رسم السطر. المتصفح ساعتها بيبعت change/input متأخر على
+     الخانة القديمة اللي اتشالت، والحدث ده كان بيرجّع اللي هو كان
+     بيكتبه ("عود") مكان اسم الصنف ("عود داكت 4*4"). الشاشة تفضل
+     سليمة لحد ما يدوس Enter أو "سطر جديد"، وساعتها السطر يترسم
+     بالاسم الناقص — وده اللي كان مبيّن إن نص الكلام بيتمسح. */
+  function guardCell(el) {
+    if (!el || el._guarded) return el;
+    el._guarded = true;
+    const add = el.addEventListener.bind(el);
+    el.addEventListener = (type, fn, opt) =>
+      add(type, (e) => { if (e && e.target && !e.target.isConnected) return; fn(e); }, opt);
+    return el;
+  }
+
   return {
     formatMoney, formatDate, formatDateTime, todayISO, nowISO, dateKey,
-    genInternalBarcode, debounce, el, escapeHtml, fieldOf,
+    genInternalBarcode, debounce, el, escapeHtml, fieldOf, guardCell,
     beep, toast, openModal, confirmDialog, promptDialog, guardSubmit
   };
 })();
