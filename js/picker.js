@@ -9,6 +9,14 @@
    وهو بيكتب الفاتورة يبقى شايف كل اللي محتاجه من غير ما يسيب مكانه.
 
    بتشتغل بالكيبورد: ↓ ↑ للتنقل، Enter يختار، Esc يقفل.
+
+   قاعدة مهمة: الـEnter عمره ما يغيّر الكلام اللي هو كتبه. القايمة
+   مبتظلّلش حاجة لوحدها غير لو الاقتراح هو هو اللي مكتوب بالظبط
+   (أو الباركود مطابق) — يعني الـEnter مش هيغيّر حرف.
+   غير كده (كتب "عود داكت 1.5*1.5" والموجود "عود داكت") مفيش حاجة
+   متظلّلة: الـEnter يسيب كلامه وينزل للسطر اللي تحت، ولو عايز
+   اقتراح يدوس ↓ أو يدوس عليه بالماوس. ده مهم لأنه بيكتب أصناف
+   جديدة بإيده في فاتورة البيع والشرا.
    وبتتربط بالجدول كله مرة واحدة (delegation) مش بكل سطر — عشان
    الجدول بيتعاد رسمه كتير وانت بتكتب. */
 
@@ -75,7 +83,9 @@ const Picker = (() => {
     box.innerHTML = items.map((it, i) => `
       <div class="pick-row${i === active ? ' on' : ''}" data-i="${i}">
         ${cfg.render(it)}
-      </div>`).join('');
+      </div>`).join('')
+      /* مفيش حاجة متظلّلة؟ بنفهّمه إن الـEnter هيسيب كلامه زي ما هو */
+      + (active < 0 ? '<div class="pick-hint">دوس ↓ تختار من اللي فوق · أو كمّل كتابة الاسم اللي انت عايزه</div>' : '');
     box.hidden = false;
     place();
     const on = box.querySelector('.pick-row.on');
@@ -84,7 +94,9 @@ const Picker = (() => {
 
   function move(step) {
     if (!items.length) return;
-    active = (active + step + items.length) % items.length;
+    // لسه مفيش حاجة متظلّلة: ↓ تودّيه لأول واحد و↑ لآخر واحد
+    if (active < 0) active = step > 0 ? 0 : items.length - 1;
+    else active = (active + step + items.length) % items.length;
     draw();
   }
 
@@ -95,6 +107,32 @@ const Picker = (() => {
     if (it && c && c.onPick) c.onPick(it, el);
   }
 
+  /* نص الاقتراح — القايمة بتستعمل مرة مع الأصناف (كائن فيه name)
+     ومرة مع كلام ساده (وحدات، تصنيفات، شركات) */
+  function labelOf(it) {
+    if (it == null) return '';
+    return typeof it === 'string' ? it : String(it.name || '');
+  }
+
+  /* ناخد الاقتراح ده بالـEnter لوحدنا ولا لأ؟
+
+     أيوه في حالتين بس، والاتنين الكلام فيهم مش بيتغير:
+       - اسمه هو هو اللي كتبه بالظبط (بعد التطبيع: ة=ه،
+         "عود داكت1.5" = "عود داكت 1.5")
+       - أو اللي كتبه باركود الصنف بالظبط (الليزر)
+
+     أي حالة تانية — ولو كان الاقتراح بيكمّل كلامه — سايبينها ليه
+     هو: يدوس ↓ أو يدوس بالماوس. لأن الصنف الجديد بيتكتب بإيده في
+     فاتورة البيع والشرا، ولو أخدنا كلامه وحطّينا مكانه اسم صنف
+     موجود كان بيلاقي اللي كتبه ضاع. */
+  function safePick(it, q) {
+    const nq = Search.norm(q);
+    if (!nq) return false;
+    if (Search.norm(labelOf(it)) === nq) return true;
+    const code = (it && typeof it === 'object') ? String(it.barcode || '').trim() : '';
+    return !!code && code === String(q).trim();
+  }
+
   /* بنفتح القايمة على خانة معيّنة.
      opts = { search(q) بترجع قايمة, render(it) بترجع HTML, onPick(it, input) } */
   function open(input, opts) {
@@ -102,7 +140,10 @@ const Picker = (() => {
     host = input; cfg = opts;
     const q = String(input.value || '').trim();
     items = (opts.search(q) || []).slice(0, 40);
-    active = items.length ? 0 : -1;
+    /* بنظلّل حاجة لوحدنا بس لو الـEnter مش هيغيّر كلامه.
+       ولو المطابق مش أول واحد في القايمة بندوّر عليه — عشان
+       البحث ساعات بيقدّم الاسم القصير على المطابق بالظبط. */
+    active = items.findIndex(it => safePick(it, q));
     draw();
   }
 
