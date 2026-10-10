@@ -2300,6 +2300,77 @@ const Services = (() => {
     };
   }
 
+  /* ---------- شيل صنف من البرنامج ----------
+
+     الصنف ممكن يكون عليه حركات مخزن وظاهر في فواتير قديمة. لو
+     مسحناه خالص، الفواتير دي تبقى بتشاور على حاجة مش موجودة
+     والأرباح تطلع ناقصة.
+
+     فبنعمل حاجتين على حسب حالته:
+       • صنف لسه ما اتباعش ولا اتشرى (مفيش ولا حركة ولا فاتورة)
+         ← بيتمسح خالص، مفيش حاجة بتضيع.
+       • صنف عليه تاريخ ← بيتشال: بيختفي من المخزن والأصناف
+         والبحث وشاشات الفواتير والموقع، والفواتير القديمة
+         والأرباح تفضل زي ما هي. ويقدر يرجّعه وقت ما يحب. */
+  async function itemUsage(id) {
+    id = Number(id);
+    const moves = (await DB.getAllByIndex('stockMovements', 'itemId', id)).length;
+    let sales = 0, purchases = 0, returns = 0;
+    for (const [store, add] of [['sales', s => sales += s], ['purchases', s => purchases += s], ['returns', s => returns += s]]) {
+      const docs = await DB.getAll(store);
+      add(docs.filter(d => (d.lines || []).some(l => Number(l.itemId) === id)).length);
+    }
+    let onSite = false;
+    try {
+      const rec = await DB.get('settings', 'site');
+      const v = rec && rec.value;
+      onSite = !!(v && (v.products || []).some(p => Number(p.itemId) === id));
+    } catch (e) { }
+    const total = moves + sales + purchases + returns;
+    return { moves, sales, purchases, returns, onSite, total, canErase: total === 0 };
+  }
+
+  /* بيشيل الصنف من الموقع كمان — مش منطقي يفضل معروض للناس */
+  async function _dropFromSite(ids) {
+    const set = new Set(ids.map(Number));
+    const rec = await DB.get('settings', 'site');
+    const v = rec && rec.value;
+    if (!v || !Array.isArray(v.products)) return 0;
+    const before = v.products.length;
+    v.products = v.products.filter(p => !set.has(Number(p.itemId)));
+    if (v.products.length === before) return 0;
+    v.updatedAt = Utils.nowISO();
+    await DB.put('settings', { key: 'site', value: v });
+    return before - v.products.length;
+  }
+
+  async function removeItem(id) {
+    id = Number(id);
+    const item = (await DB.getAll('items')).find(i => Number(i.id) === id);
+    if (!item) throw new Error('الصنف مش موجود');
+    const use = await itemUsage(id);
+    const fromSite = await _dropFromSite([id]);
+
+    if (use.canErase) {
+      await DB.delete('items', id);
+      return { mode: 'erased', name: item.name, fromSite };
+    }
+    item.active = false;
+    item.removedAt = Utils.nowISO();
+    await DB.put('items', item);
+    return { mode: 'hidden', name: item.name, fromSite, usage: use };
+  }
+
+  async function restoreItem(id) {
+    id = Number(id);
+    const item = (await DB.getAll('items')).find(i => Number(i.id) === id);
+    if (!item) throw new Error('الصنف مش موجود');
+    item.active = true;
+    delete item.removedAt;
+    await DB.put('items', item);
+    return item.name;
+  }
+
   /* ---------- دمج صنفين اتسجلوا بالغلط مرتين ----------
 
      بيحصل لما يكتب نفس الصنف في سطرين في نفس الفاتورة (البرنامج
@@ -2639,6 +2710,7 @@ const Services = (() => {
     closeDay, daySummary,
     isManualMove, isReversalMove, reversedMoveIds,
     mergeItems, duplicateItems,
+    itemUsage, removeItem, restoreItem,
     updateTreasuryMove, deleteTreasuryMove, voidTreasuryMove,
     employeeAdvance, payEmployee, employeeAdjust, employeeSales,
     closePayrollMonth, voidPayrollClosing, voidEmployeeMove, monthRange,

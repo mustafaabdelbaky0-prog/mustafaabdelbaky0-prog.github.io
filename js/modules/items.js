@@ -72,12 +72,13 @@ Modules.items = (() => {
       }
       tbody.innerHTML = list.map(rowHtml).join('');
     }
-    draw(AppState.items);
+    // اللي شاله من المخزن مابيظهرش هنا كمان
+    draw(AppState.liveItems());
 
     container.querySelector('#itemSearch').addEventListener('input', Utils.debounce((e) => {
       // البحث اللي بيفهم العربي — والأقرب للي كتبه بييجي الأول
       const q = e.target.value.trim();
-      draw(!q ? AppState.items : Search.items(q, AppState.items));
+      draw(!q ? AppState.liveItems() : Search.items(q, AppState.liveItems()));
     }, 150));
 
     const addBtn = container.querySelector('#addItemBtn');
@@ -114,21 +115,30 @@ Modules.items = (() => {
         // الصنف ده هو اللي هيفضل — يختار اللي هيتدمج فيه
         openMergeDialog(item, () => render(container));
       } else if (e.target.classList.contains('del-item')) {
-        /* صنف عليه بيع أو شرا مينفعش يتمسح — لأن حركاته وفواتيره
-           هتفضل موجودة وتبقى بتشاور على صنف مش موجود، والتقارير
-           هتطلع ناقصة. بنوقفه بدل ما نبوّظ السجل. */
-        const moves = await DB.getAllByIndex('stockMovements', 'itemId', id);
-        if (moves.length) {
-          Utils.beep('error');
-          Utils.toast(`"${item.name}" عليه ${moves.length} حركة مخزن — مينفعش يتمسح. لو مش هتتعامل بيه تاني، صفّر رصيده من شاشة المخزون.`, 'error');
-          return;
-        }
-        const ok = await Utils.confirmDialog(`متأكد من حذف الصنف "${item.name}"؟`);
+        /* الصنف اللي ما اتباعش ولا اتشرى بيتمسح خالص.
+           واللي عليه تاريخ بيتشال: يختفي من كل الشاشات والموقع،
+           وفواتيره القديمة وأرباحها تفضل زي ما هي — وده أهم من
+           إننا نمسحه ونخلي الفواتير بتشاور على حاجة مش موجودة. */
+        const u = await Services.itemUsage(id);
+        const bits = [];
+        if (u.moves) bits.push(u.moves + ' حركة مخزن');
+        if (u.sales) bits.push(u.sales + ' فاتورة بيع');
+        if (u.purchases) bits.push(u.purchases + ' فاتورة شرا');
+        if (u.returns) bits.push(u.returns + ' مرتجع');
+        const ok = await Utils.confirmDialog(u.canErase
+          ? `«${item.name}» ما اتباعش ولا اتشرى ولا مرة — هيتمسح من البرنامج خالص.\n\nنمسحه؟`
+          : `«${item.name}» عليه ${bits.join('، ')}${u.onSite ? '، ومعروض على الموقع' : ''}.\n\n` +
+            `هيختفي من المخزن والأصناف والبحث في الفواتير${u.onSite ? ' ومن الموقع' : ''} — ` +
+            `وفواتيره القديمة وأرباحها هتفضل زي ما هي.\n` +
+            `وتقدر ترجّعه من «🗑️ المشالين» في شاشة المخزون.\n\nنشيله؟`);
         if (!ok) return;
-        await DB.delete('items', id);
+        const res = await Services.removeItem(id);
         await AppState.reloadItems();
-        draw(AppState.items);
-        Utils.toast('تم حذف الصنف', 'success');
+        draw(AppState.liveItems());
+        Utils.beep('ok');
+        Utils.toast('«' + res.name + '» ' +
+          (res.mode === 'erased' ? 'اتمسح من البرنامج' : 'اتشال من المخزن') +
+          (res.fromSite ? ' ومن الموقع' : ''), 'success');
       }
     });
   }

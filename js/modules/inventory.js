@@ -11,6 +11,7 @@ Modules.inventory = (() => {
   let catFilter = '';   // التصنيف المختار (كهرباء / حدايد …) — بيفضل لما يرجع للشاشة
   let brandFilter = '';  // الشركة المختارة جوه التصنيف
   let selected = new Set();   // الأصناف المعلّم عليها ✓ عشان يتصنّفوا مرة واحدة
+  let showRemoved = false;    // بيتفرّج على اللي شالهم عشان يرجّعهم
 
   /* ---------- املا الشركات من أسامي الأصناف ----------
      «مفتاح16امبير اليوس» اسمها فيه الشركة أصلاً. بنقراها ونعرضها
@@ -100,9 +101,12 @@ Modules.inventory = (() => {
     await AppState.reloadItems();
     selected = new Set();
     const burdenByCat = Auth.isSeller() ? {} : await Services.assetBurdenByCategory();
-    const totalValue = AppState.items.reduce((s, i) => s + (i.stock * i.costPrice), 0);
-    const lowStock = AppState.items.filter(i => i.minStock && i.stock <= i.minStock && i.stock > 0);
-    const outOfStock = AppState.items.filter(i => i.stock <= 0);
+    // الأرقام فوق على اللي لسه بيتعامل بيه — المشالين مالهمش لازمة هنا
+    const live = AppState.liveItems();
+    const removedCount = AppState.removedItems().length;
+    const totalValue = live.reduce((s, i) => s + (i.stock * i.costPrice), 0);
+    const lowStock = live.filter(i => i.minStock && i.stock <= i.minStock && i.stock > 0);
+    const outOfStock = live.filter(i => i.stock <= 0);
     // اللي اتباع ولسه ما اتسجلش — الرصيد بالسالب
     const neg = AppState.negativeStockItems();
 
@@ -135,8 +139,17 @@ Modules.inventory = (() => {
           <button class="btn btn-ghost" id="invSheetBtn" title="ورقة تطبعها وتلف بيها على الرف تعدّ">🖨️ ورقة جرد</button>
           <button class="btn btn-ghost" id="invLabelBtn">🏷️ طباعة ملصقات</button>
           ${Auth.isSeller() ? '' : '<button class="btn btn-ghost" id="invBrandFill" title="يقرا أسامي الأصناف ويطلّع منها الشركات">🏢 املا الشركات</button>'}
+          ${Auth.isSeller() || (!removedCount && !showRemoved) ? '' :
+            `<button class="btn btn-ghost" id="invRemovedBtn" title="الأصناف اللي شلتها — تقدر ترجّعها">${
+              showRemoved ? '↩️ رجوع للمخزن' : '🗑️ المشالين (' + removedCount + ')'}</button>`}
         </div>
       </div>
+
+      ${showRemoved ? `
+      <div class="notice notice-info" style="margin-bottom:12px;">
+        دي الأصناف اللي شلتها. مش ظاهرة في المخزن ولا في فواتير البيع والشرا ولا على الموقع،
+        بس فواتيرها القديمة وأرباحها زي ما هي. دوس ↩️ على أي صنف يرجع تاني.
+      </div>` : ''}
 
       ${Auth.isSeller() ? '' : `
       <div class="bulk-bar" id="bulkBar" hidden>
@@ -149,6 +162,7 @@ Modules.inventory = (() => {
           <datalist id="bulkBrandList"></datalist>
         </label>
         <button type="button" class="btn btn-amber btn-sm" id="bulkApply">تطبيق</button>
+        <button type="button" class="btn btn-danger btn-sm" id="bulkRemove" title="شيل كل اللي معلّم عليه من البرنامج">🗑️ شيلهم</button>
         <button type="button" class="btn btn-ghost btn-sm" id="bulkClear">إلغاء التحديد</button>
       </div>`}
 
@@ -244,7 +258,8 @@ Modules.inventory = (() => {
 
     // اللي ظاهر دلوقتي = التصنيف + الشركة + كلمة البحث
     function visible() {
-      let list = AppState.items;
+      // الأصناف اللي شالها مابتظهرش — إلا لو فتح شاشة «المشالين»
+      let list = showRemoved ? AppState.removedItems() : AppState.liveItems();
       if (catFilter) list = list.filter(i => catOf(i) === catFilter);
       if (brandFilter === NO_BRAND) list = list.filter(i => !String(i.brand || '').trim());
       else if (brandFilter) list = list.filter(i => String(i.brand || '').trim() === brandFilter);
@@ -288,6 +303,9 @@ Modules.inventory = (() => {
             ${Auth.isSeller() ? '' : '<button class="icon-btn adj-btn" title="تسوية جرد">⚖️</button>'}
             <button class="icon-btn label-btn" title="اطبع ملصق باركود">🏷️</button>
             <button class="icon-btn hist-btn" title="سجل الحركة">📜</button>
+            ${owner ? (showRemoved
+              ? '<button class="icon-btn back-btn" title="رجّعه للمخزن">↩️</button>'
+              : '<button class="icon-btn del-btn" title="شيله من البرنامج">🗑️</button>') : ''}
           </td>
         </tr>`; }).join('');
       syncBulk();
@@ -371,6 +389,12 @@ Modules.inventory = (() => {
     const bfBtn = container.querySelector('#invBrandFill');
     if (bfBtn) bfBtn.addEventListener('click', () => openBrandFill(container));
     container.querySelector('#invSheetBtn').addEventListener('click', () => printCountSheet(visible(), catFilter));
+    const rmBtn = container.querySelector('#invRemovedBtn');
+    if (rmBtn) rmBtn.addEventListener('click', () => {
+      showRemoved = !showRemoved;
+      selected = new Set(); catFilter = ''; brandFilter = '';
+      render(container);
+    });
 
     container.querySelector('#invSearch').addEventListener('input', Utils.debounce(redraw, 150));
 
@@ -382,6 +406,32 @@ Modules.inventory = (() => {
         redraw();
       });
       container.querySelector('#bulkClear').addEventListener('click', () => { selected = new Set(); redraw(); });
+      container.querySelector('#bulkRemove').addEventListener('click', async () => {
+        if (!selected.size) return;
+        const ids = [...selected];
+        const names = ids.map(id => (AppState.items.find(i => i.id === id) || {}).name).filter(Boolean);
+        const ok = await Utils.confirmDialog(
+          'هتشيل ' + ids.length + ' صنف من البرنامج:\n\n' +
+          names.slice(0, 10).map(n => '• ' + n).join('\n') +
+          (names.length > 10 ? '\n• و' + (names.length - 10) + ' كمان…' : '') +
+          '\n\nاللي عليه فواتير هيختفي من كل الشاشات وفواتيره تفضل زي ما هي،' +
+          ' واللي ما اتباعش ولا اتشرى هيتمسح خالص. تقدر ترجّعهم من «🗑️ المشالين».\n\nنشيلهم؟');
+        if (!ok) return;
+        let erased = 0, hidden = 0, failed = 0;
+        for (const id of ids) {
+          try {
+            const r = await Services.removeItem(id);
+            if (r.mode === 'erased') erased++; else hidden++;
+          } catch (e) { failed++; }
+        }
+        selected = new Set();
+        await AppState.reloadItems();
+        Utils.beep(failed ? 'error' : 'ok');
+        Utils.toast('اتشال ' + (erased + hidden) + ' صنف' +
+          (erased ? ' (' + erased + ' اتمسحوا خالص)' : '') +
+          (failed ? ' · ' + failed + ' ما نفعوش' : ''), failed ? 'error' : 'success');
+        render(container);
+      });
       container.querySelector('#bulkApply').addEventListener('click', async () => {
         if (!selected.size) return;
         const raw = container.querySelector('#bulkCat').value;
@@ -416,6 +466,68 @@ Modules.inventory = (() => {
         /* هو دايس على صنف بعينه — نفتحله ملصق الصنف ده على طول،
            مش قايمة الأصناف كلها. القايمة ليها زرارها فوق. */
         Modules.items.openLabelDialog(item);
+      }
+      if (e.target.classList.contains('del-btn')) openRemoveDialog(item, container);
+      if (e.target.classList.contains('back-btn')) {
+        const nm = await Services.restoreItem(item.id);
+        await AppState.reloadItems();
+        Utils.beep('ok');
+        Utils.toast('«' + nm + '» رجع للمخزن', 'success');
+        if (!AppState.removedItems().length) showRemoved = false;
+        render(container);
+      }
+    });
+  }
+
+  /* ---------- شيل صنف من البرنامج ----------
+     بنوريه الأول هو الصنف ده عليه إيه، عشان يعرف هو بيشيل إيه
+     بالظبط قبل ما يوافق. */
+  async function openRemoveDialog(item, container) {
+    const u = await Services.itemUsage(item.id);
+    const bits = [];
+    if (u.moves) bits.push(u.moves + ' حركة مخزن');
+    if (u.sales) bits.push(u.sales + ' فاتورة بيع');
+    if (u.purchases) bits.push(u.purchases + ' فاتورة شرا');
+    if (u.returns) bits.push(u.returns + ' مرتجع');
+    if (u.onSite) bits.push('ومعروض على الموقع');
+
+    const body = u.canErase
+      ? `<p>«<strong>${Utils.escapeHtml(item.name)}</strong>» ما اتباعش ولا اتشرى ولا مرة.
+           هيتمسح من البرنامج خالص.</p>`
+      : `<p>«<strong>${Utils.escapeHtml(item.name)}</strong>» عليه ${bits.join('، ')}.</p>
+         <p>هيختفي من المخزن ومن الأصناف ومن البحث في فواتير البيع والشرا والمرتجعات
+            ${u.onSite ? 'ومن الموقع ' : ''}— يعني مش هتشوفه تاني وانت شغال.</p>
+         <p><strong>وفواتيره القديمة وأرباحها هتفضل زي ما هي</strong>، عشان حسابات الشهور
+            اللي فاتت ما تتغيرش. وتقدر ترجّعه وقت ما تحب من «🗑️ المشالين» فوق.</p>`;
+
+    Utils.openModal({
+      title: u.canErase ? 'مسح الصنف' : 'شيل الصنف من البرنامج',
+      bodyHtml: body + `
+        <div class="form-actions">
+          <button class="btn btn-ghost" id="rmCancel">لأ، سيبه</button>
+          <button class="btn btn-danger" id="rmGo">${u.canErase ? '🗑️ امسحه' : '🗑️ شيله'}</button>
+        </div>`,
+      onMount: (b, close) => {
+        b.querySelector('#rmCancel').addEventListener('click', close);
+        b.querySelector('#rmGo').addEventListener('click', async () => {
+          const btn = b.querySelector('#rmGo');
+          btn.disabled = true; btn.textContent = 'بيشيل...';
+          try {
+            const res = await Services.removeItem(item.id);
+            await AppState.reloadItems();
+            close();
+            Utils.beep('ok');
+            Utils.toast('«' + res.name + '» ' +
+              (res.mode === 'erased' ? 'اتمسح من البرنامج' : 'اتشال من المخزن') +
+              (res.fromSite ? ' ومن الموقع' : ''), 'success');
+            selected.delete(item.id);
+            render(container);
+          } catch (err) {
+            btn.disabled = false; btn.textContent = '🗑️ شيله';
+            Utils.beep('error');
+            Utils.toast(err.message || 'ماقدرناش نشيله', 'error');
+          }
+        });
       }
     });
   }

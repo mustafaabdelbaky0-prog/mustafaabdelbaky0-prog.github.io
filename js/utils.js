@@ -346,7 +346,12 @@ const Search = (() => {
   /* البحث في الأصناف: بالاسم أو الباركود أو التصنيف.
      بيرجّع قايمة مرتبة من الأحسن للأقل. */
   function items(query, list) {
-    const all = list || (typeof AppState !== 'undefined' ? AppState.items : []) || [];
+    // من غير قايمة محددة بندوّر في اللي لسه بيتعامل بيه بس —
+    // الصنف اللي شاله مايظهرش في فاتورة بيع ولا شرا ولا مرتجع
+    const all = list ||
+      (typeof AppState !== 'undefined'
+        ? (AppState.liveItems ? AppState.liveItems() : AppState.items)
+        : []) || [];
     const q = norm(query);
     if (!q) return all.slice();
     const qt = q.split(' ');

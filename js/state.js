@@ -1,7 +1,7 @@
 ﻿/* الحالة المشتركة بين كل الشاشات - لازم تتحمل قبل ملفات js/modules/* */
 
 // رقم النسخة - بيظهر تحت في القايمة عشان تعرف إن التحديث وصلك فعلاً
-const APP_VERSION = '2026-10-09 · اسم الصنف بيفضل كامل (اتجرّب على متصفح حقيقي)';
+const APP_VERSION = '2026-10-10 · ربح كل فاتورة + شيل الأصناف من المخزن';
 
 const Modules = {};
 
@@ -30,6 +30,15 @@ const AppState = {
     }
     return this._ix.m.get(id) || this._ix.m.get(Number(id)) || null;
   },
+
+  /* الأصناف اللي لسه بيتعامل بيها.
+
+     الصنف اللي شاله من المخزن بيبقى active:false — بيختفي من كل
+     الشاشات والبحث والموقع، بس بيفضل موجود في البيانات عشان
+     الفواتير القديمة والتقارير تفضل مظبوطة. items فيها الكل،
+     وliveItems هي اللي الشاشات بتتعامل معاها. */
+  liveItems() { return this.items.filter(i => i.active !== false); },
+  removedItems() { return this.items.filter(i => i.active === false); },
 
   /* اسم الصنف اللي يتعرض في أي فاتورة أو تقرير.
      الفاتورة بتحفظ الاسم زي ما كان وقت الشرا أو البيع، فلو صحّح
@@ -120,9 +129,10 @@ const AppState = {
     if (!String(query || '').trim()) return [];
     // البحث اللي بيفهم العربي — الباركود المطابق بالظبط بييجي لوحده الأول
     const q = Search.norm(query);
-    const exact = this.items.filter(i => i.barcode && Search.norm(i.barcode) === q);
+    const live = this.liveItems();
+    const exact = live.filter(i => i.barcode && Search.norm(i.barcode) === q);
     if (exact.length) return exact;
-    return Search.items(query, this.items).slice(0, 20);
+    return Search.items(query, live).slice(0, 20);
   }
 };
 

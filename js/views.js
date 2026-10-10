@@ -30,6 +30,41 @@ const Views = (() => {
 
     const lines = doc.lines || [];
 
+    /* ---------- ربح الفاتورة — لصاحب المحل بس ----------
+
+       البيع بالسعر اللي كتبه وقتها فعلاً (لو نزّله للزبون، النازل
+       هو اللي بيتحسب)، والتكلفة هي تكلفة الصنف وقت البيع — الاتنين
+       محفوظين في سطر الفاتورة نفسه، فالربح ده ربح الفاتورة دي
+       بالظبط حتى لو الأسعار اتغيرت بعدين.
+
+       الكمية المرتجعة بتتشال، والخصم بينزل من الربح. */
+    const profit = (() => {
+      if (!isSale) return null;
+      let sold = 0, cost = 0, noCost = [];
+      for (const l of lines) {
+        const q = Math.max(0, Number(l.qty || 0) - Number(l.returnedQty || 0));
+        if (!q) continue;
+        sold += q * Number(l.price || 0);
+        const c = Number(l.cost || 0);
+        cost += q * c;
+        if (!(c > 0)) noCost.push(AppState.lineName(l));
+      }
+      const disc = Number(doc.discount || 0);
+      return { sold, cost, disc, net: sold - cost - disc, noCost };
+    })();
+
+    const profitBox = (!profit || doc.voided || Auth.isSeller()) ? '' : `
+      <div class="profit-box">
+        <div class="row"><span>اللي اتباع</span><span>${Utils.formatMoney(profit.sold)}</span></div>
+        <div class="row"><span>تكلفة البضاعة</span><span>- ${Utils.formatMoney(profit.cost)}</span></div>
+        ${profit.disc ? `<div class="row"><span>الخصم اللي أديته</span><span>- ${Utils.formatMoney(profit.disc)}</span></div>` : ''}
+        <div class="row grand ${profit.net >= 0 ? 'good' : 'bad'}">
+          <span>صافي الربح من الفاتورة دي</span><span>${Utils.formatMoney(profit.net)}</span></div>
+        ${profit.noCost.length ? `<div class="hint warn">لسه ما سجلتش فاتورة الشرا بتاعة:
+          ${Utils.escapeHtml(profit.noCost.slice(0, 3).join('، '))}${profit.noCost.length > 3 ? ' وغيرهم' : ''} —
+          فتكلفتهم محسوبة صفر والربح طالع أكبر من الحقيقة.</div>` : ''}
+      </div>`;
+
     /* رسم السطور. رقم السطر (#) هو رقمه في الفاتورة الأصلية دايمًا —
        حتى لو رتّبناها بالاسم — عشان يفضل يقدر يطابقها مع ورقة المورد. */
     const lineRow = (l, i) => {
@@ -97,6 +132,7 @@ const Views = (() => {
           <div class="row"><span>المدفوع وقتها</span><span>${Utils.formatMoney(doc.paidNow)}</span></div>
           <div class="row"><span>${isSale ? 'اتسجل على العميل' : 'اتسجل على المورد'}</span><span>${Utils.formatMoney(doc.dueAmount)}</span></div>
         </div>
+        ${profitBox}
         ${retHistory}
         ${doc.voided ? '<div class="notice notice-warn" style="margin-top:12px;">الفاتورة دي اتلغت — أثرها اترجع من المخزون والحسابات.</div>' : ''}
         <div class="form-actions">

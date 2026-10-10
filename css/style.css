@@ -447,6 +447,16 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .pay-summary .row{display:flex;justify-content:space-between;font-size:13.5px;padding:4px 0;}
 .pay-summary .row.grand{font-size:17px;font-weight:800;color:var(--navy-deep);border-top:1px dashed var(--steel);margin-top:6px;padding-top:9px;}
 
+/* ربح الفاتورة — لصاحب المحل بس، فمميّز عن باقي الأرقام */
+.profit-box{margin-top:12px;padding:12px 14px;border-radius:9px;
+  background:#f3faf5;border:1px solid #cfe9d8;}
+.profit-box .row{display:flex;justify-content:space-between;font-size:13.5px;padding:4px 0;}
+.profit-box .row.grand{font-size:17px;font-weight:800;border-top:1px dashed #b8ddc6;
+  margin-top:6px;padding-top:9px;}
+.profit-box .row.grand.good{color:var(--success);}
+.profit-box .row.grand.bad{color:var(--danger);}
+.profit-box .hint{margin-top:8px;}
+
 /* ---------- زرار الكاميرا والمسح ---------- */
 .search-row{display:flex;gap:8px;align-items:stretch;}
 .scan-btn{font-size:20px;padding:0 16px;flex-shrink:0;background:var(--amber);color:var(--navy-deep);}
