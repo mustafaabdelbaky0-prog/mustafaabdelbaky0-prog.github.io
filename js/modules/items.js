@@ -196,6 +196,15 @@ Modules.items = (() => {
         </div>
       </div>
       <div class="hint" id="packHint" style="margin:-4px 0 14px;"></div>
+
+      <!-- طرق بيع زيادة: الكيلو فيه كام مسمار، المتر فيه كام قطعة -->
+      <div class="field" style="margin-bottom:14px;">
+        <label>بيتباع كمان بإيه؟ <span class="muted">(اختياري)</span></label>
+        <div class="hint" id="subHint" style="margin:0 0 8px;"></div>
+        <div id="suList"></div>
+        <button type="button" class="btn btn-ghost btn-sm" id="suAdd" style="margin-top:6px;">+ ضيف طريقة بيع</button>
+      </div>
+
       <div class="field-row">
         <div class="field">
           <label>سعر التكلفة (شراء)</label>
@@ -763,6 +772,50 @@ Modules.items = (() => {
             }
           }
 
+          /* ---------- طرق البيع الزيادة ----------
+             اللي بالكيلو والمتر البرنامج عارف يبيعهم ربع كيلو وسم
+             لوحده. اللي محتاج منه رقم هو بس «الكيلو فيه كام مسمار». */
+          const suList = body.querySelector('#suList');
+          const subHint = body.querySelector('#subHint');
+          let suRows = (item && Array.isArray(item.sellUnits) ? item.sellUnits : [])
+            .map(s => ({ name: s.name || '', per: s.per || '', price: s.price || '' }));
+
+          function drawSu() {
+            const u = unitSel.value;
+            suList.innerHTML = suRows.map((s, i) => `
+              <div class="su-row" data-i="${i}">
+                <input type="text" class="su-name" value="${Utils.escapeHtml(s.name)}" placeholder="مسمار / قطعة / شنطة">
+                <span class="su-lbl">وال${Utils.escapeHtml(u)} فيه</span>
+                <input type="number" class="su-per num" min="0" step="any" value="${s.per}" placeholder="120">
+                <span class="su-lbl">بسعر</span>
+                <input type="number" class="su-price num" min="0" step="0.01" value="${s.price}" placeholder="تلقائي">
+                <button type="button" class="icon-btn su-del" title="شيل الطريقة دي">🗑️</button>
+              </div>`).join('');
+            const subs = Units.subUnits(u);
+            subHint.textContent = subs.length
+              ? `البرنامج بيعرف يبيعه ${subs.map(s => s.name).join(' و')} لوحده — مش محتاج تكتبهم. ` +
+                `ضيف هنا بس لو بتبيعه بحاجة تانية (زي المسمار).`
+              : `لو بتبيع الصنف ده بطريقة تانية غير ال${u}، اكتبها هنا.`;
+          }
+          suList.addEventListener('input', (e) => {
+            const row = e.target.closest('.su-row'); if (!row) return;
+            const i = Number(row.dataset.i);
+            if (e.target.classList.contains('su-name')) suRows[i].name = e.target.value;
+            if (e.target.classList.contains('su-per')) suRows[i].per = e.target.value;
+            if (e.target.classList.contains('su-price')) suRows[i].price = e.target.value;
+          });
+          suList.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('su-del')) return;
+            suRows.splice(Number(e.target.closest('.su-row').dataset.i), 1);
+            drawSu();
+          });
+          body.querySelector('#suAdd').addEventListener('click', () => {
+            suRows.push({ name: '', per: '', price: '' });
+            drawSu();
+            const last = suList.querySelector('.su-row:last-child .su-name');
+            if (last) last.focus();
+          });
+
           function syncUnit() {
             const u = unitSel.value;
             const dec = Units.allowsDecimals(u);
@@ -770,6 +823,7 @@ Modules.items = (() => {
             if (stockInput) stockInput.step = Units.step(u);
             if (!packNameEl.value.trim()) packNameEl.placeholder = Units.packLabel(u);
             syncPack();
+            drawSu();
           }
           unitSel.addEventListener('change', syncUnit);
           [packNameEl, packSizeEl, packPriceEl, priceEl].forEach(el =>
@@ -796,6 +850,14 @@ Modules.items = (() => {
               packSize: packSize > 0 ? packSize : null,
               packName: packSize > 0 ? (packName || Units.packLabel(body.querySelector('#fUnit').value)) : null,
               packPrice: (packSize > 0 && packPrice > 0) ? packPrice : null,
+              // طرق البيع الزيادة — اللي ناقصه اسم أو عدد بيتشال
+              sellUnits: suRows
+                .map(s => ({
+                  name: String(s.name || '').trim(),
+                  per: Number(s.per || 0),
+                  price: Number(s.price || 0) || null
+                }))
+                .filter(s => s.name && s.per > 0),
               costPrice: Number(body.querySelector('#fCost').value || 0),
               salePrice: Number(body.querySelector('#fPrice').value || 0),
               wholesalePrice: Number(body.querySelector('#fWholesale').value || 0) || null,

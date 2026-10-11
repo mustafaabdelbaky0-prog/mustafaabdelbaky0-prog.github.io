@@ -25,47 +25,63 @@ Modules.returns = (() => {
       supplierId: null, supplierName: '', reason: '',
       // لو الصنف بيتباع بالعبوة (لفة سلك ١٠٠ متر) يقدر يرجّعها لفة كاملة
       unitPrice: 0, unitCost: 0,
-      packSize: 0, packName: '', packPrice: 0, sellPack: false
+      packSize: 0, packName: '', packPrice: 0,
+      sellUnits: [], sellKey: 'base'
     };
   }
 
-  /* زي فاتورة البيع بالظبط: اللي البياع بيكتبه ممكن يكون بالمتر أو باللفة،
-     بس المرتجع بيتسجل دايمًا بالمتر عشان المخزن والضمان يفضلوا مظبوطين. */
+  /* الطرق اللي ممكن يترجّع بيها: بالوحدة، أو عبوة كاملة، أو
+     ربع كيلو / سم، أو الطريقة اللي هو كاتبها (مسمار).
+     المرتجع بيتسجل دايمًا بالوحدة الأصلية عشان المخزن والضمان. */
+  function baseLinePrice(r) {
+    return kind === 'customer' ? Number(r.unitPrice || 0) : Number(r.unitCost || 0);
+  }
+  function waysOf(r) {
+    const ways = Units.sellWays({
+      unit: r.unit, packSize: r.packSize, packName: r.packName,
+      packPrice: kind === 'customer' ? r.packPrice : 0, sellUnits: r.sellUnits
+    }, baseLinePrice(r));
+    /* المرتجع للمورد بالتكلفة: لو العبوة مالهاش سعر بيع بنحسبها
+       من التكلفة × اللي فيها، عشان يرجّع لفة كاملة عادي */
+    const size = Number(r.packSize || 0);
+    if (size > 0 && !ways.some(w => w.key === 'pack')) {
+      ways.splice(1, 0, {
+        key: 'pack', name: r.packName || Units.packLabel(r.unit),
+        factor: size, price: Math.round(baseLinePrice(r) * size * 100) / 100
+      });
+    }
+    return ways;
+  }
+  function wayOf(r) {
+    const ways = waysOf(r);
+    return ways.find(w => w.key === (r.sellKey || 'base')) || ways[0];
+  }
+
   function calc(r) {
     const qty = Number(r.qty || 0);
     const price = Number(r.price || 0);
-    const size = Number(r.packSize || 0);
-    const pack = !!r.sellPack && size > 0;
+    const w = wayOf(r);
+    const size = Number(w.factor || 1);
+    const pack = w.key !== 'base';
     return {
-      qty, price, size, pack,
-      baseQty: pack ? Math.round(qty * size * 1000) / 1000 : qty,
+      qty, price, size, pack, way: w,
+      baseQty: pack ? Math.round(qty * size * 1000000) / 1000000 : qty,
       basePrice: pack ? price / size : price,
       total: r.mode === 'swap' ? 0 : qty * price
     };
   }
 
-  // أي صنف متعرّف إن عبوته فيها كام يقدر يترجّع عبوة كاملة
+  // الصنف ده بيترجّع بأكتر من طريقة؟
   function canUsePack(r) {
-    return Number(r.packSize || 0) > 0;
+    return waysOf(r).length > 1;
   }
 
-  /* سعر العبوة كاملة: المرتجع من العميل بسعر البيع اللي باعها بيه،
-     والمرتجع للمورد بتكلفة الشراء. لو الصنف مالوش سعر لفة مسجّل
-     بنحسبه من سعر الوحدة × عدد اللي في العبوة. */
-  function packPriceFor(r) {
-    const size = Number(r.packSize || 0);
-    if (kind === 'customer') {
-      return Number(r.packPrice || 0) || Number(r.unitPrice || 0) * size;
-    }
-    return Number(r.unitCost || 0) * size;
-  }
-
-  function switchRowUnit(r, toPack) {
-    r.sellPack = !!toPack && canUsePack(r);
+  function switchRowUnit(r, key) {
+    const ways = waysOf(r);
+    const w = ways.find(x => x.key === key) || ways[0];
+    r.sellKey = w.key;
     r.qty = 1;
-    r.price = r.sellPack
-      ? packPriceFor(r)
-      : (kind === 'customer' ? (r.unitPrice || '') : (r.unitCost || ''));
+    r.price = w.price || '';
   }
   function grandTotal() { return rows.reduce((s, r) => s + calc(r).total, 0); }
   function filled() { return rows.filter(r => r.itemId && calc(r).qty > 0); }
@@ -324,7 +340,8 @@ Modules.returns = (() => {
     row.packSize = Number(item.packSize || 0);
     row.packName = item.packName || Units.packLabel(row.unit);
     row.packPrice = Number(item.packPrice || 0);
-    row.sellPack = false;   // الأصل بالوحدة، واللي راجع عبوة كاملة بيغيّر الوحدة
+    row.sellUnits = Array.isArray(item.sellUnits) ? item.sellUnits : [];
+    row.sellKey = 'base';   // الأصل بالوحدة، واللي راجع عبوة أو ربع كيلو بيغيّر
     /* المورد بيتملى لوحده من آخر مورد جبنا منه الصنف — إلا لو هو
        كاتب اسم مورد فوق والصنف ده فعلاً جه منه، فالمكتوب أولى
        (الصنف ممكن يكون متجاب من أكتر من مورد) */
@@ -361,13 +378,14 @@ Modules.returns = (() => {
           ${item ? `<div class="inv-sub">بالمخزن ${Units.fmtQty(stock, r.unit)}${damaged > 0 ? ` · تالف ${Units.fmtQty(damaged, r.unit)}` : ''}</div>` : ''}
         </td>
         <td data-label="العدد">
-          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${c.pack ? '0.01' : Units.step(r.unit)}" inputmode="decimal" placeholder="0">
+          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${Units.stepFor(c.way, r.unit)}" inputmode="decimal" placeholder="0">
+          ${c.pack && c.baseQty > 0 ? `<div class="line-derived">= ${Units.fmtQty(c.baseQty, r.unit)}</div>` : ''}
         </td>
         <td data-label="الوحدة" class="unit-cell">
           ${canUsePack(r) ? `
-            <select class="cell f-unitsel" title="راجع بالوحدة ولا عبوة كاملة؟">
-              <option value="unit" ${!c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.unit)}</option>
-              <option value="pack" ${c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.packName || Units.packLabel(r.unit))}</option>
+            <select class="cell f-unitsel" title="راجع بإيه؟">
+              ${waysOf(r).map(w =>
+                `<option value="${Utils.escapeHtml(w.key)}" ${w.key === c.way.key ? 'selected' : ''}>${Utils.escapeHtml(w.name)}</option>`).join('')}
             </select>`
             : Utils.escapeHtml(r.unit)}
         </td>
@@ -561,10 +579,10 @@ Modules.returns = (() => {
       $('.f-cond').addEventListener('change', e => { r.condition = e.target.value; drawRows(container, id, 'qty'); });
       $('.f-mode').addEventListener('change', e => { r.mode = e.target.value; drawRows(container, id, 'qty'); });
 
-      // راجع بالمتر ولا لفة كاملة؟
+      // راجع بإيه؟ بالمتر، لفة كاملة، ربع كيلو، مسمار...
       if ($('.f-unitsel')) {
         $('.f-unitsel').addEventListener('change', (e) => {
-          switchRowUnit(r, e.target.value === 'pack');
+          switchRowUnit(r, e.target.value);
           drawRows(container, id, 'qty');
         });
       }
@@ -705,7 +723,7 @@ Modules.returns = (() => {
             packQty: c.pack ? c.qty : null,
             packPrice: c.pack ? c.price : null,
             packSize: c.pack ? c.size : null,
-            packName: c.pack ? (r.packName || Units.packLabel(r.unit)) : null
+            packName: c.pack ? c.way.name : null
           };
         })
       });

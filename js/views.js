@@ -71,8 +71,14 @@ const Views = (() => {
       const price = isSale ? l.price : l.cost;
       // في الشراء بنعرض تكلفة العبوة، وفي البيع سعر بيعها
       const packOne = l.packCost != null ? l.packCost : l.packPrice;
+      /* الطريقة اللي باع بيها فعلاً: لفة كاملة، ٢٥٠ جرام، ٣ مسامير.
+         لو الطريقة أكبر من الوحدة (لفة فيها ١٠٠ متر) بنقول فيها كام،
+         ولو أصغر منها (جرام) بنقول الكمية دي بتساوي كام بالوحدة. */
       const packNote = l.packQty
-        ? `<div class="inv-sub">${l.packQty} ${Utils.escapeHtml(l.packName || 'عبوة')} × ${Utils.formatMoney(packOne)} — الواحدة ${l.packSize} ${Utils.escapeHtml(l.unit || '')}</div>`
+        ? `<div class="inv-sub">${Units.fmtQty(l.packQty, l.packName || 'عبوة')} × ${Utils.formatMoney(packOne)}` +
+          (Number(l.packSize || 0) >= 1
+            ? ` — الواحدة ${Units.fmtQty(l.packSize, l.unit || '')}`
+            : ` = ${Units.fmtQty(l.qty, l.unit || '')}`) + `</div>`
         : '';
       const retNote = l.returnedQty
         ? `<div class="inv-sub warn">اترجع منها ${Units.fmtQty(l.returnedQty, l.unit)}</div>` : '';

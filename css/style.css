@@ -447,6 +447,14 @@ tr.tr-void .badge-void{text-decoration:none;opacity:1;}
 .pay-summary .row{display:flex;justify-content:space-between;font-size:13.5px;padding:4px 0;}
 .pay-summary .row.grand{font-size:17px;font-weight:800;color:var(--navy-deep);border-top:1px dashed var(--steel);margin-top:6px;padding-top:9px;}
 
+/* طرق البيع الزيادة في شاشة الصنف: «وال(كيلو) فيه [١٢٠] مسمار» */
+.su-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap;}
+.su-row input{padding:7px 9px;font-size:13px;}
+.su-row .su-name{flex:1 1 130px;min-width:110px;}
+.su-row .su-per{width:92px;}
+.su-row .su-price{width:100px;}
+.su-lbl{font-size:12.5px;color:var(--ink-soft);white-space:nowrap;}
+
 /* ربح الفاتورة — لصاحب المحل بس، فمميّز عن باقي الأرقام */
 .profit-box{margin-top:12px;padding:12px 14px;border-radius:9px;
   background:#f3faf5;border:1px solid #cfe9d8;}

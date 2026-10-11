@@ -27,7 +27,11 @@ Modules.sales = (() => {
       _id: ++rowSeq, itemId: null, barcode: '', name: '', unit: 'قطعة',
       qty: '', price: '', cost: 0, stock: 0,
       // بيانات العبوة: لفة السلك فيها ١٠٠ متر وليها سعر مقطوعية أرخص
-      packSize: 0, packName: '', packPrice: 0, sellPack: false
+      packSize: 0, packName: '', packPrice: 0,
+      // طرق بيع الصنف اللي هو كاتبها (الكيلو فيه ١٢٠ مسمار)
+      sellUnits: [],
+      // بيبيعه دلوقتي بإيه؟ 'base' = بالوحدة الأصلية
+      sellKey: 'base'
     };
   }
 
@@ -43,16 +47,29 @@ Modules.sales = (() => {
       r.packSize = Number(it.packSize || 0);
       r.packName = it.packName || Units.packLabel(r.unit);
       r.packPrice = Number(it.packPrice || 0);
+      r.retailPrice = Number(it.salePrice || 0);
+      r.wholesalePrice = Number(it.wholesalePrice || 0);
+      r.sellUnits = Array.isArray(it.sellUnits) ? it.sellUnits : [];
     }
-    /* الفاتورة متسجلة دايمًا بالوحدة الأصلية (متر) عشان المخزن والأرباح،
-       فلو السطر كان مباع بالعبوة بنرجّعه لشكله ده تاني وقت التعديل
-       عشان يشوفه زي ما باعه بالظبط */
+    /* الفاتورة متسجلة دايمًا بالوحدة الأصلية (متر/كيلو) عشان المخزن
+       والأرباح، فلو السطر كان مباع بطريقة تانية (لفة، ربع كيلو،
+       مسمار) بنرجّعه لشكله ده تاني وقت التعديل عشان يشوفه زي ما
+       باعه بالظبط */
     if (Number(l.packQty || 0) > 0 && Number(l.packSize || 0) > 0) {
-      r.sellPack = true;
-      r.packSize = Number(l.packSize);
-      r.packName = l.packName || Units.packLabel(r.unit);
+      const nm = l.packName || Units.packLabel(r.unit);
+      const f = Number(l.packSize);
+      const hit = waysOf(r).find(w => w.name === nm && Math.abs(w.factor - f) < 1e-9);
+      if (hit) r.sellKey = hit.key;
+      else {
+        // طريقة اتشالت من الصنف بعدين — بنرجّعها للسطر ده بس
+        r.sellUnits = (r.sellUnits || []).concat([{ name: nm, per: 1 / f, price: l.packPrice }]);
+        const back = waysOf(r).find(w => w.name === nm);
+        r.sellKey = back ? back.key : 'base';
+      }
+      r.packSize = f;
+      r.packName = nm;
       r.qty = l.packQty;
-      r.price = l.packPrice != null ? l.packPrice : Number(l.price || 0) * Number(l.packSize);
+      r.price = l.packPrice != null ? l.packPrice : Number(l.price || 0) * f;
     } else {
       r.qty = l.qty;
       r.price = l.price;
@@ -92,26 +109,46 @@ Modules.sales = (() => {
      baseQty/basePrice = نفس الكلام محوّل للوحدة الأصلية (المتر) —
      ودي اللي بتتسجل في الفاتورة، عشان المخزن والأرباح والمرتجعات
      يفضلوا شغالين بلغة واحدة مهما البياع باع بإيه. */
+  /* السعر الأساسي للوحدة الواحدة — بسعر الجملة لو مفعّل */
+  function baseUnitPrice(r) {
+    return (wholesale && Number(r.wholesalePrice || 0))
+      ? Number(r.wholesalePrice) : Number(r.retailPrice || 0);
+  }
+
+  // كل الطرق اللي يقدر يبيع بيها الصنف ده
+  function waysOf(r) {
+    return Units.sellWays({
+      unit: r.unit, packSize: r.packSize, packName: r.packName,
+      packPrice: r.packPrice, sellUnits: r.sellUnits
+    }, baseUnitPrice(r));
+  }
+  function wayOf(r) {
+    const ways = waysOf(r);
+    return ways.find(w => w.key === (r.sellKey || 'base')) || ways[0];
+  }
+
   function calc(r) {
     const qty = Number(r.qty || 0);
     const price = Number(r.price || 0);
-    const size = Number(r.packSize || 0);
-    const pack = !!r.sellPack && size > 0;
+    const w = wayOf(r);
+    const size = Number(w.factor || 1);
+    // 'pack' = بيبيع العبوة كاملة — ليها عرض خاص في الفاتورة
+    const pack = w.key !== 'base';
     return {
-      qty, price, size, pack,
+      qty, price, size, pack, way: w,
       lineTotal: qty * price,
-      baseQty: pack ? Math.round(qty * size * 1000) / 1000 : qty,
+      baseQty: pack ? Math.round(qty * size * 1000000) / 1000000 : qty,
       basePrice: pack ? price / size : price
     };
   }
 
-  // هل الصنف ده أصلاً بيتباع بالعبوة؟ (لازم يكون معرّف فيها كام وبكام)
+  // الصنف ده بيتباع بأكتر من طريقة؟
   function canSellPack(r) {
-    return Number(r.packSize || 0) > 0 && Number(r.packPrice || 0) > 0;
+    return waysOf(r).length > 1;
   }
 
   function unitLabel(r) {
-    return calc(r).pack ? (r.packName || Units.packLabel(r.unit)) : r.unit;
+    return wayOf(r).name;
   }
 
   function filledRows() {
@@ -389,7 +426,7 @@ Modules.sales = (() => {
     /* لو الصنف موجود في الفاتورة بنزوّد كميته.
        بس لو السطر الموجود متباع بالعبوة (لفة كاملة)، المسح معناه إنه
        بيبيع بالمتر كمان — فبنفتحله سطر جديد بدل ما نزوّد لفة غلط. */
-    const already = rows.find(r => r.itemId === item.id && !r.sellPack);
+    const already = rows.find(r => r.itemId === item.id && (r.sellKey || 'base') === 'base');
     if (already) {
       already.qty = Math.round((Number(already.qty || 0) + 1) * 1000) / 1000;
       Utils.beep('ok');
@@ -416,19 +453,21 @@ Modules.sales = (() => {
     row.packSize = Number(item.packSize || 0);
     row.packName = item.packName || Units.packLabel(row.unit);
     row.packPrice = Number(item.packPrice || 0);
-    row.sellPack = false;   // الأصل إنه بيبيع بالمتر، واللي عايز لفة بيغيّر الوحدة
+    row.sellUnits = Array.isArray(item.sellUnits) ? item.sellUnits : [];
+    row.sellKey = 'base';   // الأصل بالوحدة، واللي عايز لفة أو ربع كيلو بيغيّر
     // لو مفعّل وضع الجملة والصنف ليه سعر جملة، بنستعمله
     if (!row.price) row.price = (wholesale && item.wholesalePrice) ? item.wholesalePrice : (item.salePrice || '');
     if (!row.qty) row.qty = 1;
   }
 
-  // بيبدّل السطر بين البيع بالمتر والبيع باللفة
-  function switchRowUnit(r, toPack) {
-    r.sellPack = !!toPack && canSellPack(r);
+  /* بيبدّل طريقة البيع: بالمتر ولا باللفة، بالكيلو ولا بربع كيلو
+     ولا بالمسمار. السعر بيتحط لوحده على حسب الطريقة. */
+  function switchRowUnit(r, key) {
+    const ways = waysOf(r);
+    const w = ways.find(x => x.key === key) || ways[0];
+    r.sellKey = w.key;
     r.qty = 1;
-    r.price = r.sellPack
-      ? r.packPrice
-      : ((wholesale && r.wholesalePrice) ? r.wholesalePrice : (r.retailPrice || ''));
+    r.price = w.price || '';
   }
 
   function drawRows(container, focusRowId, focusField) {
@@ -452,13 +491,14 @@ Modules.sales = (() => {
           ${over ? `<div class="line-derived warn">المتاح ${Units.fmtQty(r.stock, r.unit)} بس</div>` : ''}
         </td>
         <td data-label="الكمية">
-          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${c.pack ? '0.01' : Units.step(r.unit)}" inputmode="decimal" placeholder="0">
+          <input type="number" class="cell f-qty num" value="${r.qty}" min="0" step="${Units.stepFor(c.way, r.unit)}" inputmode="decimal" placeholder="0">
+          ${c.pack && c.baseQty > 0 ? `<div class="line-derived">= ${Units.fmtQty(c.baseQty, r.unit)}</div>` : ''}
         </td>
         <td data-label="الوحدة" class="unit-cell">
           ${canPack ? `
-            <select class="cell f-unitsel" title="بيبيعها بالوحدة ولا بالعبوة كاملة؟">
-              <option value="unit" ${!c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.unit)}</option>
-              <option value="pack" ${c.pack ? 'selected' : ''}>${Utils.escapeHtml(r.packName || Units.packLabel(r.unit))}</option>
+            <select class="cell f-unitsel" title="بيبيعها بإيه؟">
+              ${waysOf(r).map(w =>
+                `<option value="${Utils.escapeHtml(w.key)}" ${w.key === c.way.key ? 'selected' : ''}>${Utils.escapeHtml(w.name)}</option>`).join('')}
             </select>`
             : Utils.escapeHtml(r.unit)}
         </td>
@@ -468,7 +508,6 @@ Modules.sales = (() => {
         </td>
         <td data-label="الإجمالي" class="cell-total">
           <div class="line-sum">${Utils.formatMoney(c.lineTotal)}</div>
-          ${c.pack && c.baseQty > 0 ? `<div class="line-derived">= ${Units.fmtQty(c.baseQty, r.unit)}</div>` : ''}
         </td>
         <td data-label=""><button type="button" class="icon-btn rm-row" title="حذف السطر">🗑️</button></td>
       </tr>`;
@@ -627,10 +666,10 @@ Modules.sales = (() => {
       $('.f-qty').addEventListener('input', e => { r.qty = e.target.value; refreshLine(container, tr, r); });
       $('.f-price').addEventListener('input', e => { r.price = e.target.value; refreshLine(container, tr, r); });
 
-      // بيبيع بالمتر ولا باللفة كاملة؟
+      // بيبيع بإيه؟ بالمتر، باللفة، بربع كيلو، بالمسمار...
       if ($('.f-unitsel')) {
         $('.f-unitsel').addEventListener('change', (e) => {
-          switchRowUnit(r, e.target.value === 'pack');
+          switchRowUnit(r, e.target.value);
           drawRows(container, id, 'qty');
         });
       }
@@ -847,10 +886,13 @@ Modules.sales = (() => {
           return {
             itemId: r.itemId, name: r.name, barcode: r.barcode, unit: r.unit,
             qty: c.baseQty, price: c.basePrice, cost: r.cost,
+            /* الفاتورة بتتسجل دايمًا بالوحدة الأصلية (كيلو/متر)،
+               وبنحفظ معاها الطريقة اللي باع بيها فعلاً عشان تبان
+               في الفاتورة زي ما قالها للزبون: ٢٥٠ جرام، ٣ مسامير */
             packQty: c.pack ? c.qty : null,
             packPrice: c.pack ? c.price : null,
             packSize: c.pack ? c.size : null,
-            packName: c.pack ? (r.packName || Units.packLabel(r.unit)) : null
+            packName: c.pack ? c.way.name : null
           };
         }),
         paidNow
