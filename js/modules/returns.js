@@ -17,6 +17,10 @@ Modules.returns = (() => {
   let drawSeq = 0;
   let saving = false;
   let detachScanner = null;
+  /* البرنامج حوّل التسوية لكاش لوحده (عميل نقدي)؟ وهل هو بنفسه
+     غيّر الاختيار؟ — عشان نعرف نرجّعه لما يكتب اسم العميل */
+  let autoCash = false;
+  let settleTouched = false;
 
   function blankRow() {
     return {
@@ -161,6 +165,7 @@ Modules.returns = (() => {
     await AppState.reloadParties();
     purCache = await DB.getAll('purchases');
     supLimit = null;
+    autoCash = false; settleTouched = false;
     rows = [blankRow()];
     if (detachScanner) { detachScanner(); detachScanner = null; }
     if (Auth.isSeller() && kind === 'supplier') kind = 'customer';
@@ -263,6 +268,17 @@ Modules.returns = (() => {
         </div>
       </div>
 
+      <div class="card" id="dmgCard" style="margin-top:18px;" hidden>
+        <div class="section-head">
+          <div>
+            <h3 class="mini-head">تالف عندك مستني يرجع للمورد</h3>
+            <div class="hint">البضاعة اللي رجّعها العملاء تالفة. مش في المخزن ومش بتتباع —
+              دوس على المورد عشان تعملّه مرتجع بيها.</div>
+          </div>
+        </div>
+        <div id="dmgList"></div>
+      </div>
+
       <div class="card" style="margin-top:18px;">
         <div class="section-head"><h3>المرتجعات اللي اتسجلت</h3></div>
         <div id="retHistory"></div>
@@ -278,6 +294,7 @@ Modules.returns = (() => {
 
     drawRows(container);
     loadHistory(container);
+    drawDamaged(container);
 
     detachScanner = Scanner.attachHardwareScanner(
       container.querySelector('#retParty'), (code) => onScan(container, code));
@@ -289,7 +306,11 @@ Modules.returns = (() => {
     container.querySelector('#addRowBtn').addEventListener('click', () => {
       rows.push(blankRow()); drawRows(container, rows[rows.length - 1]._id, 'barcode');
     });
-    container.querySelector('#settleMode').addEventListener('change', () => updateTotals(container));
+    container.querySelector('#settleMode').addEventListener('change', () => {
+      settleTouched = true;   // اختياره هو — مش هنغيّره عليه
+      autoCash = false;
+      updateTotals(container);
+    });
     container.querySelector('#clearRet').addEventListener('click', async () => {
       if (filled().length && !(await Utils.confirmDialog('هتمسح المرتجع وتبدأ من جديد؟'))) return;
       render(container);
@@ -303,6 +324,7 @@ Modules.returns = (() => {
     const onParty = () => {
       refreshSupLimit(container);
       paintPartyLimit(container);
+      updateTotals(container);   // كاش ولا حساب؟ الاختيار بيتظبط لوحده
       if (limiting()) {
         const bad = rows.filter(r => r.itemId && !allowedItem(r.itemId));
         if (bad.length) {
@@ -638,8 +660,31 @@ Modules.returns = (() => {
     container.querySelector('#sumSwap').textContent = swaps;
     container.querySelector('#sumTotal').textContent = Utils.formatMoney(total);
 
+    /* عميل نقدي: مفيش حساب ينزل منه، فاختيار "تنزل من الحساب"
+       مالوش معنى. بنقفله ونحوّله كاش لوحده بدل ما نوقفه وقت
+       الحفظ ونقوله اكتب اسم.
+
+       ولو كتب الاسم بعد كده بنرجّعه "تنزل من الحساب" تاني — إلا لو
+       هو بنفسه اختار كاش، ساعتها اختياره هو اللي يفضل. */
+    const sm = container.querySelector('#settleMode');
+    const cashParty = Services.isCashName((container.querySelector('#retParty') || {}).value || '');
+    const accOpt = sm && sm.querySelector('option[value="account"]');
+    if (accOpt) {
+      accOpt.disabled = cashParty;
+      accOpt.textContent = cashParty
+        ? 'تنزل من الحساب (اكتب اسم ' + (kind === 'customer' ? 'العميل' : 'المورد') + ' الأول)'
+        : 'تنزل من الحساب';
+    }
+    if (sm) {
+      if (cashParty) {
+        if (sm.value === 'account') { sm.value = 'cash'; autoCash = true; }
+      } else if (autoCash && !settleTouched && sm.value === 'cash') {
+        sm.value = 'account'; autoCash = false;
+      }
+    }
+
     const hint = container.querySelector('#retHint');
-    const settle = container.querySelector('#settleMode').value;
+    const settle = sm.value;
     if (total <= 0) {
       hint.textContent = 'مفيش فلوس هتتحرك — استبدال بس.';
       hint.style.color = 'var(--success)';
@@ -666,7 +711,7 @@ Modules.returns = (() => {
     const dateVal = container.querySelector('#retDate').value;
     const date = dateVal ? new Date(dateVal + 'T12:00:00').toISOString() : Utils.nowISO();
     const reason = container.querySelector('#retReason').value.trim();
-    const settle = container.querySelector('#settleMode').value;
+    let settle = container.querySelector('#settleMode').value;
     let partyName = container.querySelector('#retParty').value.trim();
 
     // لو مورد ومكتبش الاسم، بناخده من الصنف نفسه
@@ -697,12 +742,13 @@ Modules.returns = (() => {
       }
     }
 
+    /* عميل نقدي رجّع بضاعة: مفيش حساب أصلاً ينزل منه، فالفلوس
+       بتطلع كاش من الخزنة على طول. مش هنوقفه ونطلب منه اسم. */
     const total = grandTotal();
     if (total > 0 && settle === 'account' && Services.isCashName(partyName)) {
-      Utils.toast(`اكتب اسم ${kind === 'customer' ? 'العميل' : 'المورد'} عشان ينزل من حسابه`, 'error');
-      Utils.beep('error');
-      container.querySelector('#retParty').focus();
-      return;
+      settle = 'cash';
+      const sm = container.querySelector('#settleMode');
+      if (sm) sm.value = 'cash';
     }
 
     saving = true;
@@ -731,7 +777,17 @@ Modules.returns = (() => {
       await AppState.reloadItems(); await AppState.reloadParties();
       if (typeof refreshShell === 'function') await refreshShell();
       Utils.beep('ok');
-      Utils.toast(`اتسجل المرتجع ${res.number}` + (res.total > 0 ? ` بقيمة ${Utils.formatMoney(res.total)}` : ' (استبدال)'), 'success');
+      /* بنقوله البضاعة راحت فين بالظبط: السليم دخل المخزن
+         والتالف اتحطّ على جنب عشان يرجّعه للمورد */
+      const good = valid.filter(r => r.condition !== 'damaged').length;
+      const bad = valid.filter(r => r.condition === 'damaged').length;
+      const where = kind === 'customer'
+        ? [good ? good + ' دخلوا المخزن' : '', bad ? bad + ' تالف مستني يرجع للمورد' : '']
+            .filter(Boolean).join(' · ')
+        : '';
+      Utils.toast(`اتسجل المرتجع ${res.number}` +
+        (res.total > 0 ? ` بقيمة ${Utils.formatMoney(res.total)}` : ' (استبدال)') +
+        (where ? ' — ' + where : ''), 'success');
       render(container);
     } catch (e) {
       Utils.beep('error');
@@ -740,6 +796,80 @@ Modules.returns = (() => {
     } finally {
       saving = false;
     }
+  }
+
+  /* ---------- التالف اللي عنده، مرتّب على الموردين ----------
+
+     العميل بيرجّع حاجة تالفة: مش بتدخل المخزن ومش بتتباع، بتتحط
+     على جنب لحد ما يرجّعها للمورد اللي جابها منه. هنا بيشوفها
+     متجمّعة على كل مورد، ودوسة واحدة بتفتحله مرتجع جاهز بيها. */
+  function drawDamaged(container) {
+    const card = container.querySelector('#dmgCard');
+    const list = container.querySelector('#dmgList');
+    if (!card || !list) return;
+    if (Auth.isSeller()) { card.hidden = true; return; }
+
+    const dmg = AppState.liveItems().filter(i => Number(i.damagedQty || 0) > 0.0001);
+    if (!dmg.length) { card.hidden = true; return; }
+
+    const bySup = new Map();
+    dmg.forEach(i => {
+      const sup = AppState.suppliers.find(s => s.id === i.lastSupplierId);
+      const key = sup ? sup.id : 0;
+      if (!bySup.has(key)) bySup.set(key, { id: sup ? sup.id : 0, name: sup ? sup.name : 'مش عارف المورد', items: [] });
+      bySup.get(key).items.push(i);
+    });
+
+    card.hidden = false;
+    list.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>المورد</th><th>الأصناف</th><th style="width:120px;">قيمتها</th><th style="width:160px;"></th></tr></thead>
+          <tbody>
+            ${[...bySup.values()].map(g => {
+              const val = g.items.reduce((s, i) => s + Number(i.damagedQty || 0) * Number(i.costPrice || 0), 0);
+              return `
+              <tr data-sup="${g.id}">
+                <td style="font-weight:700;">${Utils.escapeHtml(g.name)}</td>
+                <td class="muted" style="font-size:12.5px;">
+                  ${g.items.map(i => Utils.escapeHtml(i.name) + ' (' + Units.fmtQty(i.damagedQty, i.unit) + ')').join('، ')}
+                </td>
+                <td>${Utils.formatMoney(val)}</td>
+                <td>${g.id
+                  ? '<button type="button" class="btn btn-amber btn-sm dmg-go">↩️ اعملّه مرتجع</button>'
+                  : '<span class="hint">افتح الصنف وحدّد مورده الأول</span>'}</td>
+              </tr>`; }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    list.querySelectorAll('.dmg-go').forEach(b => b.addEventListener('click', () => {
+      const g = bySup.get(Number(b.closest('tr').dataset.sup));
+      if (!g) return;
+      openDamagedReturn(container, g);
+    }));
+  }
+
+  /* بيفتح مرتجع لمورد جاهز بالتالف بتاعه */
+  async function openDamagedReturn(container, g) {
+    if (!(await Lock.require('مرتجع لمورد'))) return;
+    kind = 'supplier';
+    await render(container);
+    const party = container.querySelector('#retParty');
+    if (party) { party.value = g.name; party.dispatchEvent(new Event('input', { bubbles: true })); }
+    rows = g.items.map(i => {
+      const r = blankRow();
+      applyItem(r, i);
+      r.qty = Number(i.damagedQty || 0);
+      r.condition = 'damaged';
+      r.price = Number(i.costPrice || 0);
+      return r;
+    });
+    rows.push(blankRow());
+    drawRows(container);
+    updateTotals(container);
+    Utils.toast('جهّزتلك المرتجع — راجع الأسعار ودوس حفظ', 'info');
+    window.scrollTo(0, 0);
   }
 
   async function loadHistory(container) {
